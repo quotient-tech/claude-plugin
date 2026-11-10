@@ -1,0 +1,12 @@
+{
+  "name": "quotient",
+  "description": "Quotient's Claude Code plugin.",
+  "owner": { "name": "Quotient", "url": "https://getquotient.com" },
+  "plugins": [
+    {
+      "name": "quotient",
+      "source": "./plugins/quotient",
+      "description": "Find agent friction in your sessions, find fixes for teammates' friction, and apply the fixes teammates found."
+    }
+  ]
+}

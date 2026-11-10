@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agex": {
+      "type": "http",
+      "url": "${AGEX_MCP_URL:-https://mcp.getquotient.com/mcp}"
+    }
+  }
+}
