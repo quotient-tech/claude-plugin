@@ -1357,6 +1357,59 @@ test('during setup, a RemoteTrigger run log arrives as a digest, each event numb
   expect(called.result.json).toBe(RUN_LOG.json)
 })
 
+// A full page of 200 events, each tool event 5,000 characters, with three errors.
+const FULL_PAGE = Array.from({ length: 200 }, (_, i) => {
+  const time = `2026-11-08T06:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000000Z`
+  if (i === 0) return `[${time}] user: Check the nightly build.`
+  if (i % 50 === 0) return `[${time}] tool_result ERROR: npm error 404 at step ${i}`
+  return `[${time}] ${i % 2 === 1 ? 'tool_use Read' : 'tool_result'}: ${BIG}`
+}).join('\n')
+const FULL_LOG = {
+  status: 'ok',
+  json: JSON.stringify({ session_id: 'session_01', events_fetched: 200, events_shown: 200, next_cursor: 'cursor_1' }),
+  summary: FULL_PAGE,
+}
+
+test('during setup, a full run-log page fits the digest budget and keeps every error', async ($, on) => {
+  engine(on, { remote: FULL_LOG })
+  await $.command.run(TYPED_SETUP)
+
+  const called = (await callTool($, 'RemoteTrigger', 'toolu_log', { action: 'get_run_log', session_id: 'session_01' })) as unknown as {
+    result: Record<string, unknown>
+  }
+
+  const summary = String(called.result.summary)
+  expect(FULL_PAGE.length).toBeGreaterThan(400_000)
+  expect(summary.length).toBeLessThanOrEqual(16_000)
+  expect(summary).toContain('E1 [06:00:00] user: Check the nightly build.')
+  for (const step of [50, 100, 150]) expect(summary).toContain(`tool_result ERROR: npm error 404 at step ${step}`)
+  expect(summary).toContain('plain tool calls')
+})
+
+test('during setup, an older run-log page fetched with next_cursor is digested too', async ($, on) => {
+  engine(on, { remote: FULL_LOG })
+  await $.command.run(TYPED_SETUP)
+
+  const called = (await callTool($, 'RemoteTrigger', 'toolu_older', {
+    action: 'get_run_log',
+    session_id: 'session_01',
+    cursor: 'cursor_1',
+  })) as unknown as { result: Record<string, unknown> }
+
+  expect(String(called.result.summary)).toContain('quotient digested this log for setup')
+  expect(String(called.result.summary).length).toBeLessThanOrEqual(16_000)
+})
+
+test('outside setup, a RemoteTrigger run log is left alone', async ($, on) => {
+  engine(on, { remote: FULL_LOG })
+
+  const called = (await callTool($, 'RemoteTrigger', 'toolu_log', { action: 'get_run_log', session_id: 'session_01' })) as unknown as {
+    result: Record<string, unknown>
+  }
+
+  expect(called.result).toEqual(FULL_LOG)
+})
+
 test('outside setup, RemoteTrigger replies are left alone', async ($, on) => {
   engine(on, { remote: ROUTINE_LIST })
 
