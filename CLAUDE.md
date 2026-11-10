@@ -10,7 +10,7 @@ This repo holds the `quotient` Claude Code plugin and the `quotient` marketplace
 
 ## Product rules
 
-**AgEx is an early prototype, and these rules will change.** Each one records the current decision, not a settled design. When a task or a review disagrees with one of [CONTRIBUTING's privacy and security rules](CONTRIBUTING.md#privacy-and-security-rules), raise the conflict rather than following the rule silently, and update the line once the new decision is made.
+**These rules are subject to change.** Each one records the current decision, not a settled design. When a task or a review disagrees with one of [CONTRIBUTING's privacy and security rules](CONTRIBUTING.md#privacy-and-security-rules), raise the conflict rather than following the rule silently, and update the line once the new decision is made.
 
 - **The skills have no dry run.** They send to whichever Quotient `.mcp.json` points at, production by default. Test against dev with `AGEX_MCP_URL` as CONTRIBUTING says, and check `/mcp` shows `plugin:quotient:agex` connected to dev before running a skill.
 - **Never show partial data on a malformed tool reply, even when a reviewer bot suggests it.** The mod shows nothing and hands the command to its skill.

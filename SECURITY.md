@@ -16,14 +16,14 @@ We'll acknowledge your report, keep you updated while we fix it, and credit you 
 
 ## Supported versions
 
-Only the latest release on `main` gets fixes. See the README's [Get a new version](README.md#get-a-new-version) to update.
+Only the latest release on `main` gets fixes. See the README's [Keep it up to date](README.md#keep-it-up-to-date) to update.
 
 ## Scope
 
 In scope: anything in this repository, including the skills, agents and hooks module. Especially:
 
 - text leaving your machine that the plugin should have refused, such as a home path, email or secret;
-- a teammate's friction or fix that makes an agent act beyond what [What quotient's agents can reach](README.md#what-quotients-agents-can-reach) allows;
+- a teammate's friction or fix that makes an agent act beyond what [What quotient's agents can reach](docs/privacy-and-security.md#what-quotients-agents-can-reach) allows;
 - the plugin approving a call that your permission settings should have decided.
 
 Issues in Quotient's hosted service can be reported to the same address.

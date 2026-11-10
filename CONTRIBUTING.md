@@ -7,7 +7,7 @@ Report bugs and suggest changes in [GitHub issues](https://github.com/quotient-t
 ## Layout
 
 | Path | What it holds |
-|---|---|
+| --- | --- |
 | `.claude-plugin/marketplace.json` | The `quotient` marketplace, which lists the one plugin. |
 | `plugins/quotient/` | The plugin itself, the only directory installed on users' machines. |
 | `plugins/quotient/skills/` | The `/quotient:*` skills. |
@@ -52,7 +52,7 @@ claude --plugin-dir ~/path/to/claude-plugin/plugins/quotient
 
 Run it from the repo you want to test the plugin in. Start a new session to pick up edits.
 
-The skills have no dry run: `QUOTIENT_DRY_RUN=1` doesn't stop them, and they send to whichever Quotient the plugin's MCP server points at, which is production by default. Quotient engineers should test against dev or a local Quotient instead, as below.
+The skills have no dry run and they send to whichever Quotient the plugin's MCP server points at, which is production by default. Quotient engineers should test against dev or a local Quotient instead, as below.
 
 ### Point quotient at dev or a local Quotient
 
@@ -123,7 +123,7 @@ Claude Code caches each installed plugin by its version. Commits that don't chan
    - **major** for a breaking change.
 2. Set `version` only in `plugin.json`, never on the marketplace entry. Claude Code uses the `plugin.json` value, and `claude plugin validate` reports the mismatch.
 3. Run the [checks](#checks) and merge to `main`. The marketplace serves `main`, so the release is live once it merges.
-4. Users pick it up as the README's [Get a new version](README.md#get-a-new-version) says.
+4. Users pick it up as the README's [Keep it up to date](README.md#keep-it-up-to-date) says.
 
 ## License
 
