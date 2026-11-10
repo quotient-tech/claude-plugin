@@ -19,7 +19,7 @@ import { fullPath, globRoot, isConfigPath, isQuotientSkill, isSkippedProject, QU
 import { statusLine } from './state'
 import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
-import { compactRoutines, compactRunLog, digest } from './digest'
+import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
@@ -897,7 +897,7 @@ function compactRemote<R extends { result?: unknown }>(called: R, action: unknow
   if (result === null || typeof result !== 'object' || Array.isArray(result)) return called
   const reply = result as Record<string, unknown>
   if (action === 'get_run_log' && typeof reply.summary === 'string') {
-    return { ...called, result: { ...reply, summary: compactRunLog(reply.summary) } }
+    return { ...called, result: { ...reply, summary: runLogDigest(reply.summary) } }
   }
   const json = (action === 'list' || action === 'get') && typeof reply.json === 'string' ? compactRoutines(reply.json) : null
   return json === null ? called : { ...called, result: { ...reply, json } }

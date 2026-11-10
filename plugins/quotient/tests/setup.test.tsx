@@ -1343,7 +1343,7 @@ test('during setup, a RemoteTrigger routine list keeps only the fields setup rea
   expect(json.length).toBeLessThan(1_000)
 })
 
-test("during setup, a RemoteTrigger run log keeps every event on one short line", async ($, on) => {
+test('during setup, a RemoteTrigger run log arrives as a digest, each event numbered', async ($, on) => {
   engine(on, { remote: RUN_LOG })
   await $.command.run(TYPED_SETUP)
 
@@ -1351,8 +1351,8 @@ test("during setup, a RemoteTrigger run log keeps every event on one short line"
     result: Record<string, unknown>
   }
 
-  expect(String(called.result.summary)).toContain('quotient shortened this log for setup')
-  expect(String(called.result.summary)).toContain('[06:00:09] tool_result: xxx')
+  expect(String(called.result.summary)).toContain('quotient digested this log for setup')
+  expect(String(called.result.summary)).toContain('E1 [06:00:09] tool_result: xxx')
   expect(String(called.result.summary).length).toBeLessThan(400)
   expect(called.result.json).toBe(RUN_LOG.json)
 })
