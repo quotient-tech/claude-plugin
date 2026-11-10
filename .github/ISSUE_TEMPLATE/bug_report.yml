@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in the quotient plugin doesn't work as the README says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Don't report security issues here. Email support@getquotient.com as SECURITY.md says.
+        Leave out names, emails, paths in your home folder, hostnames, tokens and text quoted from private sessions.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      description: From `claude plugin list`.
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: Claude Code version
+      description: From `claude --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where it ran
+      options:
+        - Claude Code on macOS
+        - Claude Code cloud session
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: permission-mode
+    attributes:
+      label: Permission mode
+      options:
+        - default
+        - accept edits
+        - auto
+        - don't ask
+        - plan
+  - type: textarea
+    id: debug-log
+    attributes:
+      label: Debug log lines
+      description: Lines starting `quotient` from `claude --debug`, redacted.
+      render: text

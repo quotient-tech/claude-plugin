@@ -1,0 +1,117 @@
+# Checks every PR and every push to main in one job: the checks take seconds,
+# so per-job checkout and setup would cost more than they save. Every check
+# runs even when an earlier one fails, and the last step reports which ones
+# failed and how to reproduce each locally.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      # The version the manifests were validated against; bump deliberately.
+      CLAUDE_CODE_VERSION: 2.1.307
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install dependencies
+        id: install
+        run: npm ci
+
+      - name: Install Claude Code
+        id: claude
+        if: ${{ !cancelled() }}
+        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: "Validate: marketplace manifest"
+        id: marketplace
+        if: ${{ !cancelled() && steps.claude.outcome == 'success' }}
+        run: claude plugin validate --strict .
+
+      - name: "Validate: quotient plugin"
+        id: quotient
+        if: ${{ !cancelled() && steps.claude.outcome == 'success' }}
+        run: claude plugin validate --strict plugins/quotient
+
+      # Runs the hooks module's tests against the engine with no model, login
+      # or network, so it spends no tokens.
+      - name: "Tests: quotient hooks module"
+        id: hooks
+        if: ${{ !cancelled() && steps.claude.outcome == 'success' }}
+        run: claude plugin test plugins/quotient
+
+      - name: "Tests: manifests, skills, scripts and setup fixture"
+        id: test
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - name: "Typecheck: tests and scripts"
+        id: typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck
+
+      - name: Report results
+        if: ${{ always() }}
+        env:
+          INSTALL: ${{ steps.install.outcome }}
+          CLAUDE: ${{ steps.claude.outcome }}
+          MARKETPLACE: ${{ steps.marketplace.outcome }}
+          QUOTIENT: ${{ steps.quotient.outcome }}
+          HOOKS: ${{ steps.hooks.outcome }}
+          TEST: ${{ steps.test.outcome }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+        run: |
+          failed=0
+          {
+            echo "## ci"
+            echo
+            echo "| Check | Result | Reproduce locally |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # row <check> <outcome> <command> [why it didn't run]
+          row() {
+            case "$2" in
+              success) result="✅ passed" ;;
+              failure)
+                result="❌ **failed**"
+                failed=1
+                echo "::error title=$1 failed::$1 failed. Open its step in this job for the findings, or run: $3"
+                ;;
+              skipped) result="➖ not run${4:+ ($4)}" ;;
+              *) result="unexpected: $2" ;;
+            esac
+            echo "| $1 | $result | \`$3\` |" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          deps="dependency install failed"
+          cli="Claude Code install failed"
+          [ "$INSTALL" = failure ] && row "Install dependencies" failure "npm ci"
+          [ "$CLAUDE" = failure ] && row "Install Claude Code" failure "npm install --global @anthropic-ai/claude-code"
+          row "Validate marketplace" "$MARKETPLACE" "claude plugin validate --strict ." "$cli"
+          row "Validate quotient" "$QUOTIENT" "claude plugin validate --strict plugins/quotient" "$cli"
+          row "Tests: quotient hooks module" "$HOOKS" "claude plugin test plugins/quotient" "$cli"
+          row "Tests" "$TEST" "npm test" "$deps"
+          row "Typecheck" "$TYPECHECK" "npm run typecheck" "$deps"
+
+          if [ "$failed" = 1 ]; then
+            echo >> "$GITHUB_STEP_SUMMARY"
+            echo "Each failed check's step above lists its findings." >> "$GITHUB_STEP_SUMMARY"
+          fi
