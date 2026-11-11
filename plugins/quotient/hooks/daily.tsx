@@ -23,6 +23,11 @@ export const TOOLS: Record<Kind, string[]> = {
   'find-solutions': ['list_teammate_frictions', 'submit_solutions', 'submit_solution', 'complete_daily_run'],
   'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
 }
+// The tools quotient's hooks register that each run may call, by full name.
+export const OWN_TOOLS: Record<Kind, string[]> = {
+  'find-solutions': [],
+  'review-frictions': ['mcp__quotient__review_sessions', 'mcp__quotient__review_digest'],
+}
 // A child of the mod dies with the session, so the run starts under nohup.
 // The folder is $1 and the run's command follows it, so nothing the server
 // sends is ever read as shell. Exits non-zero when claude can't be found or
@@ -92,6 +97,7 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string): 
     'Grep',
     'Glob',
     ...TOOLS[kind].map(tool => prefix + tool),
+    ...OWN_TOOLS[kind],
   ]
 }
 

@@ -10,7 +10,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { SandboxReach, TeammateTextMode } from '../types'
-import { KINDS, TOOLS } from './daily'
+import { KINDS, OWN_TOOLS, TOOLS } from './daily'
 import type { Kind } from './daily'
 import {
   fullPath,
@@ -151,6 +151,7 @@ async function scopeOf($: EngineInterface, agentId: string | undefined): Promise
     const known = (KINDS as readonly string[]).includes(kind) ? (kind as Kind) : null
     return {
       tools: known === null ? [] : TOOLS[known],
+      ownTools: known === null ? [] : OWN_TOOLS[known],
       skills: known === null ? [] : [known],
       withRepos: known === 'review-frictions',
     }
@@ -161,7 +162,7 @@ async function scopeOf($: EngineInterface, agentId: string | undefined): Promise
     (await $.agent.list()).some(agent => agent.id === agentId && agent.type === TEAMMATE_CHECK_AGENT)
   if (!isCheck) return null
   await update($, agents, ids => (ids.includes(agentId) ? ids : [...ids, agentId]))
-  return { tools: TEAMMATE_CHECK_TOOLS, skills: [FIND_SOLUTIONS_SKILL], withRepos: false }
+  return { tools: TEAMMATE_CHECK_TOOLS, ownTools: [], skills: [FIND_SOLUTIONS_SKILL], withRepos: false }
 }
 
 /**
@@ -211,7 +212,7 @@ async function denial(
   input: Record<string, unknown>,
   scope: Scope,
 ): Promise<string | null> {
-  if (ALWAYS.includes(tool)) return null
+  if (ALWAYS.includes(tool) || scope.ownTools.includes(tool)) return null
   if (tool === 'Skill') return isQuotientSkill(input.skill, scope.skills) ? null : DENIED_TOOL
   if (!READ_TOOLS.includes(tool)) return isQuotientTool(tool, scope.tools) ? null : DENIED_TOOL
   return readDenial($, tool, input, await reachFor($, scope.withRepos))
