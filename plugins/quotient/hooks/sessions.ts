@@ -15,9 +15,10 @@ export const LINES_PER_READ = 500
 
 /**
  * Which transcripts to list, by when they were last modified: the last
- * `days`, optionally only those after `since`, or a pinned window's days.
+ * `days`, or a pinned window's days, each a plain `YYYY-MM-DD`, the only
+ * kind of time every `find` reads alike.
  */
-export type SessionWindow = { days: number; since?: string } | { start: string; end: string }
+export type SessionWindow = { days: number } | { start: string; end: string }
 
 /** Whether a transcript holds teammates' fixes, by grep's exit code. */
 export type HeldVerdict = 'holds' | 'clean' | 'unchecked'
@@ -33,7 +34,7 @@ export function transcriptFindArgs(projects: string, window: SessionWindow): str
   const changed =
     'start' in window
       ? ['-newermt', window.start, '!', '-newermt', window.end]
-      : ['-mtime', `-${window.days}`, ...(window.since === undefined ? [] : ['-newermt', window.since])]
+      : ['-mtime', `-${window.days}`]
   return ['find', projects, '-mindepth', '2', '-maxdepth', '2', '-type', 'f', '-name', '*.jsonl', ...changed]
 }
 

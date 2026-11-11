@@ -37,6 +37,7 @@ const TYPED_REVIEW = {
  * @param opts.env - Extra environment variables
  * @param opts.contents - Each transcript's text, by its path
  * @param opts.laterTeammateFiles - The transcripts that hold teammates' fixes by the time one is read
+ * @param opts.modified - When each transcript was last modified, by its path; a day after SINCE when not given
  * @returns The tools registered and the commands run
  */
 function engine(
@@ -48,6 +49,7 @@ function engine(
     env?: Record<string, string>
     contents?: Record<string, string>
     laterTeammateFiles?: string[]
+    modified?: Record<string, string>
   } = {},
 ) {
   const seen = { tools: [] as { name: string; isDeferred?: unknown }[], argv: [] as (readonly string[])[] }
@@ -63,6 +65,9 @@ function engine(
     return { value: { tool: `mcp__quotient__${e.name}` } }
   })
   on('tool.call', () => ({ result: 'ran' }))
+  on('fs.stat', (_, e) => ({
+    value: { kind: 'file', size: 1, isLink: false, realPath: e.path, mtimeMs: Date.parse(opts.modified?.[e.path] ?? '2026-11-06T10:00:00Z') },
+  }))
   on('process.run', (_, e) => {
     seen.argv.push(e.argv)
     const answer = (stdout: string, exitCode = 0) => ({
@@ -128,7 +133,30 @@ test('an operator-started review lists the sessions after its last review, by fo
   expect(text.split('\n').filter(line => line.startsWith('-'))).toEqual(['-repo-b: b3, b2, b1, b0', '-repo-a: a5, a4, a3, a2, a1, a0'])
   expect(text).toContain("1 session left out because it holds teammates' fixes")
   const find = seen.argv.find(argv => argv[0] === 'find')
-  expect(find).toEqual(['find', PROJECTS, '-mindepth', '2', '-maxdepth', '2', '-type', 'f', '-name', '*.jsonl', '-mtime', '-14', '-newermt', SINCE])
+  expect(find).toEqual(['find', PROJECTS, '-mindepth', '2', '-maxdepth', '2', '-type', 'f', '-name', '*.jsonl', '-mtime', '-14'])
+})
+
+test('review_sessions lists only the sessions modified after since, which may carry milliseconds', async ($, on) => {
+  const older = REPO_A.slice(0, 2)
+  engine(on, { modified: Object.fromEntries(older.map(file => [file, '2026-11-05T09:59:59.999Z'])) })
+  await $.command.run(TYPED_REVIEW)
+
+  const text = String((await callTool($, SESSIONS_TOOL, { since: '2026-11-05T10:00:00.000Z' })).result)
+
+  expect(text).toContain('8 sessions to review')
+  expect(text).toContain('-repo-a: a5, a4, a3, a2')
+})
+
+test('a later listing adds to the sessions review_digest may read, never takes earlier ones away', async ($, on) => {
+  engine(on, { modified: Object.fromEntries(REPO_B.map(file => [file, '2026-11-08T10:00:00Z'])), contents: { [REPO_A[0] as string]: '{}' } })
+  await $.command.run(TYPED_REVIEW)
+  await callTool($, SESSIONS_TOOL, { since: SINCE })
+
+  const later = String((await callTool($, SESSIONS_TOOL, { since: '2026-11-07T00:00:00Z' })).result)
+  const called = await callTool($, 'mcp__quotient__review_digest', { source: 'a0' })
+
+  expect(later).toContain('4 sessions to review')
+  expect(called.deny).toBeUndefined()
 })
 
 test('review_sessions lists at most the 40 newest sessions and says how many it left out', async ($, on) => {

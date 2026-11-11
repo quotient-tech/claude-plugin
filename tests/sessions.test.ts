@@ -21,16 +21,6 @@ test("a pinned window finds the transcripts modified within its days", () => {
   ]);
 });
 
-test("a since bound finds the transcripts modified after it, and none older than the last days", () => {
-  assert.deepEqual(transcriptFindArgs(PROJECTS, { days: 14, since: "2026-11-05T10:00:00Z" }), [
-    ...FIND,
-    "-mtime",
-    "-14",
-    "-newermt",
-    "2026-11-05T10:00:00Z",
-  ]);
-});
-
 test("grep's exit code says whether a transcript holds teammates' fixes", () => {
   assert.equal(heldVerdict(0), "holds");
   assert.equal(heldVerdict(1), "clean");

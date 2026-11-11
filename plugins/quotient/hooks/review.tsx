@@ -120,6 +120,21 @@ async function lookUpDirs($: Api): Promise<Dirs> {
 }
 
 /**
+ * Keeps the transcripts modified after a time. The hook compares the times
+ * itself: macOS's `find` reads no ISO time with `-newermt`.
+ *
+ * @param $ - The engine
+ * @param files - The transcripts
+ * @param after - The time, in milliseconds since 1970
+ * @returns The transcripts modified after it, in the order given
+ * @throws When a transcript can't be looked at
+ */
+async function modifiedAfter($: Api, files: readonly string[], after: number): Promise<string[]> {
+  const times = await Promise.all(files.map(async file => (await $.fs.stat(file)).mtimeMs))
+  return files.filter((_, i) => (times[i] ?? 0) > after)
+}
+
+/**
  * Lists the sessions a review reads, newest first: the window's transcripts,
  * leaving out temporary and daily-run folders, this session, the sessions
  * quotient's own skills started, and the ones that hold teammates' fixes.
@@ -132,8 +147,12 @@ async function lookUpDirs($: Api): Promise<Dirs> {
 async function listSessions($: Api, since: string): Promise<{ files: string[]; held: number; older: number }> {
   const dirs = await lookUpDirs($)
   const own = `${await $.session.id()}.jsonl`
-  const found = await outputOf($, transcriptFindArgs(`${dirs.config}/projects`, { days: WINDOW_DAYS, since }))
-  const kept = found.filter(file => !isSkippedProject(file.split('/').at(-2) ?? '', dirs) && !file.endsWith(`/${own}`))
+  const found = await outputOf($, transcriptFindArgs(`${dirs.config}/projects`, { days: WINDOW_DAYS }))
+  const kept = await modifiedAfter(
+    $,
+    found.filter(file => !isSkippedProject(file.split('/').at(-2) ?? '', dirs) && !file.endsWith(`/${own}`)),
+    Date.parse(since),
+  )
   if (kept.length === 0) return { files: [], held: 0, older: 0 }
   const started = new Set(await outputOf($, ['awk', QUOTIENT_STARTED, ...kept]))
   const typed = kept.filter(file => !started.has(file))
@@ -185,7 +204,9 @@ async function answerSessions($: Api, input: Record<string, unknown>): Promise<{
   try {
     const { files, held, older } = await listSessions($, since)
     const listed = Object.fromEntries(files.map(file => [file.slice(file.lastIndexOf('/') + 1).replace(/\.jsonl$/, ''), file]))
-    await update($, run, current => ({ ...current, listed }))
+    // The skill lists again for each friction's own window; a session it
+    // already read from an earlier listing stays readable.
+    await update($, run, current => ({ ...current, listed: { ...current.listed, ...listed } }))
     return { result: listingText(files, held, older) }
   } catch {
     return { deny: UNCHECKED }
