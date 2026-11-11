@@ -21,7 +21,7 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
-import { heldVerdict, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import { heldVerdict, holdsTeammateText, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -912,7 +912,8 @@ async function answerDigest($: Api, input: Record<string, unknown>): Promise<{ d
   const held = await $.process.run(['grep', '-q', '-E', '--', TEAMMATE_TOOL_USE, path], { timeoutMs: 30_000 }).catch(() => undefined)
   const verdict = heldVerdict(held?.exitCode)
   if (verdict !== 'clean') return { deny: verdict === 'holds' ? HOLDS_FIXES : UNCHECKED }
-  return { result: digest(source, await readLines($, path)) }
+  const lines = await readLines($, path)
+  return holdsTeammateText(lines, TEAMMATE_TOOL_USE) ? { deny: HOLDS_FIXES } : { result: digest(source, lines) }
 }
 
 /**

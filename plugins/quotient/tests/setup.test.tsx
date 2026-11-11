@@ -1303,6 +1303,21 @@ test("setup_digest refuses a listed source that has since come to hold teammates
   expect(seen.argv.some(argv => argv[0] === 'sed')).toBe(false)
 })
 
+// A transcript line that called one of Quotient's tools that return teammates' fixes.
+const TEAMMATE_CALL = JSON.stringify({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id: 't9', name: 'mcp__plugin_quotient_agex__list_my_frictions', input: {} }] },
+})
+
+test("setup_digest refuses a transcript whose lines, as read, hold teammates' fixes, even when the check before passed", async ($, on) => {
+  engine(on, { contents: { [S1]: `${S1_LINES}\n${TEAMMATE_CALL}` } })
+  await startListed($)
+
+  const called = await callTool($, DIGEST_TOOL, 'toolu_digest', { source: 's1' })
+
+  expect(called.deny).toContain("teammates' fixes")
+})
+
 test('setup_digest refuses outside a setup run', async ($, on) => {
   engine(on, { contents: { [S1]: S1_LINES } })
 

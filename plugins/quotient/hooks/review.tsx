@@ -10,7 +10,7 @@ import type { ReviewRun } from '../types'
 import { digest } from './digest'
 import type { TranscriptLine } from './digest'
 import { isQuotientSkill, isSkippedProject, TEAMMATE_TOOL_USE } from './sandbox'
-import { heldVerdict, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import { heldVerdict, holdsTeammateText, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 import { plural } from './text'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
@@ -268,7 +268,8 @@ async function answerDigest($: Api, input: Record<string, unknown>): Promise<{ d
   const verdict = heldVerdict(held?.exitCode)
   if (verdict !== 'clean') return { deny: verdict === 'holds' ? HOLDS_FIXES : UNCHECKED_ONE }
   try {
-    return { result: digest(source, await readLines($, path), REVIEW_DIGEST_BUDGET) }
+    const lines = await readLines($, path)
+    return holdsTeammateText(lines, TEAMMATE_TOOL_USE) ? { deny: HOLDS_FIXES } : { result: digest(source, lines, REVIEW_DIGEST_BUDGET) }
   } catch {
     return { deny: UNCHECKED_ONE }
   }

@@ -39,6 +39,21 @@ export function transcriptFindArgs(projects: string, window: SessionWindow): str
 }
 
 /**
+ * Tells whether lines read from a transcript hold a call that returned
+ * teammates' fixes. A session still running can gain one after a check of
+ * the file, so a digest checks the very lines it was built from. A line too
+ * large to read shows only its size, so it can't leak one.
+ *
+ * @param lines - The lines read, their text null when too large to read
+ * @param pattern - Such a call, as `TEAMMATE_TOOL_USE` in sandbox.ts gives it
+ * @returns Whether any holds such a call
+ */
+export function holdsTeammateText(lines: readonly { text: string | null }[], pattern: string): boolean {
+  const call = new RegExp(pattern)
+  return lines.some(line => line.text !== null && call.test(line.text))
+}
+
+/**
  * Reads what a `grep -q` for teammates' fixes found in a transcript.
  *
  * @param exitCode - grep's exit code, or undefined when it couldn't run

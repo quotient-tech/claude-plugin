@@ -331,3 +331,17 @@ test('review_digest refuses outside a review-frictions run', async ($, on) => {
   await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
   expect((await callTool($, DIGEST_TOOL, { source: 'a0' })).deny).toContain('/quotient:review-frictions')
 })
+// A transcript line that called one of Quotient's tools that return teammates' fixes.
+const TEAMMATE_CALL = JSON.stringify({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', id: 't9', name: 'mcp__plugin_quotient_agex__list_my_frictions', input: {} }] },
+})
+
+test("review_digest refuses a transcript whose lines, as read, hold teammates' fixes, even when the check before passed", async ($, on) => {
+  engine(on, { contents: { [A0]: `${LONG_SESSION}\n${TEAMMATE_CALL}` } })
+  await startListed($)
+
+  const called = await callTool($, DIGEST_TOOL, { source: 'a0' })
+
+  expect(called.deny).toContain("teammates' fixes")
+})
