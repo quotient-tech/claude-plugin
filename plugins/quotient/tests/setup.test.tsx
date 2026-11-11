@@ -822,7 +822,7 @@ test("a card whose text holds an id or an email is left out but still counted, a
 
 test("escape sequences and control characters in a teammate's text are drawn as plain text", async ($, on) => {
   engine(on, { teammates: [{ id: 't1', title: 'Lint\u001b[2J fails\u0007 in CI' }] })
-  await checkTeammates($, [['t1', 'Run\u001b]8;;http://x\u0007 ESLint ‮from the root.']])
+  await checkTeammates($, [['t1', 'Run\u001b]8;;http://x\u0007 ESLint \u202efrom the root.']])
 
   const { shown } = await drawSummary($, INVITED)
 
