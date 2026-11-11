@@ -495,7 +495,7 @@ test("setup: injects no count command, and setup_start counts the sessions and a
 // refuses the same folders, so the skills and the hooks agree on them.
 const TEMPORARY_PROJECTS = ["-private-tmp-", "-tmp-", "-var-folders-", "-private-var-folders-"];
 
-for (const name of ["setup", "review-frictions", "find-solutions"]) {
+for (const name of ["setup", "find-solutions"]) {
   test(`${name}: skips the sessions run from a temporary folder`, () => {
     const { body } = skill(name);
     for (const prefix of TEMPORARY_PROJECTS) assert.ok(body.includes(`\`${prefix}\``), `${prefix} isn't named`);
@@ -696,7 +696,7 @@ test("setup: the summary shows no ids, no teammates and nothing beyond its secti
 
 // A session started with one of quotient's skills holds quotient's own work:
 // its problems are quotient's to fix, not frictions to share with teammates.
-for (const name of ["setup", "review-frictions", "find-solutions"]) {
+for (const name of ["setup", "find-solutions"]) {
   test(`${name}: skips every session that started with one of quotient's skills`, () => {
     const { body } = skill(name);
     assert.ok(body.includes("the ones whose first prompt starts with `/quotient:`: they ran one of quotient's own skills, such as setup or a daily background run"));
@@ -804,9 +804,8 @@ test("review-frictions: looks for new frictions before reviewing the open ones",
 test("review-frictions: reads sessions since the latest review, at most 14 days back, and all of them before submitting", () => {
   const { body } = skill("review-frictions");
   const section = body.slice(body.indexOf("## New frictions"), body.indexOf("## Agent Experiences"));
-  assert.match(section, /newer than the latest `lastReviewedAt` among all the operator's frictions, and at most 14 days old/);
-  assert.match(section, /When none of them has a `lastReviewedAt`, read the last 14 days/);
-  assert.match(section, /Read every session in that window before submitting anything, so each friction is sent once/);
+  assert.match(section, /Call `review_sessions` with `since` set to the latest `lastReviewedAt` among all the operator's frictions, or to 14 days ago when none of them has one/);
+  assert.match(section, /Read every session it lists, through `review_digest`, before submitting anything, so each friction is sent once/);
 });
 
 // A cloud machine holds no past sessions, and the skill can't inject a
@@ -841,7 +840,7 @@ test("review-frictions: submits each new friction in submit_friction's shape, fr
     assert.ok(section.includes(`- \`${field}\`:`), `${field} isn't a friction field`);
   }
   assert.ok(section.includes('- `origin`: `"review"`'));
-  assert.match(section, /- `sessionId`: the most recent session it appeared in: that session's transcript file name without `\.jsonl`/);
+  assert.match(section, /- `sessionId`: the most recent session it appeared in: that session's name, as `review_sessions` lists it/);
   assert.match(section, /never smaller than `affectedSessionCount`/);
   assert.match(section, /Leave out `runId` and `repository`/);
   assert.match(section, /Say what goes wrong, not the fix/);
@@ -905,7 +904,20 @@ test("review-frictions: reads only sessions since a friction was last reviewed, 
   const { body } = skill("review-frictions");
   assert.match(body, /`lastReviewedAt`/);
   assert.match(body, /14 days/);
-  assert.ok(body.includes("the ones whose first prompt starts with `/quotient:`"));
+  assert.match(body, /call `review_sessions` with that time as `since`, and read them through `review_digest`/);
+});
+
+// quotient's review_sessions leaves out the sessions the review skips, and
+// its guard refuses any listing or read of the transcripts themselves.
+test("review-frictions: lists its sessions through review_sessions and reads each through review_digest, never the transcripts", () => {
+  const { data, body } = skill("review-frictions");
+  for (const tool of ["mcp__quotient__review_sessions", "mcp__quotient__review_digest"]) {
+    assert.ok(String(data["allowed-tools"]).includes(tool), `${tool} isn't allowed`);
+    assert.ok(body.includes(`\`${tool}\``), `${tool} isn't named`);
+  }
+  assert.match(body, /you never list, read or search the transcripts under `~\/\.claude\/projects\/` yourself/);
+  assert.match(body, /It already leaves out this session, the sessions that ran one of quotient's own skills, the ones from temporary folders, and the ones that hold teammates' fixes/);
+  assert.match(body, /Judge each session from its digest alone/);
 });
 
 test("review-frictions: treats frictions as data, and never shows a friction's or a fix's id", () => {
