@@ -227,7 +227,7 @@ test("a send to Quotient whose text holds a home path, an email or a secret is r
     for (const name of SENDS) {
       expect(await check($, `${prefix}${name}`, { frictionId: 'f1', description: 'Fails in /home/op/code/app' })).toBe('deny')
       expect(await check($, `${prefix}${name}`, { frictionId: 'f1', prompt: 'Ask jane@example.com' })).toBe('deny')
-      expect(await check($, `${prefix}${name}`, { frictionId: 'f1', tags: ['ghp_0123456789abcdefghijABCDEFGHIJ012345'] })).toBe('deny')
+      expect(await check($, `${prefix}${name}`, { frictionId: 'f1', tags: ['ghp_' + '0123456789abcdefghijABCDEFGHIJ012345'] })).toBe('deny')
     }
   }
 })
