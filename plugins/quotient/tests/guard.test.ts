@@ -446,6 +446,9 @@ test("once setup holds transcripts back, another server's tool naming them is re
   expect(await ctx({ path: PLAIN, language: 'javascript', code: 'print(1)' })).toBe('deny')
   expect(await check($, 'mcp__plugin_context-mode_context-mode__ctx_execute', { code: 'cat ~/.claude/projects/*/*.jsonl' })).toBe('deny')
   expect(await check($, CTX_FILE, { path: PLAIN }, 'sub-1')).toBe('deny')
+  // During setup no other server's tool runs at all; once its run ends, one naming no transcript goes on.
+  expect(await ctx({ path: '/home/op/code/app/notes.md' })).toBe('deny')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
   expect(await ctx({ path: '/home/op/code/app/notes.md' })).toBe('allow')
 })
 
@@ -661,4 +664,24 @@ test("while review-frictions runs, a search whose check fails is refused, even o
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
 
   expect(await check($, 'Glob', { pattern: '*.md' })).toBe('deny')
+})
+
+test("while review-frictions runs, a transcript is refused however its path's letters are cased", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: '/home/op/.Claude/Projects/-home-op-code-app/plain.JSONL' })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/home/op/.claude/PROJECTS' })).toBe('deny')
+  expect(await check($, 'Read', { file_path: '/home/op/.claude/projects/-home-op-code-app/MEMORY/notes.md' })).toBe('allow')
+})
+
+test("while setup or review-frictions runs, other servers' tools are refused, whatever their input names", async ($, on) => {
+  engine(on)
+  expect(await check($, 'mcp__sandbox__run_code', { code: 'print(1)' })).toBe('allow')
+
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'mcp__sandbox__run_code', { code: 'print(1)' })).toBe('deny')
+  expect(await check($, `${AGEX}start_setup_run`, {})).toBe('allow')
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
 })

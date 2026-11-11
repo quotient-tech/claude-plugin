@@ -80,6 +80,8 @@ const SETUP_COMMANDS = ['git remote get-url origin']
 const DENIED_WRITE = 'quotient: setup and review-frictions write no files and run no shell commands of their own'
 const DENIED_LOCKED_TRANSCRIPT =
   "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
+const DENIED_LOCKED_SERVER =
+  "quotient: setup and review-frictions use no other server's tools, which could reach the transcripts or write a file"
 const DENIED_BASH_TRANSCRIPT =
   "quotient: some transcripts hold teammates' fixes, which review-frictions and setup never read: read transcripts with Read, one session at a time, or during setup through setup_digest"
 
@@ -312,9 +314,11 @@ function writeDenial(tool: string, input: Record<string, unknown>, skill: 'setup
 /**
  * Says why a call is refused while the transcripts are locked, whatever
  * they hold: a Read of a transcript (`*.jsonl` under the projects folder),
- * a Grep or Glob of a folder that holds any, or a Bash command or another
- * server's call that names them. A project's auto-memory folder and other
- * files under the projects folder, such as a saved reply, stay readable.
+ * a Grep or Glob of a folder that holds any, a Bash command that names them,
+ * or any other server's call, which quotient can't see into. A project's
+ * auto-memory folder and other files under the projects folder, such as a
+ * saved reply, stay readable. Paths compare ignoring case, as macOS's file
+ * system does.
  *
  * @param $ - The engine
  * @param tool - The tool's full name
@@ -328,24 +332,25 @@ async function lockedTranscriptDenial(
   input: Record<string, unknown>,
   reach: () => Promise<SandboxReach>,
 ): Promise<string | null> {
-  if (tool !== 'Bash' && !isOtherServer(tool) && !READ_TOOLS.includes(tool)) return null
+  if (isOtherServer(tool)) return DENIED_LOCKED_SERVER
+  if (tool !== 'Bash' && !READ_TOOLS.includes(tool)) return null
   const where = await reach()
-  const projects = `${where.dirs.config}/projects`
-  if (tool === 'Bash' || isOtherServer(tool)) {
-    const named = tool === 'Bash' ? input.command : JSON.stringify(input)
-    return typeof named === 'string' && (BASH_TRANSCRIPTS.test(named) || named.includes(projects)) ? DENIED_LOCKED_TRANSCRIPT : null
+  const projects = `${where.dirs.config}/projects`.toLowerCase()
+  if (tool === 'Bash') {
+    const named = typeof input.command === 'string' ? input.command : ''
+    return BASH_TRANSCRIPTS.test(named) || named.toLowerCase().includes(projects) ? DENIED_LOCKED_TRANSCRIPT : null
   }
   const cwd = await $.session.cwd()
   const written = tool === 'Glob' ? globRoot(input, where.dirs, cwd) : fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
   // A path that can't be placed, such as one with `..`, could reach the transcripts.
   if (written === null) return DENIED_LOCKED_TRANSCRIPT
   const stat = await $.fs.stat(written, { resolve: true }).catch(() => undefined)
-  const paths = [written, stat?.realPath ?? written]
+  const paths = [written, stat?.realPath ?? written].map(path => path.toLowerCase())
   const isTranscript = (path: string) => path.startsWith(`${projects}/`) && path.endsWith('.jsonl')
   if (paths.some(isTranscript)) return DENIED_LOCKED_TRANSCRIPT
   if (tool === 'Read' || stat?.kind === 'file') return null
   // A search of a folder reads every transcript under it, outside a project's auto-memory.
-  const isMemory = (path: string) => /^[^/]+\/memory(\/|$)/.test(path.slice(projects.length + 1)) && path.startsWith(`${projects}/`)
+  const isMemory = (path: string) => path.startsWith(`${projects}/`) && /^[^/]+\/memory(\/|$)/.test(path.slice(projects.length + 1))
   const holdsTranscripts = (path: string) => path === projects || path.startsWith(`${projects}/`) || projects.startsWith(`${path === '/' ? '' : path}/`)
   return paths.some(path => holdsTranscripts(path) && !isMemory(path)) ? DENIED_LOCKED_TRANSCRIPT : null
 }
