@@ -640,6 +640,8 @@ test('while setup runs, nothing writes a file, and the only shell command is the
 
   expect(await check($, 'Write', { file_path: '/tmp/extract.txt', content: 'x' })).toBe('deny')
   expect(await check($, 'Bash', { command: 'git remote get-url origin' })).toBe('allow')
+  // The setup skill's own line that runs as it loads is checked as a Bash call too.
+  expect(await check($, 'Bash', { command: 'echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"' })).toBe('allow')
   expect(await check($, 'Bash', { command: 'git remote get-url origin > /tmp/x' })).toBe('deny')
   expect(await check($, 'Bash', { command: 'git status' })).toBe('deny')
 })

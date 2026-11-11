@@ -9,6 +9,10 @@
 // command's prompt starts with its command tags, as Claude Code records it,
 // so a prompt that only quotes one doesn't count.
 export const QUOTIENT_STARTED = String.raw`/"type": ?"user"/ && !/"isMeta": ?true/ { if (/"content": ?"<command-(name>\/|message>)quotient:/) print FILENAME; nextfile }`
+// The shell commands setup runs while its run holds the transcripts: the
+// line its skill runs as it loads, and the one that sends a cloud session's
+// repository. Each is checked as a Bash call; review-frictions runs none.
+export const SETUP_SHELL_COMMANDS = ['echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"', 'git remote get-url origin']
 // How many lines one read of a transcript asks for. Output stops at 4 MiB,
 // so a range that runs past it is halved until it fits.
 export const LINES_PER_READ = 500

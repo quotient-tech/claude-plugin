@@ -29,6 +29,7 @@ import {
 } from './sandbox'
 import type { Scope } from './sandbox'
 import { privateText } from './privacy'
+import { SETUP_SHELL_COMMANDS } from './sessions'
 import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
 import { isOwnQuotientCall, ownCallVerdict } from './self-allow'
@@ -74,9 +75,7 @@ const DENIED_TRANSCRIPT =
 // effort, so the skills read transcripts with Read and Grep instead.
 const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bprojects\b/i
 // While setup or review-frictions runs, only the calls they make may run:
-// none writes a file. Setup's one shell command sends a cloud session's
-// repository, and RemoteTrigger only reads routines and their runs.
-const SETUP_COMMANDS = ['git remote get-url origin']
+// none writes a file, and RemoteTrigger only reads routines and their runs.
 const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
 const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
 const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
@@ -296,10 +295,9 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
 
 /**
  * Says why a call is refused while setup or review-frictions runs: only the
- * tools they use may run. Reads, quotient's and Quotient's own tools, a
- * subagent in this checkout, quotient's own skills (another skill's commands
- * run as it loads, past this check), RemoteTrigger's reads during setup, and
- * setup's one shell command.
+ * tools they use may run: reads, quotient's and Quotient's own tools, a
+ * subagent in this checkout, quotient's own skills, and during setup,
+ * RemoteTrigger's reads and setup's own shell commands.
  *
  * @param tool - The tool's full name
  * @param input - The call's input
@@ -313,7 +311,7 @@ function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: '
   if (tool === 'Skill' && isQuotientSkill(input.skill, LOCKED_SKILLS, true)) return null
   if (skill !== 'setup') return DENIED_LOCKED_TOOL
   if (tool === 'RemoteTrigger' && REMOTE_READS.includes(String(input.action))) return null
-  return tool === 'Bash' && typeof input.command === 'string' && SETUP_COMMANDS.includes(input.command.trim()) ? null : DENIED_LOCKED_TOOL
+  return tool === 'Bash' && typeof input.command === 'string' && SETUP_SHELL_COMMANDS.includes(input.command.trim()) ? null : DENIED_LOCKED_TOOL
 }
 
 /**
