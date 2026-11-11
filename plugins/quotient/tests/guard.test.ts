@@ -704,6 +704,15 @@ test('while review-frictions runs, only the tools it uses may run', async ($, on
   expect(await check($, 'ToolSearch', { query: 'select:x' })).toBe('allow')
 })
 
+test('while setup runs, the tools it uses to ask the operator and manage its subagents stay open', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const tool of ['AskUserQuestion', 'ReadNotifications', 'ScheduleWakeup', 'SendMessage', 'StructuredOutput', 'TaskStop']) {
+    expect(await check($, tool, { to: 'reviewer-1', message: 'go on' })).toBe('allow')
+  }
+})
+
 test("while setup runs, RemoteTrigger may only read routines and their runs", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })

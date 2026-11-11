@@ -77,6 +77,9 @@ const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bproject
 // While setup or review-frictions runs, only the calls they make may run:
 // none writes a file, and RemoteTrigger only reads routines and their runs.
 const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
+// What setup and review-frictions use to ask the operator, wait on and steer
+// their subagents, and answer: none writes a file or runs a shell.
+const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'ScheduleWakeup', 'SendMessage', 'StructuredOutput', 'TaskStop']
 const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
 const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
 const DENIED_LOCKED_TRANSCRIPT =
@@ -295,8 +298,9 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
 
 /**
  * Says why a call is refused while setup or review-frictions runs: only the
- * tools they use may run: reads, quotient's and Quotient's own tools, a
- * subagent in this checkout, quotient's own skills, and during setup,
+ * tools they use may run: reads, the harness's tools for asking the operator
+ * and managing subagents, quotient's and Quotient's own tools, a subagent in
+ * this checkout, quotient's own skills, and during setup,
  * RemoteTrigger's reads and setup's own shell commands.
  *
  * @param tool - The tool's full name
@@ -305,7 +309,7 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
  * @returns The reason, or null when the call may run
  */
 function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
-  if ([...READ_TOOLS, ...ALWAYS].includes(tool)) return null
+  if ([...READ_TOOLS, ...ALWAYS, ...LOCKED_HARNESS_TOOLS].includes(tool)) return null
   if (tool.startsWith('mcp__quotient__') || QUOTIENT_PREFIXES.some(prefix => tool.startsWith(prefix))) return null
   if (tool === 'Agent' && input.isolation === undefined) return null
   if (tool === 'Skill' && isQuotientSkill(input.skill, LOCKED_SKILLS, true)) return null
