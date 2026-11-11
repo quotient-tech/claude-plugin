@@ -1,13 +1,16 @@
-// review-frictions' run: quotient lists the sessions a review reads, so the
-// skill never lists or reads the transcripts itself. A run starts with the
+// review-frictions' run: quotient lists the sessions a review reads and
+// answers with each one's digest, so the skill never lists or reads the
+// transcripts itself. A run starts with the
 // typed command, the model's Skill call, or a daily review-frictions run,
 // and ends with the main agent's turn.
 import { atom, read, update } from 'claude-code'
 import type { Hook, Register } from 'claude-code'
 
 import type { ReviewRun } from '../types'
+import { digest } from './digest'
+import type { TranscriptLine } from './digest'
 import { isQuotientSkill, isSkippedProject, TEAMMATE_TOOL_USE } from './sandbox'
-import { QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import { heldVerdict, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 import { plural } from './text'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
@@ -15,15 +18,22 @@ type Dirs = { config: string; home: string; runs: string }
 
 const REVIEW_COMMAND = 'quotient:review-frictions'
 const SESSIONS_TOOL = 'mcp__quotient__review_sessions'
-const REVIEW_TOOLS = /^mcp__quotient__review_sessions$/
+const DIGEST_TOOL = 'mcp__quotient__review_digest'
+const REVIEW_TOOLS = /^mcp__quotient__review_(sessions|digest)$/
 const DAILY_KIND = 'review-frictions'
 const TURN_ENDS = ['answer', 'aborted', 'refusal', 'error'] as const
 // How far back a review looks, and how many sessions one listing holds.
 const WINDOW_DAYS = 14
 const MAX_SESSIONS = 40
-const NOT_RUNNING = 'review_sessions works only while /quotient:review-frictions is running'
+// A review reads every digest in one context, with no subagents to share
+// them, so each is kept to about 1,500 tokens.
+export const REVIEW_DIGEST_BUDGET = 6_000
+const NOT_RUNNING = "quotient's review tools work only while /quotient:review-frictions is running"
 const BAD_SINCE = 'since: must be a time, such as 2026-11-05T10:00:00Z'
 const UNCHECKED = "quotient couldn't check the sessions for teammates' fixes, so it lists none: review no sessions this run"
+const NOT_LISTED = 'review_digest reads only the sessions review_sessions listed in this run: pass one by its name, as the listing gives it'
+const HOLDS_FIXES = "This session's transcript holds teammates' fixes, which review-frictions never reads: skip it"
+const UNCHECKED_ONE = "quotient couldn't check this transcript for teammates' fixes, so it isn't read: skip it"
 
 const SESSIONS_SCHEMA = {
   type: 'object',
@@ -36,6 +46,14 @@ const SESSIONS_SCHEMA = {
   required: ['since'],
 }
 
+const DIGEST_SCHEMA = {
+  type: 'object',
+  properties: {
+    source: { type: 'string', description: "The session's name, as review_sessions lists it, without its folder or `.jsonl`" },
+  },
+  required: ['source'],
+}
+
 /** review-frictions' tools, which the skill calls; the session registers them. */
 export const REVIEW_TOOLS_SPECS = [
   {
@@ -43,6 +61,13 @@ export const REVIEW_TOOLS_SPECS = [
     description:
       'Lists the sessions /quotient:review-frictions reviews: those modified after `since` and within the last 14 days, newest first, by project folder, leaving out the ones the review skips.',
     inputSchema: SESSIONS_SCHEMA,
+    isDeferred: false,
+  },
+  {
+    name: 'review_digest',
+    description:
+      "Returns a short digest of one session /quotient:review-frictions is reviewing: its prompts, errors, refusals, interrupts, repeated calls and large results, each with its transcript line. Pass a session by its name, as review_sessions lists it.",
+    inputSchema: DIGEST_SCHEMA,
     isDeferred: false,
   },
 ] as const
@@ -168,6 +193,69 @@ async function answerSessions($: Api, input: Record<string, unknown>): Promise<{
 }
 
 /**
+ * Answers a `review_digest` call with a digest of one listed session, or
+ * refuses: the session must be one `review_sessions` listed in this run, and
+ * its transcript must hold no teammates' fixes when it's read.
+ *
+ * @param $ - The engine
+ * @param input - The call's input
+ * @returns The refusal, or the digest
+ */
+async function answerDigest($: Api, input: Record<string, unknown>): Promise<{ deny: string } | { result: string }> {
+  if (!(await isReviewing($))) return { deny: NOT_RUNNING }
+  const { listed } = await read($, run)
+  const source = input.source
+  const path = typeof source === 'string' && Object.hasOwn(listed, source) ? listed[source] : undefined
+  if (path === undefined || typeof source !== 'string') return { deny: NOT_LISTED }
+  // The transcript can gain teammates' fixes after it was listed.
+  const held = await $.process.run(['grep', '-q', '-E', '--', TEAMMATE_TOOL_USE, path], { timeoutMs: 30_000 }).catch(() => undefined)
+  const verdict = heldVerdict(held?.exitCode)
+  if (verdict !== 'clean') return { deny: verdict === 'holds' ? HOLDS_FIXES : UNCHECKED_ONE }
+  try {
+    return { result: digest(source, await readLines($, path), REVIEW_DIGEST_BUDGET) }
+  } catch {
+    return { deny: UNCHECKED_ONE }
+  }
+}
+
+/**
+ * Reads a transcript's lines in ranges, so no read passes the 4 MiB a
+ * process's output keeps. A single line past it is kept as its size alone.
+ * Nothing is written to disk.
+ *
+ * @param $ - The engine
+ * @param path - The transcript
+ * @returns Its lines, numbered from 1
+ * @throws When a range can't be read
+ */
+async function readLines($: Api, path: string): Promise<TranscriptLine[]> {
+  const lines: TranscriptLine[] = []
+  let from = 1
+  let count = LINES_PER_READ
+  for (;;) {
+    const chunk = await $.process.run(['sed', '-n', `${from},${from + count - 1}p`, path], { timeoutMs: 30_000 })
+    if (chunk.exitCode !== 0) throw new Error(`sed exited ${chunk.exitCode}`)
+    if (chunk.isStdoutTruncated && count > 1) {
+      count = Math.max(1, Math.floor(count / 2))
+      continue
+    }
+    if (chunk.isStdoutTruncated) {
+      const size = await $.process.run(['awk', `NR == ${from} { print length($0); exit }`, path], { timeoutMs: 30_000 })
+      lines.push({ n: from, text: null, bytes: Number(size.stdout.trim()) || 0 })
+      from += 1
+      count = LINES_PER_READ
+      continue
+    }
+    const got = chunk.stdout.split('\n')
+    if (got.at(-1) === '') got.pop()
+    got.forEach((text, i) => lines.push({ n: from + i, text, bytes: text.length }))
+    if (got.length < count) return lines
+    from += got.length
+    count = LINES_PER_READ
+  }
+}
+
+/**
  * Starts a review-frictions run.
  *
  * @param $ - The engine
@@ -197,6 +285,7 @@ export const registerReview: Register = on => {
   // No .catch: falling back to next(e) would hand the call to a tool that isn't there.
   on('tool.call', { tool: REVIEW_TOOLS }, async ($, e) => {
     if ((e.tool as string) === SESSIONS_TOOL) return answerSessions($, e as unknown as Record<string, unknown>)
+    if ((e.tool as string) === DIGEST_TOOL) return answerDigest($, e as unknown as Record<string, unknown>)
     return { deny: NOT_RUNNING }
   })
 

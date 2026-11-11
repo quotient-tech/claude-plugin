@@ -35,11 +35,20 @@ const TYPED_REVIEW = {
  * @param opts.teammateFiles - The transcripts that hold teammates' fixes
  * @param opts.teammateGrepFails - Whether the search for teammates' fixes fails
  * @param opts.env - Extra environment variables
+ * @param opts.contents - Each transcript's text, by its path
+ * @param opts.laterTeammateFiles - The transcripts that hold teammates' fixes by the time one is read
  * @returns The tools registered and the commands run
  */
 function engine(
   on: On,
-  opts: { transcripts?: string[]; teammateFiles?: string[]; teammateGrepFails?: boolean; env?: Record<string, string> } = {},
+  opts: {
+    transcripts?: string[]
+    teammateFiles?: string[]
+    teammateGrepFails?: boolean
+    env?: Record<string, string>
+    contents?: Record<string, string>
+    laterTeammateFiles?: string[]
+  } = {},
 ) {
   const seen = { tools: [] as { name: string; isDeferred?: unknown }[], argv: [] as (readonly string[])[] }
   mock.env(on, { HOME: '/home/op', ...opts.env })
@@ -64,6 +73,15 @@ function engine(
     if (e.argv[0] === 'awk') return answer(QUOTIENT_STARTED.filter(file => e.argv.includes(file)).join('\n') + '\n')
     // Newest first: the reverse of the order find gave.
     if (e.argv[0] === 'ls') return answer([...e.argv.filter(arg => arg.startsWith('/'))].reverse().join('\n') + '\n')
+    if (e.argv[0] === 'sed') {
+      const [from, to] = (e.argv[2] ?? '').replace('p', '').split(',').map(Number) as [number, number]
+      const lines = (opts.contents?.[e.argv[3] ?? ''] ?? '').split('\n').filter(line => line !== '').slice(from - 1, to)
+      return answer(lines.map(line => `${line}\n`).join(''))
+    }
+    if (e.argv[0] === 'grep' && e.argv.includes('-q')) {
+      if (opts.teammateGrepFails) return answer('', 2)
+      return answer('', (opts.laterTeammateFiles ?? []).includes(e.argv.at(-1) ?? '') ? 0 : 1)
+    }
     if (e.argv[0] === 'grep') {
       if (opts.teammateGrepFails) return answer('', 2)
       const held = (opts.teammateFiles ?? [HOLDS_FIXES]).filter(file => e.argv.includes(file))
@@ -172,4 +190,73 @@ test('a review the model starts with the Skill tool runs the same as typed', asy
   await callTool($, 'Skill', { skill: 'quotient:review-frictions' })
   const called = await callTool($, SESSIONS_TOOL, { since: SINCE })
   expect(called.deny).toBeUndefined()
+})
+
+const DIGEST_TOOL = 'mcp__quotient__review_digest'
+const A0 = REPO_A[0] as string
+// A session of 300 turns: each prompt, a large read and the agent's reply.
+const LONG_SESSION = Array.from({ length: 300 }, (_, i) => [
+  { type: 'user', timestamp: '2026-11-08T10:00:00Z', cwd: '/repo', message: { role: 'user', content: `Fix test ${i}` } },
+  {
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'Read', input: { file_path: `/repo/f${i}.ts` } }] },
+  },
+  { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: 'x'.repeat(3_000) }] } },
+])
+  .flat()
+  .map(line => JSON.stringify(line))
+  .join('\n')
+
+/**
+ * Starts a review and lists its sessions, so review_digest knows which it may read.
+ *
+ * @param $ - The engine
+ */
+async function startListed($: Engine) {
+  await $.command.run(TYPED_REVIEW)
+  await callTool($, SESSIONS_TOOL, { since: SINCE })
+}
+
+test('the session registers review_digest in the tool list', async ($, on) => {
+  const seen = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(seen.tools).toContainEqual({ name: 'review_digest', isDeferred: false })
+})
+
+test('review_digest answers with the digest of a listed session, within 6,000 characters', async ($, on) => {
+  engine(on, { contents: { [A0]: LONG_SESSION } })
+  await startListed($)
+
+  const called = await callTool($, DIGEST_TOOL, { source: 'a0' })
+
+  expect(called.deny).toBeUndefined()
+  const text = String(called.result)
+  expect(text).toContain('Session a0: 900 lines, /repo')
+  expect(text).toContain('operator: Fix test 0')
+  expect(text.length).toBeLessThanOrEqual(6_000)
+})
+
+test("review_digest refuses a session review_sessions didn't list", async ($, on) => {
+  engine(on, { contents: { [A0]: LONG_SESSION } })
+  await startListed($)
+  for (const source of ['fixes', THIS_SESSION, 'setup', '../a0', 'nope']) {
+    expect((await callTool($, DIGEST_TOOL, { source })).deny).toContain('review_sessions')
+  }
+})
+
+test("review_digest refuses a listed session that has since come to hold teammates' fixes, and never reads it", async ($, on) => {
+  const seen = engine(on, { contents: { [A0]: LONG_SESSION }, laterTeammateFiles: [A0] })
+  await startListed($)
+
+  const called = await callTool($, DIGEST_TOOL, { source: 'a0' })
+
+  expect(called.deny).toContain("teammates' fixes")
+  expect(seen.argv.some(argv => argv[0] === 'sed')).toBe(false)
+})
+
+test('review_digest refuses outside a review-frictions run', async ($, on) => {
+  engine(on, { contents: { [A0]: LONG_SESSION } })
+  await startListed($)
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  expect((await callTool($, DIGEST_TOOL, { source: 'a0' })).deny).toContain('/quotient:review-frictions')
 })
