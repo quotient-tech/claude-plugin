@@ -354,6 +354,9 @@ test("once setup holds transcripts back, a Bash command naming them is refused w
   expect(await bash('cd ~/.claude && grep -rl x projects')).toBe('deny')
   expect(await bash('jq . "$CLAUDE_CONFIG_DIR/projects/-home-op-code-app/plain.jsonl"')).toBe('deny')
   expect(await check($, 'Bash', { command: 'grep -r x ~/.claude/projects' }, 'sub-1')).toBe('deny')
+  // During setup no other shell command runs either; once its run ends, they go on.
+  expect(await bash('cat ~/.claude/settings.json')).toBe('deny')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
   expect(await bash('cat ~/.claude/settings.json')).toBe('allow')
   expect(await bash('git status')).toBe('allow')
 })
@@ -615,4 +618,47 @@ test('outside setup and review-frictions, transcripts are left alone', async ($,
 
   expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
   expect(await check($, 'Bash', { command: 'cat ~/.claude/projects/-home-op-code-app/plain.jsonl' })).toBe('allow')
+})
+
+test('while review-frictions runs, nothing writes a file or runs a shell command', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Write', { file_path: '/tmp/extract.txt', content: 'x' })).toBe('deny')
+  expect(await check($, 'Edit', { file_path: `${REPO}/notes.md`, old_string: 'a', new_string: 'b' })).toBe('deny')
+  expect(await check($, 'NotebookEdit', { notebook_path: `${REPO}/a.ipynb`, new_source: 'x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'echo hi > /tmp/extract.txt' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'ls' })).toBe('deny')
+})
+
+test('while setup runs, nothing writes a file, and the only shell command is the one setup sends its repository with', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Write', { file_path: '/tmp/extract.txt', content: 'x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'git remote get-url origin' })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'git remote get-url origin > /tmp/x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'git status' })).toBe('deny')
+})
+
+test("once the review's turn ends, writes and shell commands go on as before", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+  await endTurn($)
+
+  expect(await check($, 'Write', { file_path: '/tmp/notes.txt', content: 'x' })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'ls' })).toBe('allow')
+})
+
+test('outside setup and review-frictions, writes are left alone', async ($, on) => {
+  engine(on)
+
+  expect(await check($, 'Write', { file_path: '/tmp/notes.txt', content: 'x' })).toBe('allow')
+})
+
+test("while review-frictions runs, a search whose check fails is refused, even of an auto-memory", async ($, on) => {
+  engine(on, { cwdFails: true })
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Glob', { pattern: '*.md' })).toBe('deny')
 })

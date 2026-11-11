@@ -3,7 +3,9 @@
 // teammates' frictions. Both read teammates' text, which is untrusted, so the
 // model there may call only Read, Grep, Glob, ToolSearch, its own skill and its
 // own Quotient tools, and read only where its job needs. A deny here holds
-// over the operator's own allow rules. Anywhere else this changes nothing.
+// over the operator's own allow rules. While setup or review-frictions
+// runs, it also keeps every transcript out of reach but through quotient's
+// digests, and refuses writing a file. Anywhere else this changes nothing.
 // The same hook lets quotient's own mods reach Quotient (self-allow.ts), since
 // a module may hold only one tool.check hook without a matcher.
 import { atom, read, update } from 'claude-code'
@@ -71,6 +73,11 @@ const DENIED_TRANSCRIPT =
 // folder and then its projects folder. Matching a command's text is a best
 // effort, so the skills read transcripts with Read and Grep instead.
 const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bprojects\b/i
+// The tools that write a file, and the one shell command setup runs: it
+// sends a cloud session's repository. A review runs none.
+const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit']
+const SETUP_COMMANDS = ['git remote get-url origin']
+const DENIED_WRITE = 'quotient: setup and review-frictions write no files and run no shell commands of their own'
 const DENIED_LOCKED_TRANSCRIPT =
   "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
 const DENIED_BASH_TRANSCRIPT =
@@ -270,18 +277,36 @@ async function transcriptDenial($: EngineInterface, tool: string, input: Record<
 
 /**
  * Tells whether setup or review-frictions is running, when nothing but
- * quotient's digests may reach a transcript: setup's run, a review the
- * operator or the model started, or a daily review-frictions run.
+ * quotient's digests may reach a transcript and nothing writes a file:
+ * setup's run, a review the operator or the model started, or a daily
+ * review-frictions run.
  *
  * @param $ - The engine
- * @returns Whether the transcripts are locked
+ * @returns Which skill is running, or null for neither
  */
-async function isLockedDown($: EngineInterface): Promise<boolean> {
-  if ((await $.env.get('QUOTIENT_DAILY_RUN_KIND')) === 'review-frictions') return true
+async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions' | null> {
+  if ((await $.env.get('QUOTIENT_DAILY_RUN_KIND')) === 'review-frictions') return 'review-frictions'
   const setupRun = await read($, { plugin: 'quotient', key: 'setupRun' } as const)
-  if (setupRun?.shape === RUN_SHAPE && setupRun.value.isRunning) return true
+  if (setupRun?.shape === RUN_SHAPE && setupRun.value.isRunning) return 'setup'
   const reviewRun = await read($, { plugin: 'quotient', key: 'reviewRun' } as const)
-  return reviewRun?.shape === REVIEW_SHAPE && reviewRun.value.isRunning
+  return reviewRun?.shape === REVIEW_SHAPE && reviewRun.value.isRunning ? 'review-frictions' : null
+}
+
+/**
+ * Says why a call is refused while setup or review-frictions runs because it
+ * could write a file: a write tool, or any shell command but the running
+ * skill's own.
+ *
+ * @param tool - The tool's full name
+ * @param input - The call's input
+ * @param skill - The running skill
+ * @returns The reason, or null when the call writes nothing
+ */
+function writeDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
+  if (WRITE_TOOLS.includes(tool)) return DENIED_WRITE
+  if (tool !== 'Bash') return null
+  const allowed = skill === 'setup' ? SETUP_COMMANDS : []
+  return typeof input.command === 'string' && allowed.includes(input.command.trim()) ? null : DENIED_WRITE
 }
 
 /**
@@ -477,10 +502,10 @@ export function registerGuard(on: On): void {
     const isHeld = (['Read', 'Grep', 'Bash'].includes(e.tool) || isOtherServer(e.tool)) && (await holdsTranscripts($, scope))
     const where = async (): Promise<SandboxReach> => reachFor($, scope?.withRepos ?? false)
     // setup's teammate check searches the operator's sessions by design; it can't write or run a shell.
-    const isLocked = scope?.tools !== TEAMMATE_CHECK_TOOLS && (await isLockedDown($))
+    const locked = scope?.tools === TEAMMATE_CHECK_TOOLS ? null : await lockedBy($)
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
-      (isLocked ? await lockedTranscriptDenial($, e.tool, input, where) : null) ??
+      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? writeDenial(e.tool, input, locked)) ??
       (!isHeld
         ? null
         : e.tool === 'Bash' || isOtherServer(e.tool)
@@ -499,6 +524,12 @@ export function registerGuard(on: On): void {
     if (next.origin.plugin !== 'engine') return next(e)
     if (isSendTool(e.tool)) return { decision: 'deny', reason: FAILED }
     const input = (e.input ?? {}) as Record<string, unknown>
+    // While setup or a review runs, or when that can't be told, a call that
+    // could reach a transcript or write a file is refused.
+    const couldReach = [...READ_TOOLS, ...WRITE_TOOLS, 'Bash'].includes(e.tool) || isOtherServer(e.tool)
+    if (couldReach && (await lockedBy($).catch(() => 'unknown' as const)) !== null) {
+      return { decision: 'deny', reason: FAILED }
+    }
     const isTranscriptRead =
       e.tool === 'Read' ||
       e.tool === 'Grep' ||
