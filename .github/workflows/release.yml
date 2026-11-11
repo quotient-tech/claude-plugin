@@ -64,7 +64,7 @@ jobs:
             major) next="$((major + 1)).0.0" ;;
             *) echo "::error::bump must be patch, minor or major, not $BUMP."; exit 1 ;;
           esac
-          echo "Releasing $next (was $current)."
+          echo "Releasing $next (was $current)." | tee -a "$GITHUB_STEP_SUMMARY"
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "tag=v$next" >> "$GITHUB_OUTPUT"
 
