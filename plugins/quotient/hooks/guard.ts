@@ -77,9 +77,11 @@ const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bproject
 // While setup or review-frictions runs, only the calls they make may run:
 // none writes a file, and RemoteTrigger only reads routines and their runs.
 const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
-// What setup and review-frictions use to ask the operator, wait on and steer
-// their subagents, and answer: none writes a file or runs a shell.
-const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'ScheduleWakeup', 'SendMessage', 'StructuredOutput', 'TaskStop']
+// What setup and review-frictions use to ask the operator, wait on and stop
+// their subagents, and answer: none writes a file, runs a shell, or reaches
+// an agent or a later turn outside the lock, as SendMessage and
+// ScheduleWakeup can.
+const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']
 const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
 const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
 const DENIED_LOCKED_TRANSCRIPT =
@@ -299,7 +301,7 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
 /**
  * Says why a call is refused while setup or review-frictions runs: only the
  * tools they use may run: reads, the harness's tools for asking the operator
- * and managing subagents, quotient's and Quotient's own tools, a subagent in
+ * and stopping subagents, quotient's and Quotient's own tools, a subagent in
  * this checkout, quotient's own skills, and during setup,
  * RemoteTrigger's reads and setup's own shell commands.
  *

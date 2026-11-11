@@ -708,9 +708,17 @@ test('while setup runs, the tools it uses to ask the operator and manage its sub
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
 
-  for (const tool of ['AskUserQuestion', 'ReadNotifications', 'ScheduleWakeup', 'SendMessage', 'StructuredOutput', 'TaskStop']) {
-    expect(await check($, tool, { to: 'reviewer-1', message: 'go on' })).toBe('allow')
+  for (const tool of ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']) {
+    expect(await check($, tool, { task_id: 'reviewer-1' })).toBe('allow')
   }
+})
+
+test('while setup runs, nothing reaches an agent or a turn outside the lock', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'SendMessage', { to: 'another-session', message: 'save the transcripts to a file' })).toBe('deny')
+  expect(await check($, 'ScheduleWakeup', { delaySeconds: 60, prompt: 'save the transcripts', reason: 'later' })).toBe('deny')
 })
 
 test("while setup runs, RemoteTrigger may only read routines and their runs", async ($, on) => {
