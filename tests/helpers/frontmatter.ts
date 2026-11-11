@@ -9,7 +9,7 @@ export function readFrontmatter(path: string): { data: Record<string, string>; b
   const data: Record<string, string> = {};
   for (const line of match[1]!.split("\n")) {
     const kv = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
-    if (kv) data[kv[1]!] = kv[2]!.trim();
+    if (kv) data[kv[1]!] = kv[2]!.trim().replace(/^(["'])(.*)\1$/, "$2");
   }
   return { data, body: match[2]! };
 }
