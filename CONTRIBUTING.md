@@ -110,20 +110,28 @@ Developer trust, privacy and security come first. When a change trades any of th
 ## Pull requests
 
 - Keep each pull request to one change, and describe what it changes for users and how you tested it.
-- **A pull request that changes the plugin's behavior sets a new `version` in `plugins/quotient/.claude-plugin/plugin.json`.** See [Release a new version](#release-a-new-version). Changes only under `plugins/quotient/tests/`, `tests/`, `scripts/` or docs don't need one.
+- **A pull request doesn't change `version` in `plugins/quotient/.claude-plugin/plugin.json` or `source` in `.claude-plugin/marketplace.json`.** The release workflow sets both. See [Release a new version](#release-a-new-version).
 - All [checks](#checks) pass.
 
 ## Release a new version
 
-Claude Code caches each installed plugin by its version. Commits that don't change `version` reach nobody, however long they sit on `main` ([Keep users up to date](https://code.claude.com/docs/en/plugins/host-marketplace#keep-users-up-to-date)).
+The marketplace serves the plugin at the latest release tag, not at `main`, so merged changes reach users only when you release them. Claude Code caches each installed plugin by its version, and a release is what sets a new one ([Keep users up to date](https://code.claude.com/docs/en/plugins/host-marketplace#keep-users-up-to-date)).
 
-1. In the same pull request as the change, set a new `version` in `plugins/quotient/.claude-plugin/plugin.json`, using [semver](https://semver.org):
+1. Choose how much the version goes up, using [semver](https://semver.org):
    - **patch** for a fix;
    - **minor** for a new skill, hook or behavior;
    - **major** for a breaking change.
-2. Set `version` only in `plugin.json`, never on the marketplace entry. Claude Code uses the `plugin.json` value, and `claude plugin validate` reports the mismatch.
-3. Run the [checks](#checks) and merge to `main`. The marketplace serves `main`, so the release is live once it merges.
-4. Users pick it up as the README's [Keep it up to date](README.md#keep-it-up-to-date) says.
+2. On GitHub, open **Actions**, select the **release** workflow, choose **Run workflow** on `main` and pick that `bump`. Or run:
+
+   ```sh
+   gh workflow run release.yml --ref main -f bump=patch
+   ```
+
+3. The workflow raises `version` in `plugins/quotient/.claude-plugin/plugin.json`, points the marketplace entry at the new tag (`vX.Y.Z`), and runs the validators and `npm test`. Then it pushes the commit and the tag to `main` together and creates the GitHub release with generated notes. If a step fails before the push, nothing changes, so fix the cause and run it again.
+4. If the push succeeded but creating the release failed, the release is already live. Create the GitHub release by hand with `gh release create vX.Y.Z --verify-tag --generate-notes`.
+5. Users pick it up as the README's [Keep it up to date](README.md#keep-it-up-to-date) says.
+
+Set `version` only in `plugin.json`, never on the marketplace entry. Claude Code uses the `plugin.json` value, and `claude plugin validate` reports the mismatch. `tests/marketplace.test.ts` checks that the marketplace entry's `ref` is `v` followed by that version.
 
 ## License
 

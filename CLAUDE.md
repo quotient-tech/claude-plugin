@@ -4,7 +4,7 @@ This repo holds the `quotient` Claude Code plugin and the `quotient` marketplace
 
 ## Before opening a PR
 
-- **A PR that changes the plugin's behavior sets a new `version` in `plugins/quotient/.claude-plugin/plugin.json`.** Before `gh pr create`, run `git diff origin/main --name-only -- plugins/` and, if anything outside `plugins/quotient/tests/` changed, confirm the version changed too.
+- **A PR never changes `version` in `plugins/quotient/.claude-plugin/plugin.json` or `source` in `.claude-plugin/marketplace.json`.** The release workflow sets both, as [CONTRIBUTING's Release a new version](CONTRIBUTING.md#release-a-new-version) says. Before `gh pr create`, check that `git diff origin/main -- plugins/quotient/.claude-plugin/plugin.json .claude-plugin/marketplace.json` is empty.
 - **Run every check in [CONTRIBUTING's Checks](CONTRIBUTING.md#checks)**, including `claude plugin test plugins/quotient`.
 - **Keep the README heading "If Claude Code denies quotient's calls" word for word.** `DENIED_HELP` in `plugins/quotient/hooks/text.ts` links to its anchor, and the plugin shows that link to users.
 
