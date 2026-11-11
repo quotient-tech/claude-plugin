@@ -100,3 +100,10 @@ test("a git-subdir source whose path leaves the repo is rejected", () => {
 test("any other source shape is rejected", () => {
   assert.throws(() => pluginDir({ source: "github", repo: "quotient-tech/claude-plugin" }), /unsupported source/);
 });
+
+// The directory links the plugin's server to Quotient's connector only by this
+// exact URL. A dev or local URL set for testing must never be committed.
+test("quotient: ships production's literal MCP URL", () => {
+  const config = readJson(join(ROOT, "plugins/quotient/.mcp.json")) as { mcpServers: { agex: { url: string } } };
+  assert.equal(config.mcpServers.agex.url, "https://mcp.getquotient.com/mcp");
+});
