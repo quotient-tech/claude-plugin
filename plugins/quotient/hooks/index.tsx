@@ -15,6 +15,7 @@ import { FIX_TOOLS_SPECS, registerFix } from './fix'
 import { registerFixStatus } from './fix-status'
 import { registerGuard } from './guard'
 import { registerListFixes } from './list-fixes'
+import { registerReview, REVIEW_TOOLS_SPECS } from './review'
 import { registerSetup, SETUP_TOOLS_SPECS } from './setup'
 import { registerTeammateText } from './teammate-text'
 import { registerThankYous } from './thank-yous'
@@ -28,7 +29,7 @@ import { registerUsage } from './usage'
  */
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
-    for (const spec of [...SETUP_TOOLS_SPECS, ...FIX_TOOLS_SPECS]) await $.tool.register(spec)
+    for (const spec of [...SETUP_TOOLS_SPECS, ...REVIEW_TOOLS_SPECS, ...FIX_TOOLS_SPECS]) await $.tool.register(spec)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -43,6 +44,7 @@ export const register: Register = (on, options) => {
   registerListFixes(on, options)
   registerFix(on, options)
   registerSetup(on, options)
+  registerReview(on, options)
   registerDaily(on, options)
   registerUsage(on)
 }
