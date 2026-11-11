@@ -728,3 +728,39 @@ test("while setup runs, RemoteTrigger may only read routines and their runs", as
   for (const action of ['list', 'get', 'list_runs', 'get_run_log']) expect(await check($, 'RemoteTrigger', { action })).toBe('allow')
   for (const action of ['create', 'update', 'run']) expect(await check($, 'RemoteTrigger', { action })).toBe('deny')
 })
+
+test("while review-frictions runs, only its own Quotient tools may run", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  for (const tool of ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('allow')
+    expect(await check($, `mcp__claude_ai_Quotient__${tool}`, {})).toBe('allow')
+  }
+  for (const tool of ['mark_solution_implemented', 'send_thank_you', 'list_teammate_frictions', 'start_setup_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
+  }
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('deny')
+  expect(await check($, 'mcp__quotient__fix_card', {})).toBe('deny')
+})
+
+test("while setup runs, only its own Quotient tools may run", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const tool of ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('allow')
+  }
+  for (const tool of ['setup_start', 'setup_digest', 'setup_summary']) expect(await check($, `mcp__quotient__${tool}`, {})).toBe('allow')
+  for (const tool of ['submit_review', 'mark_solution_implemented', 'send_thank_you']) expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'plain' })).toBe('deny')
+})
+
+test("when the projects folder is a link, a transcript is refused by the path it leads to as well", async ($, on) => {
+  engine(on, { links: { [`${CONFIG}/projects`]: '/data/claude-projects' } })
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: '/data/claude-projects/-home-op-code-app/plain.jsonl' })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/data/claude-projects' })).toBe('deny')
+  expect(await check($, 'Read', { file_path: '/data/claude-projects/-home-op-code-app/memory/MEMORY.md' })).toBe('allow')
+})

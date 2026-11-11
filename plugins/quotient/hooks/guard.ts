@@ -83,6 +83,15 @@ const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
 // ScheduleWakeup can.
 const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']
 const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
+// The Quotient tools, under either server, and quotient's own tools each skill calls.
+const LOCKED_QUOTIENT_TOOLS = {
+  setup: ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run'],
+  'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
+} as const
+const LOCKED_OWN_TOOLS = {
+  setup: ['mcp__quotient__setup_start', 'mcp__quotient__setup_digest', 'mcp__quotient__setup_summary'],
+  'review-frictions': ['mcp__quotient__review_sessions', 'mcp__quotient__review_digest'],
+} as const
 const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
 const DENIED_LOCKED_TRANSCRIPT =
   "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
@@ -301,8 +310,8 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
 /**
  * Says why a call is refused while setup or review-frictions runs: only the
  * tools they use may run: reads, the harness's tools for asking the operator
- * and stopping subagents, quotient's and Quotient's own tools, a subagent in
- * this checkout, quotient's own skills, and during setup,
+ * and stopping subagents, the skill's own Quotient and quotient tools, a
+ * subagent in this checkout, quotient's own skills, and during setup,
  * RemoteTrigger's reads and setup's own shell commands.
  *
  * @param tool - The tool's full name
@@ -312,7 +321,7 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
  */
 function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
   if ([...READ_TOOLS, ...ALWAYS, ...LOCKED_HARNESS_TOOLS].includes(tool)) return null
-  if (tool.startsWith('mcp__quotient__') || QUOTIENT_PREFIXES.some(prefix => tool.startsWith(prefix))) return null
+  if (isQuotientTool(tool, LOCKED_QUOTIENT_TOOLS[skill]) || (LOCKED_OWN_TOOLS[skill] as readonly string[]).includes(tool)) return null
   if (tool === 'Agent' && input.isolation === undefined) return null
   if (tool === 'Skill' && isQuotientSkill(input.skill, LOCKED_SKILLS, true)) return null
   if (skill !== 'setup') return DENIED_LOCKED_TOOL
@@ -343,24 +352,28 @@ async function lockedTranscriptDenial(
 ): Promise<string | null> {
   if (tool !== 'Bash' && !READ_TOOLS.includes(tool)) return null
   const where = await reach()
-  const projects = `${where.dirs.config}/projects`.normalize('NFC').toLowerCase()
+  const form = (path: string) => path.normalize('NFC').toLowerCase()
+  // The projects folder as written and, when it's a link, where it leads.
+  const projectsAsWritten = `${where.dirs.config}/projects`
+  const linked = (await $.fs.stat(projectsAsWritten, { resolve: true }).catch(() => undefined))?.realPath
+  const roots = [...new Set([projectsAsWritten, linked ?? projectsAsWritten].map(form))]
   if (tool === 'Bash') {
-    const named = typeof input.command === 'string' ? input.command : ''
-    return BASH_TRANSCRIPTS.test(named) || named.normalize('NFC').toLowerCase().includes(projects) ? DENIED_LOCKED_TRANSCRIPT : null
+    const named = typeof input.command === 'string' ? form(input.command) : ''
+    return BASH_TRANSCRIPTS.test(named) || roots.some(root => named.includes(root)) ? DENIED_LOCKED_TRANSCRIPT : null
   }
   const cwd = await $.session.cwd()
   const written = tool === 'Glob' ? globRoot(input, where.dirs, cwd) : fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
   // A path that can't be placed, such as one with `..`, could reach the transcripts.
   if (written === null) return DENIED_LOCKED_TRANSCRIPT
   const stat = await $.fs.stat(written, { resolve: true }).catch(() => undefined)
-  const paths = [written, stat?.realPath ?? written].map(path => path.normalize('NFC').toLowerCase())
-  const isTranscript = (path: string) => path.startsWith(`${projects}/`) && path.endsWith('.jsonl')
+  const paths = [written, stat?.realPath ?? written].map(form)
+  const isTranscript = (path: string) => roots.some(root => path.startsWith(`${root}/`)) && path.endsWith('.jsonl')
   if (paths.some(isTranscript)) return DENIED_LOCKED_TRANSCRIPT
   if (tool === 'Read' || stat?.kind === 'file') return null
   // A search of a folder reads every transcript under it, outside a project's auto-memory.
-  const isMemory = (path: string) => path.startsWith(`${projects}/`) && /^[^/]+\/memory(\/|$)/.test(path.slice(projects.length + 1))
-  const holdsTranscripts = (path: string) => path === projects || path.startsWith(`${projects}/`) || projects.startsWith(`${path === '/' ? '' : path}/`)
-  return paths.some(path => holdsTranscripts(path) && !isMemory(path)) ? DENIED_LOCKED_TRANSCRIPT : null
+  const isMemory = (path: string, root: string) => path.startsWith(`${root}/`) && /^[^/]+\/memory(\/|$)/.test(path.slice(root.length + 1))
+  const holds = (path: string, root: string) => path === root || path.startsWith(`${root}/`) || root.startsWith(`${path === '/' ? '' : path}/`)
+  return paths.some(path => roots.some(root => holds(path, root) && !isMemory(path, root))) ? DENIED_LOCKED_TRANSCRIPT : null
 }
 
 /**
