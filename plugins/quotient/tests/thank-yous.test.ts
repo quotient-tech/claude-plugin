@@ -212,7 +212,7 @@ test('cutting a note never splits an emoji in two', () => {
 
 test('control characters, escape sequences and direction overrides never reach the toast', () => {
   const text = thankYouText({
-    message: 'Thanks\x1b[31m red\x1b[0m \x1b]8;;https://evil.test\x07link\x1b]8;;\x07 ‮evil\nnext\tline\x00',
+    message: 'Thanks\x1b[31m red\x1b[0m \x1b]8;;https://evil.test\x07link\x1b]8;;\x07 \u202eevil\nnext\tline\x00',
     fixDescription: 'Use\r\nthe \x9bsetup\x7f script',
     frictionTitle: null,
   })
