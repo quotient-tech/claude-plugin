@@ -41,7 +41,11 @@ jobs:
             exit 1
           fi
 
+      # The token stays out of .git/config while npm and Claude Code install and
+      # run; only the steps that talk to GitHub get it, through env.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
@@ -70,12 +74,18 @@ jobs:
 
       - name: Require a new tag
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
-            echo "::error::Tag $TAG already exists."
-            exit 1
-          fi
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # --exit-code: 0 when the tag exists, 2 when it doesn't, anything else is an error.
+          status=0
+          git ls-remote --exit-code --tags "$remote" "refs/tags/$TAG" > /dev/null || status=$?
+          case "$status" in
+            0) echo "::error::Tag $TAG already exists."; exit 1 ;;
+            2) ;;
+            *) echo "::error::Couldn't check for tag $TAG (git ls-remote exited $status)."; exit 1 ;;
+          esac
 
       # sed rather than jq, so the file keeps its layout and the release commit
       # changes one line.
@@ -122,14 +132,16 @@ jobs:
 
       - name: Commit, tag and push
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git config user.name "github-actions[bot]"
           git config user.email "41898277+github-actions[bot]@users.noreply.github.com"
           git add "$PLUGIN_JSON" "$MARKETPLACE_JSON"
           git commit -m "chore(release): $TAG"
           git tag -a "$TAG" -m "$TAG"
-          git push --atomic origin HEAD:main "$TAG"
+          git push --atomic "$remote" HEAD:main "$TAG"
 
       - name: Create the GitHub release
         env:
