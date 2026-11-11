@@ -16,7 +16,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SESSIONS } from "./build-setup-fixture.ts";
 import { measureSetup, readSession } from "./measure-setup.ts";
-import { install, isLocalQuotient, setupArgs, setupEnv, transcriptOf } from "./run-setup-fixture.ts";
+import { install, isLocalQuotient, pluginUrl, SETUP_ENV, setupArgs, transcriptOf } from "./run-setup-fixture.ts";
 
 type Line = Record<string, unknown>;
 type Block = Record<string, unknown>;
@@ -115,14 +115,13 @@ const RUN_TIMEOUT_MS = 45 * 60_000;
  * Runs setup until it records its first batch, then stops it.
  * @param projects - The Claude Code projects folder.
  * @param mode - The permission mode.
- * @param url - The local Quotient.
  * @returns The run's session id, and whether it was stopped before it finished.
  * @throws When claude can't start, or the run records no batch in time.
  */
-async function runUntilRecorded(projects: string, mode: string, url: string): Promise<{ sessionId: string; isStopped: boolean }> {
+async function runUntilRecorded(projects: string, mode: string): Promise<{ sessionId: string; isStopped: boolean }> {
   const sessionId = randomUUID();
   const cwd = mkdtempSync(join(tmpdir(), "setup-check-"));
-  const child = spawn("claude", [...setupArgs(mode), "--session-id", sessionId], { cwd, stdio: "ignore", env: setupEnv(url) });
+  const child = spawn("claude", [...setupArgs(mode), "--session-id", sessionId], { cwd, stdio: "ignore", env: SETUP_ENV });
   const exited = new Promise<void>((done) => child.once("exit", () => done()));
   let isDone = false;
   let spawnError: Error | undefined;
@@ -150,8 +149,8 @@ async function runUntilRecorded(projects: string, mode: string, url: string): Pr
 }
 
 if (import.meta.main) {
-  const url = process.env.AGEX_MCP_URL ?? "http://localhost:3000/mcp";
-  if (!isLocalQuotient(url)) throw new Error(`AGEX_MCP_URL must be a local Quotient, not ${url}`);
+  const url = pluginUrl();
+  if (!isLocalQuotient(url)) throw new Error(`plugins/quotient/.mcp.json must name a local Quotient, not ${url}: see CONTRIBUTING.md`);
   const modeAt = process.argv.indexOf("--permission-mode");
   const mode = modeAt === -1 ? "default" : (process.argv[modeAt + 1] ?? "default");
   const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects");
@@ -159,14 +158,14 @@ if (import.meta.main) {
   const folder = install(projects);
   const failures: string[] = [];
   try {
-    const first = await runUntilRecorded(projects, mode, url);
+    const first = await runUntilRecorded(projects, mode);
     if (!first.isStopped) failures.push("the first run finished before it recorded a batch, so resuming wasn't checked");
     const ran = spawnSync("claude", setupArgs(mode), {
       cwd: mkdtempSync(join(tmpdir(), "setup-check-")),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],
       timeout: RUN_TIMEOUT_MS,
-      env: setupEnv(url),
+      env: SETUP_ENV,
     });
     const second = (JSON.parse(ran.stdout) as { session_id: string }).session_id;
     const runs = [first.sessionId, second].map((id) => readSession(transcriptOf(projects, id)));
