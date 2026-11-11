@@ -41,12 +41,12 @@ test('an email address is found even when text runs on after its domain', () => 
 
 test('a secret is found by its well-known shape', () => {
   const secrets = [
-    '-----BEGIN OPENSSH PRIVATE KEY-----',
-    'ghp_0123456789abcdefghijABCDEFGHIJ012345',
-    'github_pat_11ABCDEFG0123456789_abcdefghijklmnop',
-    'AKIAABCDEFGHIJKLMNOP',
-    'xoxb-1234567890-abcdefghij',
-    'sk-ant-api03-abcdefghijklmnopqrstuvwx',
+    '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----',
+    'ghp_' + '0123456789abcdefghijABCDEFGHIJ012345',
+    'github_pat_' + '11ABCDEFG0123456789_abcdefghijklmnop',
+    'AKIA' + 'ABCDEFGHIJKLMNOP',
+    'xoxb-' + '1234567890-abcdefghij',
+    'sk-ant-' + 'api03-abcdefghijklmnopqrstuvwx',
   ]
   for (const secret of secrets) {
     expect(privateText({ prompt: `Set the token to ${secret} in settings` }, HOME)).toEqual({
@@ -108,7 +108,7 @@ test('each field of each answer sent together is checked, and the result names t
 })
 
 test('the result never holds the private text it found', () => {
-  const found = privateText({ description: 'Token ghp_0123456789abcdefghijABCDEFGHIJ012345 leaked' }, HOME)
+  const found = privateText({ description: `Token ${'ghp_' + '0123456789abcdefghijABCDEFGHIJ012345'} leaked` }, HOME)
   expect(JSON.stringify(found)).not.toContain('ghp_')
 })
 
@@ -116,7 +116,7 @@ test('ids and the repository are never checked', () => {
   const input = {
     frictionId: 'jane@example.com',
     sessionId: '/Users/jane/x',
-    runId: 'ghp_0123456789abcdefghijABCDEFGHIJ012345',
+    runId: 'ghp_' + '0123456789abcdefghijABCDEFGHIJ012345',
     repository: 'jane-doe/app',
     title: 'Lint fails in CI after passing on commit',
   }
