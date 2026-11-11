@@ -214,7 +214,7 @@ const EVENT_CHARS = { error: 400, user: 600, result: 400, assistant: 200, toolUs
 const MAX_PREAMBLE = 2
 const LIST_NOTE = 'quotient shortened this reply for setup: each routine keeps the fields setup reads'
 const LOG_NOTE =
-  "(quotient digested this log for setup: errors, the operator's prompts and the result stay; when it runs long, plain tool events go first, then the agent's text, then repeated calls)"
+  "(quotient digested this log for setup: when it runs long, plain tool events go first, then the agent's text, then repeated calls; errors and the operator's prompts are kept longest, and the run's result always)"
 
 type Routine = Record<string, unknown>
 
