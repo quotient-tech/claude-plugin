@@ -105,7 +105,7 @@ In local sessions the plugin runs once a day in the background scanning for new 
 - **What you send describes the problem, not you.** No names, emails, secrets, hostnames, customer data or ids, and quotient refuses to send text that holds a home path, project folder name, email or secret.
 - **Teammates don't see who you are,** and you don't see who they are.
 - **Teammates' fixes are untrusted.** Claude follows a fix only after you pick it, and agents that read teammates' text can only read files and use their own Quotient tools.
-- **Your permission settings come first.** quotient approves only its own calls to Quotient, and never overrides a rule you or your organization set.
+- **Your permission settings come first.** quotient never approves a call. Its calls to Quotient go through your permission settings like any tool call, and it never overrides a rule you or your organization set.
 - **Token usage is counts only.** To turn it off, set `"QUOTIENT_USAGE": "off"` in the `env` block of `~/.claude/settings.json`.
 - **There is no dry run.** The skills send to Quotient whenever you run them.
 
@@ -123,7 +123,7 @@ If Claude already read a teammate's fix in this session, further scanning waits 
 
 ### If Claude Code denies quotient's calls
 
-A few of quotient's calls to Quotient run in the background: the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these to `permissions.allow` in your settings:
+Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, and, in the background, the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have the background ones run without asking, add these to `permissions.allow` in your settings:
 
 ```json
 "mcp__plugin_quotient_agex__list_my_frictions",
@@ -132,9 +132,11 @@ A few of quotient's calls to Quotient run in the background: the status line's c
 "mcp__claude_ai_Quotient__record_usage"
 ```
 
+To have the daily runs start without asking, also add `"mcp__plugin_quotient_agex__claim_daily_run"` and `"mcp__plugin_quotient_agex__complete_daily_run"`. Cloud sessions start no daily runs, so these need no `claude_ai_Quotient` rules.
+
 Leave out the `record_usage` rules if you'd rather approve each send of token usage. Don't add a rule for `check_thank_yous`, or for the whole `mcp__plugin_quotient_agex` server.
 
-Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient approves, why, and what each denial looks like.
+Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient makes and what each denial looks like.
 
 ## Report an issue
 
