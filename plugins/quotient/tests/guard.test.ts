@@ -685,3 +685,27 @@ test("while setup or review-frictions runs, other servers' tools are refused, wh
   expect(await check($, `${AGEX}start_setup_run`, {})).toBe('allow')
   expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
 })
+
+test('while review-frictions runs, only the tools it uses may run', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  for (const tool of ['Monitor', 'EnterWorktree', 'PowerShell', 'WebFetch', 'CronCreate', 'TodoWrite']) {
+    expect(await check($, tool, { command: 'ls', url: 'https://example.com' })).toBe('deny')
+  }
+  expect(await check($, 'RemoteTrigger', { action: 'get_run_log', session_id: 's' })).toBe('deny')
+  expect(await check($, 'Skill', { skill: 'some-plugin:deploy' })).toBe('deny')
+  expect(await check($, 'Skill', { skill: 'quotient:review-frictions' })).toBe('allow')
+  expect(await check($, 'Agent', { subagent_type: 'Explore', prompt: 'look' })).toBe('allow')
+  expect(await check($, 'Agent', { subagent_type: 'general-purpose', prompt: 'x', isolation: 'worktree' })).toBe('deny')
+  expect(await check($, `${AGEX}list_my_frictions`, {})).toBe('allow')
+  expect(await check($, 'ToolSearch', { query: 'select:x' })).toBe('allow')
+})
+
+test("while setup runs, RemoteTrigger may only read routines and their runs", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const action of ['list', 'get', 'list_runs', 'get_run_log']) expect(await check($, 'RemoteTrigger', { action })).toBe('allow')
+  for (const action of ['create', 'update', 'run']) expect(await check($, 'RemoteTrigger', { action })).toBe('deny')
+})

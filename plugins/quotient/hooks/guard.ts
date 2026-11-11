@@ -73,15 +73,15 @@ const DENIED_TRANSCRIPT =
 // folder and then its projects folder. Matching a command's text is a best
 // effort, so the skills read transcripts with Read and Grep instead.
 const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bprojects\b/i
-// The tools that write a file, and the one shell command setup runs: it
-// sends a cloud session's repository. A review runs none.
-const WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit']
+// While setup or review-frictions runs, only the calls they make may run:
+// none writes a file. Setup's one shell command sends a cloud session's
+// repository, and RemoteTrigger only reads routines and their runs.
 const SETUP_COMMANDS = ['git remote get-url origin']
-const DENIED_WRITE = 'quotient: setup and review-frictions write no files and run no shell commands of their own'
+const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
+const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
+const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
 const DENIED_LOCKED_TRANSCRIPT =
   "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
-const DENIED_LOCKED_SERVER =
-  "quotient: setup and review-frictions use no other server's tools, which could reach the transcripts or write a file"
 const DENIED_BASH_TRANSCRIPT =
   "quotient: some transcripts hold teammates' fixes, which review-frictions and setup never read: read transcripts with Read, one session at a time, or during setup through setup_digest"
 
@@ -295,30 +295,35 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
 }
 
 /**
- * Says why a call is refused while setup or review-frictions runs because it
- * could write a file: a write tool, or any shell command but the running
- * skill's own.
+ * Says why a call is refused while setup or review-frictions runs: only the
+ * tools they use may run. Reads, quotient's and Quotient's own tools, a
+ * subagent in this checkout, quotient's own skills (another skill's commands
+ * run as it loads, past this check), RemoteTrigger's reads during setup, and
+ * setup's one shell command.
  *
  * @param tool - The tool's full name
  * @param input - The call's input
  * @param skill - The running skill
- * @returns The reason, or null when the call writes nothing
+ * @returns The reason, or null when the call may run
  */
-function writeDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
-  if (WRITE_TOOLS.includes(tool)) return DENIED_WRITE
-  if (tool !== 'Bash') return null
-  const allowed = skill === 'setup' ? SETUP_COMMANDS : []
-  return typeof input.command === 'string' && allowed.includes(input.command.trim()) ? null : DENIED_WRITE
+function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
+  if ([...READ_TOOLS, ...ALWAYS].includes(tool)) return null
+  if (tool.startsWith('mcp__quotient__') || QUOTIENT_PREFIXES.some(prefix => tool.startsWith(prefix))) return null
+  if (tool === 'Agent' && input.isolation === undefined) return null
+  if (tool === 'Skill' && isQuotientSkill(input.skill, LOCKED_SKILLS, true)) return null
+  if (skill !== 'setup') return DENIED_LOCKED_TOOL
+  if (tool === 'RemoteTrigger' && REMOTE_READS.includes(String(input.action))) return null
+  return tool === 'Bash' && typeof input.command === 'string' && SETUP_COMMANDS.includes(input.command.trim()) ? null : DENIED_LOCKED_TOOL
 }
 
 /**
  * Says why a call is refused while the transcripts are locked, whatever
  * they hold: a Read of a transcript (`*.jsonl` under the projects folder),
- * a Grep or Glob of a folder that holds any, a Bash command that names them,
- * or any other server's call, which quotient can't see into. A project's
+ * a Grep or Glob of a folder that holds any, or a Bash command that names
+ * them. A project's
  * auto-memory folder and other files under the projects folder, such as a
- * saved reply, stay readable. Paths compare ignoring case, as macOS's file
- * system does.
+ * saved reply, stay readable. Paths compare ignoring case and Unicode form,
+ * as macOS's file system does.
  *
  * @param $ - The engine
  * @param tool - The tool's full name
@@ -332,20 +337,19 @@ async function lockedTranscriptDenial(
   input: Record<string, unknown>,
   reach: () => Promise<SandboxReach>,
 ): Promise<string | null> {
-  if (isOtherServer(tool)) return DENIED_LOCKED_SERVER
   if (tool !== 'Bash' && !READ_TOOLS.includes(tool)) return null
   const where = await reach()
-  const projects = `${where.dirs.config}/projects`.toLowerCase()
+  const projects = `${where.dirs.config}/projects`.normalize('NFC').toLowerCase()
   if (tool === 'Bash') {
     const named = typeof input.command === 'string' ? input.command : ''
-    return BASH_TRANSCRIPTS.test(named) || named.toLowerCase().includes(projects) ? DENIED_LOCKED_TRANSCRIPT : null
+    return BASH_TRANSCRIPTS.test(named) || named.normalize('NFC').toLowerCase().includes(projects) ? DENIED_LOCKED_TRANSCRIPT : null
   }
   const cwd = await $.session.cwd()
   const written = tool === 'Glob' ? globRoot(input, where.dirs, cwd) : fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
   // A path that can't be placed, such as one with `..`, could reach the transcripts.
   if (written === null) return DENIED_LOCKED_TRANSCRIPT
   const stat = await $.fs.stat(written, { resolve: true }).catch(() => undefined)
-  const paths = [written, stat?.realPath ?? written].map(path => path.toLowerCase())
+  const paths = [written, stat?.realPath ?? written].map(path => path.normalize('NFC').toLowerCase())
   const isTranscript = (path: string) => path.startsWith(`${projects}/`) && path.endsWith('.jsonl')
   if (paths.some(isTranscript)) return DENIED_LOCKED_TRANSCRIPT
   if (tool === 'Read' || stat?.kind === 'file') return null
@@ -510,7 +514,7 @@ export function registerGuard(on: On): void {
     const locked = scope?.tools === TEAMMATE_CHECK_TOOLS ? null : await lockedBy($)
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
-      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? writeDenial(e.tool, input, locked)) ??
+      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? lockedToolDenial(e.tool, input, locked)) ??
       (!isHeld
         ? null
         : e.tool === 'Bash' || isOtherServer(e.tool)
@@ -529,10 +533,10 @@ export function registerGuard(on: On): void {
     if (next.origin.plugin !== 'engine') return next(e)
     if (isSendTool(e.tool)) return { decision: 'deny', reason: FAILED }
     const input = (e.input ?? {}) as Record<string, unknown>
-    // While setup or a review runs, or when that can't be told, a call that
-    // could reach a transcript or write a file is refused.
-    const couldReach = [...READ_TOOLS, ...WRITE_TOOLS, 'Bash'].includes(e.tool) || isOtherServer(e.tool)
-    if (couldReach && (await lockedBy($).catch(() => 'unknown' as const)) !== null) {
+    // While setup or a review runs, or when that can't be told, a read whose
+    // check failed and any call outside their tools is refused.
+    const locked = await lockedBy($).catch(() => 'review-frictions' as const)
+    if (locked !== null && (READ_TOOLS.includes(e.tool) || lockedToolDenial(e.tool, input, locked) !== null)) {
       return { decision: 'deny', reason: FAILED }
     }
     const isTranscriptRead =
