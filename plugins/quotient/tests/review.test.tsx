@@ -159,7 +159,7 @@ test('a later listing adds to the sessions review_digest may read, never takes e
   expect(called.deny).toBeUndefined()
 })
 
-test('review_sessions lists at most the 40 newest sessions and says how many it left out', async ($, on) => {
+test('review_sessions lists at most the 40 newest sessions a page, and says what the next page holds', async ($, on) => {
   const many = Array.from({ length: 45 }, (_, i) => `${PROJECTS}/-repo-a/s${String(i).padStart(2, '0')}.jsonl`)
   engine(on, { transcripts: many, teammateFiles: [] })
   await $.command.run(TYPED_REVIEW)
@@ -169,7 +169,33 @@ test('review_sessions lists at most the 40 newest sessions and says how many it 
   expect(text).toContain('40 sessions to review')
   expect(text).toContain('s44, s43')
   expect(text).not.toContain('s04')
-  expect(text).toContain('5 older sessions left out')
+  expect(text).toContain('5 more sessions: call review_sessions again with the same since and page 2')
+})
+
+test('the next page lists the sessions the first left for it, and review_digest may read them', async ($, on) => {
+  const many = Array.from({ length: 45 }, (_, i) => `${PROJECTS}/-repo-a/s${String(i).padStart(2, '0')}.jsonl`)
+  engine(on, { transcripts: many, teammateFiles: [], contents: { [`${PROJECTS}/-repo-a/s00.jsonl`]: '{}' } })
+  await $.command.run(TYPED_REVIEW)
+  await callTool($, SESSIONS_TOOL, { since: SINCE })
+
+  const text = String((await callTool($, SESSIONS_TOOL, { since: SINCE, page: 2 })).result)
+
+  expect(text).toContain('5 sessions to review')
+  expect(text).toContain('-repo-a: s04, s03, s02, s01, s00')
+  expect(text).not.toContain('more sessions')
+  expect((await callTool($, 'mcp__quotient__review_digest', { source: 's00' })).deny).toBeUndefined()
+})
+
+test('a page past the last lists no sessions', async ($, on) => {
+  engine(on, { teammateFiles: [] })
+  await $.command.run(TYPED_REVIEW)
+  expect(String((await callTool($, SESSIONS_TOOL, { since: SINCE, page: 3 })).result)).toContain('0 sessions to review')
+})
+
+test('review_sessions refuses a page that is not a whole number of at least 1', async ($, on) => {
+  engine(on)
+  await $.command.run(TYPED_REVIEW)
+  for (const page of [0, 1.5, 'two']) expect((await callTool($, SESSIONS_TOOL, { since: SINCE, page })).deny).toContain('page')
 })
 
 test("past the limit, every project folder keeps sessions, so a busy one can't crowd out the rest", async ($, on) => {
@@ -186,7 +212,7 @@ test("past the limit, every project folder keeps sessions, so a busy one can't c
   expect(text).toContain('-repo-c: r1, r0')
   expect(text).toContain('s44, s43')
   expect(text).not.toContain('s07')
-  expect(text).toContain('8 older sessions left out')
+  expect(text).toContain('8 more sessions: call review_sessions again with the same since and page 2')
 })
 
 test('review_sessions refuses a since that is not a time', async ($, on) => {

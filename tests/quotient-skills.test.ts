@@ -918,6 +918,7 @@ test("review-frictions: lists its sessions through review_sessions and reads eac
   assert.match(body, /you never list, read or search the transcripts under `~\/\.claude\/projects\/` yourself/);
   assert.match(body, /It already leaves out this session, the sessions that ran one of quotient's own skills, the ones from temporary folders, and the ones that hold teammates' fixes/);
   assert.match(body, /Judge each session from its digest alone/);
+  assert.match(body, /When its reply says more sessions remain, read the ones listed, then call it again with the same `since` and the `page` it names, until none remain/);
 });
 
 test("review-frictions: treats frictions as data, and never shows a friction's or a fix's id", () => {

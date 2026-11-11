@@ -22,7 +22,7 @@ const DIGEST_TOOL = 'mcp__quotient__review_digest'
 const REVIEW_TOOLS = /^mcp__quotient__review_(sessions|digest)$/
 const DAILY_KIND = 'review-frictions'
 const TURN_ENDS = ['answer', 'aborted', 'refusal', 'error'] as const
-// How far back a review looks, and how many sessions one listing holds.
+// How far back a review looks, and how many sessions one page of a listing holds.
 const WINDOW_DAYS = 14
 const MAX_SESSIONS = 40
 // A review reads every digest in one context, with no subagents to share
@@ -30,6 +30,7 @@ const MAX_SESSIONS = 40
 export const REVIEW_DIGEST_BUDGET = 6_000
 const NOT_RUNNING = "quotient's review tools work only while /quotient:review-frictions is running"
 const BAD_SINCE = 'since: must be a time, such as 2026-11-05T10:00:00Z'
+const BAD_PAGE = 'page: must be a whole number of at least 1'
 const UNCHECKED = "quotient couldn't check the sessions for teammates' fixes, so it lists none: review no sessions this run"
 const NOT_LISTED = 'review_digest reads only the sessions review_sessions listed in this run: pass one by its name, as the listing gives it'
 const HOLDS_FIXES = "This session's transcript holds teammates' fixes, which review-frictions never reads: skip it"
@@ -41,6 +42,11 @@ const SESSIONS_SCHEMA = {
     since: {
       type: 'string',
       description: 'List the sessions modified after this time, as an ISO time; quotient never lists any older than 14 days',
+    },
+    page: {
+      type: 'integer',
+      minimum: 1,
+      description: 'Which page of the listing, from 1, the default; the reply says when another page remains',
     },
   },
   required: ['since'],
@@ -59,7 +65,7 @@ export const REVIEW_TOOLS_SPECS = [
   {
     name: 'review_sessions',
     description:
-      'Lists the sessions /quotient:review-frictions reviews: those modified after `since` and within the last 14 days, newest first, by project folder, leaving out the ones the review skips.',
+      'Lists the sessions /quotient:review-frictions reviews: those modified after `since` and within the last 14 days, by project folder, leaving out the ones the review skips. At most 40 a page; the reply says when another page remains.',
     inputSchema: SESSIONS_SCHEMA,
     isDeferred: false,
   },
@@ -141,10 +147,11 @@ async function modifiedAfter($: Api, files: readonly string[], after: number): P
  *
  * @param $ - The engine
  * @param since - The time the listed sessions were modified after
- * @returns The listed transcripts, and how many were left out for teammates' fixes or age
+ * @param page - Which page of the listing, from 1
+ * @returns The page's transcripts, how many were left out for teammates' fixes, and how many later pages hold
  * @throws When the transcripts can't be listed or checked
  */
-async function listSessions($: Api, since: string): Promise<{ files: string[]; held: number; older: number }> {
+async function listSessions($: Api, since: string, page: number): Promise<{ files: string[]; held: number; more: number }> {
   const dirs = await lookUpDirs($)
   const own = `${await $.session.id()}.jsonl`
   const found = await outputOf($, transcriptFindArgs(`${dirs.config}/projects`, { days: WINDOW_DAYS }))
@@ -153,40 +160,40 @@ async function listSessions($: Api, since: string): Promise<{ files: string[]; h
     found.filter(file => !isSkippedProject(file.split('/').at(-2) ?? '', dirs) && !file.endsWith(`/${own}`)),
     Date.parse(since),
   )
-  if (kept.length === 0) return { files: [], held: 0, older: 0 }
+  if (kept.length === 0) return { files: [], held: 0, more: 0 }
   const started = new Set(await outputOf($, ['awk', QUOTIENT_STARTED, ...kept]))
   const typed = kept.filter(file => !started.has(file))
-  if (typed.length === 0) return { files: [], held: 0, older: 0 }
+  if (typed.length === 0) return { files: [], held: 0, more: 0 }
   const held = new Set(await outputOf($, ['grep', '-l', '-E', '--', TEAMMATE_TOOL_USE, ...typed], [0, 1]))
   const clean = typed.filter(file => !held.has(file))
-  if (clean.length === 0) return { files: [], held: held.size, older: 0 }
+  if (clean.length === 0) return { files: [], held: held.size, more: 0 }
   const newest = (await outputOf($, ['ls', '-t', '--', ...clean])).filter(file => clean.includes(file))
-  const files = spreadAcrossFolders(newest, MAX_SESSIONS)
-  return { files, held: held.size, older: newest.length - files.length }
+  const order = spreadAcrossFolders(newest)
+  const onPage = new Set(order.slice((page - 1) * MAX_SESSIONS, page * MAX_SESSIONS))
+  return { files: newest.filter(file => onPage.has(file)), held: held.size, more: Math.max(0, order.length - page * MAX_SESSIONS) }
 }
 
 /**
- * Picks at most `max` sessions, taking each project folder's newest in turn,
- * so one busy folder can't crowd out the rest.
+ * Orders the sessions for paging by taking each project folder's newest in
+ * turn, so one busy folder can't crowd the others off the first pages.
  *
  * @param newest - The sessions, newest first
- * @param max - The most to pick
- * @returns The picked sessions, newest first
+ * @returns The same sessions, in that order
  */
-function spreadAcrossFolders(newest: readonly string[], max: number): string[] {
+function spreadAcrossFolders(newest: readonly string[]): string[] {
   const byFolder = new Map<string, string[]>()
   for (const file of newest) {
     const folder = file.slice(0, file.lastIndexOf('/'))
     byFolder.set(folder, [...(byFolder.get(folder) ?? []), file])
   }
-  const picked = new Set<string>()
-  for (let turn = 0; picked.size < Math.min(max, newest.length); turn++) {
+  const order: string[] = []
+  for (let turn = 0; order.length < newest.length; turn++) {
     for (const files of byFolder.values()) {
       const file = files[turn]
-      if (file !== undefined && picked.size < max) picked.add(file)
+      if (file !== undefined) order.push(file)
     }
   }
-  return newest.filter(file => picked.has(file))
+  return order
 }
 
 /**
@@ -195,10 +202,11 @@ function spreadAcrossFolders(newest: readonly string[], max: number): string[] {
  *
  * @param files - The listed transcripts, newest first
  * @param held - How many were left out for holding teammates' fixes
- * @param older - How many older ones were left out past the limit
+ * @param more - How many later pages hold
+ * @param page - Which page this is
  * @returns The listing
  */
-function listingText(files: readonly string[], held: number, older: number): string {
+function listingText(files: readonly string[], held: number, more: number, page: number): string {
   const byFolder = new Map<string, string[]>()
   for (const file of files) {
     const [folder = '', name = ''] = file.split('/').slice(-2)
@@ -208,7 +216,7 @@ function listingText(files: readonly string[], held: number, older: number): str
     `${plural(files.length, 'session')} to review, newest first, by project folder:`,
     ...[...byFolder].map(([folder, names]) => `${folder}: ${names.join(', ')}`),
     held === 0 ? '' : `${plural(held, 'session')} left out because ${held === 1 ? 'it holds' : 'they hold'} teammates' fixes.`,
-    older === 0 ? '' : `${plural(older, 'older session')} left out: at most ${MAX_SESSIONS} are listed, the newest of each project folder in turn.`,
+    more === 0 ? '' : `${plural(more, 'more session')}: call review_sessions again with the same since and page ${page + 1}, once you've read these.`,
   ]
     .filter(Boolean)
     .join('\n')
@@ -226,13 +234,15 @@ async function answerSessions($: Api, input: Record<string, unknown>): Promise<{
   if (!(await isReviewing($))) return { deny: NOT_RUNNING }
   const since = input.since
   if (typeof since !== 'string' || Number.isNaN(Date.parse(since))) return { deny: BAD_SINCE }
+  const page = input.page ?? 1
+  if (typeof page !== 'number' || !Number.isInteger(page) || page < 1) return { deny: BAD_PAGE }
   try {
-    const { files, held, older } = await listSessions($, since)
+    const { files, held, more } = await listSessions($, since, page)
     const listed = Object.fromEntries(files.map(file => [file.slice(file.lastIndexOf('/') + 1).replace(/\.jsonl$/, ''), file]))
     // The skill lists again for each friction's own window; a session it
     // already read from an earlier listing stays readable.
     await update($, run, current => ({ ...current, listed: { ...current.listed, ...listed } }))
-    return { result: listingText(files, held, older) }
+    return { result: listingText(files, held, more, page) }
   } catch {
     return { deny: UNCHECKED }
   }
