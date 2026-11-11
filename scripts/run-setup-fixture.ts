@@ -37,6 +37,16 @@ export function isLocalQuotient(url: string | undefined): boolean {
 }
 
 /**
+ * The Quotient MCP URL that this repo's plugin reaches. It ships production's,
+ * so a run needs it set to a local Quotient first.
+ * @returns The URL.
+ */
+export function pluginUrl(): string {
+  const config = JSON.parse(readFileSync(join(PLUGIN, ".mcp.json"), "utf8")) as { mcpServers: { agex: { url: string } } };
+  return config.mcpServers.agex.url;
+}
+
+/**
  * The arguments that run /quotient:setup headless with this repo's plugin and an operator's tools.
  * @param mode - The permission mode.
  * @returns The arguments for `claude`.
@@ -45,14 +55,8 @@ export function setupArgs(mode: string): string[] {
   return ["-p", "/quotient:setup", "--plugin-dir", PLUGIN, "--permission-mode", mode, "--allowedTools", ...ALLOWED_TOOLS, "--output-format", "json"];
 }
 
-/**
- * The environment that points the run at a local Quotient and pins its window to the sessions' days.
- * @param url - The local Quotient's MCP URL.
- * @returns The environment.
- */
-export function setupEnv(url: string): NodeJS.ProcessEnv {
-  return { ...process.env, AGEX_MCP_URL: url, QUOTIENT_SETUP_WINDOW_END: WINDOW_END };
-}
+// The environment that pins the run's window to the sessions' days.
+export const SETUP_ENV: NodeJS.ProcessEnv = { ...process.env, QUOTIENT_SETUP_WINDOW_END: WINDOW_END };
 
 /**
  * Copies the sessions into the projects folder, each modified on the day of its last line.
@@ -88,8 +92,8 @@ export function transcriptOf(projects: string, sessionId: string): string {
 }
 
 if (import.meta.main) {
-  const url = process.env.AGEX_MCP_URL ?? "http://localhost:3000/mcp";
-  if (!isLocalQuotient(url)) throw new Error(`AGEX_MCP_URL must be a local Quotient, not ${url}`);
+  const url = pluginUrl();
+  if (!isLocalQuotient(url)) throw new Error(`plugins/quotient/.mcp.json must name a local Quotient, not ${url}: see CONTRIBUTING.md`);
   const modeAt = process.argv.indexOf("--permission-mode");
   const mode = modeAt === -1 ? "default" : process.argv[modeAt + 1];
   const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects");
@@ -101,7 +105,7 @@ if (import.meta.main) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],
       timeout: 45 * 60_000,
-      env: setupEnv(url),
+      env: SETUP_ENV,
     });
     const out = JSON.parse(ran.stdout) as { session_id: string; result?: string };
     const transcript = transcriptOf(projects, out.session_id);
