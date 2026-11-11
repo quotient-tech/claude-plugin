@@ -143,3 +143,19 @@ test("a summary with no events stays within budget, however long the lines above
   const digested = runLogDigest(log, 2_000);
   assert.ok(digested.length <= 2_000, `${digested.length}`);
 });
+
+test("a run's final result stays even when its errors alone run over budget", () => {
+  const log = [
+    ...Array.from({ length: 40 }, (_, i) => event(i, "tool_result ERROR", `npm error ${i} ${LONG}`)),
+    event(40, "result", "Build failed after 40 errors."),
+  ].join("\n");
+  const digested = runLogDigest(log, 2_000);
+  assert.ok(digested.length <= 2_000, `${digested.length}`);
+  assert.match(digested, /E41 \[06:00:40\] result: Build failed after 40 errors\./);
+});
+
+test("an event that isn't a tool call is cut with the agent's text, never counted as a tool call", () => {
+  const log = [event(1, "system warning", "Context is nearly full."), ...Array.from({ length: 40 }, (_, i) => event(i + 2, "tool_result", LONG))].join("\n");
+  assert.match(runLogDigest(log, 2_000), /E1 \[06:00:01\] system warning: Context is nearly full\./);
+  assert.match(runLogDigest(log, 2_000), /\(cut to fit: 40 plain tool calls\)/);
+});

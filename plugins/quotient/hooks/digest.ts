@@ -299,7 +299,7 @@ function eventChars(kind: string): number {
  */
 function eventTier(kind: string): Tier {
   if (/ERROR/.test(kind) || kind === 'user' || kind === 'result') return 'keep'
-  return kind === 'assistant' ? 'text' : 'call'
+  return kind.startsWith('tool_use') || kind.startsWith('tool_result') ? 'call' : 'text'
 }
 
 /**
@@ -333,5 +333,13 @@ export function runLogDigest(summary: string, budget = DIGEST_BUDGET): string {
     const shown = `${kind}: ${clip(text, eventChars(kind))}`
     return { n, tier, text: `[${time}] ${shown}${earlier === undefined ? '' : ` (repeats E${earlier})`}` }
   })
-  return fit([LOG_NOTE, ...preamble].join('\n'), entries, budget, events.length, EVENT)
+  const header = [LOG_NOTE, ...preamble].join('\n')
+  const digested = fit(header, entries, budget, events.length, EVENT)
+  // When even what must stay runs over budget, the cut keeps the earliest
+  // events; the run's final result is kept apart so it's never the one cut.
+  const final = entries.findLast(entry => events[entry.n - 1]?.kind === 'result')
+  const finalLine = final === undefined ? '' : `${EVENT.mark}${final.n} ${clip(final.text, CUT_CHARS)}`
+  if (final === undefined || digested.includes(`\n${EVENT.mark}${final.n} `)) return digested
+  const rest = entries.filter(entry => entry !== final)
+  return `${fit(header, rest, budget - finalLine.length - 1, events.length, EVENT)}\n${finalLine}`
 }
