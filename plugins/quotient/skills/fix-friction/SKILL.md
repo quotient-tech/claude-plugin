@@ -3,7 +3,7 @@ name: fix-friction
 description: Show a teammate's fix for one of your frictions, ask whether to apply it, apply it as given, record it in Quotient so it isn't offered again, and offer to thank the teammate.
 when_to_use: When the operator asks to fix one of their own Quotient frictions, or when /quotient:list-fixes hands off the friction, and the fix, they picked.
 argument-hint: "[frictionId] [solutionId]"
-allowed-tools: mcp__plugin_quotient_agex__list_my_frictions, mcp__claude_ai_Quotient__list_my_frictions, mcp__plugin_quotient_agex__mark_solution_implemented, mcp__claude_ai_Quotient__mark_solution_implemented, mcp__plugin_quotient_agex__send_thank_you, mcp__claude_ai_Quotient__send_thank_you, mcp__quotient__fix_card, mcp__quotient__fix_outcome, mcp__quotient__fix_thanks, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}")
+allowed-tools: 'mcp__plugin_quotient_agex__list_my_frictions, mcp__claude_ai_Quotient__list_my_frictions, mcp__plugin_quotient_agex__mark_solution_implemented, mcp__claude_ai_Quotient__mark_solution_implemented, mcp__plugin_quotient_agex__send_thank_you, mcp__claude_ai_Quotient__send_thank_you, mcp__quotient__fix_card, mcp__quotient__fix_outcome, mcp__quotient__fix_thanks, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}")'
 ---
 
 # Fix a friction
