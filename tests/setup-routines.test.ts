@@ -117,3 +117,29 @@ test("a tool call that repeats an earlier one is marked and kept over budget", (
   assert.match(digested, /E3 \[06:00:03\] tool_use Bash: \{"command":"npm test"\} \(repeats E1\)/);
   assert.doesNotMatch(digested, /^E1 /m);
 });
+
+test("repeated calls go before a run's final error and result when a log runs over budget", () => {
+  const log = [
+    event(0, "user", "Check the nightly build."),
+    ...Array.from({ length: 60 }, (_, i) => event(i + 1, "tool_use Bash", '{"command":"npm test -- --watch=false --reporter=verbose --runInBand"}')),
+    event(61, "tool_result ERROR", "npm error 404 Not Found"),
+    event(62, "result", "Build failed."),
+  ].join("\n");
+  const digested = runLogDigest(log, 2_000);
+  assert.ok(digested.length <= 2_000, `${digested.length}`);
+  assert.match(digested, /tool_result ERROR: npm error 404 Not Found/);
+  assert.match(digested, /result: Build failed\./);
+  assert.match(digested, /repeated calls/);
+});
+
+test("two calls that differ only past what's shown aren't counted as repeats", () => {
+  const prefix = "x".repeat(200);
+  const log = [event(1, "tool_use Bash", `${prefix} first`), event(2, "tool_use Bash", `${prefix} second`)].join("\n");
+  assert.doesNotMatch(runLogDigest(log), /repeats/);
+});
+
+test("a summary with no events stays within budget, however long the lines above them", () => {
+  const log = Array.from({ length: 200 }, (_, i) => `(note ${i}) ${LONG}`).join("\n");
+  const digested = runLogDigest(log, 2_000);
+  assert.ok(digested.length <= 2_000, `${digested.length}`);
+});

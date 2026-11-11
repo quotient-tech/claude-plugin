@@ -8,9 +8,10 @@
 export type TranscriptLine = { n: number; text: string | null; bytes: number }
 
 // How a digest entry is kept when the digest runs over its budget: `keep`
-// entries stay, `text` (the agent's own words) goes next, and `call` (a
-// plain successful tool call) goes first.
-type Tier = 'keep' | 'text' | 'call'
+// entries stay, `call` (a plain successful tool call) goes first, then
+// `text` (the agent's own words), then `repeat` (a call that repeats an
+// earlier one, which a run log can hold by the hundred).
+type Tier = 'keep' | 'repeat' | 'text' | 'call'
 type Entry = { n: number; tier: Tier; text: string }
 type Call = { n: number; name: string; input: string }
 // How a digest marks and names what its entries are numbered by.
@@ -169,12 +170,16 @@ function fit(header: string, entries: readonly Entry[], budget: number, total: n
   const render = (kept: readonly Entry[], note: string) =>
     [header, ...kept.map(entry => `${unit.mark}${entry.n} ${entry.text}`), note].filter(Boolean).join('\n')
   let kept = [...entries]
-  const cut = { call: 0, text: 0 }
+  const cut = { call: 0, text: 0, repeat: 0 }
   const note = () => {
-    const parts = [cut.call > 0 ? `${cut.call} plain tool calls` : '', cut.text > 0 ? `${cut.text} agent messages` : ''].filter(Boolean)
+    const parts = [
+      cut.call > 0 ? `${cut.call} plain tool calls` : '',
+      cut.text > 0 ? `${cut.text} agent messages` : '',
+      cut.repeat > 0 ? `${cut.repeat} repeated calls` : '',
+    ].filter(Boolean)
     return parts.length === 0 ? '' : `(cut to fit: ${parts.join(' and ')})`
   }
-  for (const tier of ['call', 'text'] as const) {
+  for (const tier of ['call', 'text', 'repeat'] as const) {
     if (render(kept, note()).length <= budget) return render(kept, note())
     cut[tier] = kept.filter(entry => entry.tier === tier).length
     kept = kept.filter(entry => entry.tier !== tier)
@@ -205,9 +210,11 @@ const LIST_PROMPT = 600
 const GET_PROMPT = 20_000
 // How long each run-log event's text may be, by its kind.
 const EVENT_CHARS = { error: 400, user: 600, result: 400, assistant: 200, toolUse: 160, toolResult: 100, other: 200 }
+// How many lines above a log's first event it keeps, such as the line that says how many events it shows.
+const MAX_PREAMBLE = 2
 const LIST_NOTE = 'quotient shortened this reply for setup: each routine keeps the fields setup reads'
 const LOG_NOTE =
-  "(quotient digested this log for setup: errors, the operator's prompts, the result and repeated calls stay; plain tool events go first when it runs long)"
+  "(quotient digested this log for setup: errors, the operator's prompts and the result stay; when it runs long, plain tool events go first, then the agent's text, then repeated calls)"
 
 type Routine = Record<string, unknown>
 
@@ -313,17 +320,18 @@ export function runLogDigest(summary: string, budget = DIGEST_BUDGET): string {
     const last = events.at(-1)
     if (event !== null) events.push({ time: event[1] as string, kind: event[2] as string, text: event[3] as string })
     else if (last !== undefined) last.text += `\n${line}`
-    else if (line.trim() !== '') preamble.push(clip(line, EVENT_CHARS.other))
+    else if (line.trim() !== '' && preamble.length < MAX_PREAMBLE) preamble.push(clip(line, EVENT_CHARS.other))
   }
   const seen = new Map<string, number>()
   const entries: Entry[] = events.map(({ time, kind, text }, i) => {
     const n = i + 1
-    const shown = clip(text, eventChars(kind))
-    const key = `${kind}: ${shown}`
+    // A repeat is the same call in full; only what's shown is clipped.
+    const key = `${kind}: ${text}`
     const earlier = kind.startsWith('tool_use') ? seen.get(key) : undefined
     if (kind.startsWith('tool_use') && earlier === undefined) seen.set(key, n)
-    const tier: Tier = earlier === undefined ? eventTier(kind) : 'keep'
-    return { n, tier, text: `[${time}] ${key}${earlier === undefined ? '' : ` (repeats E${earlier})`}` }
+    const tier: Tier = earlier === undefined ? eventTier(kind) : 'repeat'
+    const shown = `${kind}: ${clip(text, eventChars(kind))}`
+    return { n, tier, text: `[${time}] ${shown}${earlier === undefined ? '' : ` (repeats E${earlier})`}` }
   })
   return fit([LOG_NOTE, ...preamble].join('\n'), entries, budget, events.length, EVENT)
 }
