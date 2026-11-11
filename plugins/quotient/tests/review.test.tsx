@@ -172,6 +172,23 @@ test('review_sessions lists at most the 40 newest sessions and says how many it 
   expect(text).toContain('5 older sessions left out')
 })
 
+test("past the limit, every project folder keeps sessions, so a busy one can't crowd out the rest", async ($, on) => {
+  const busy = Array.from({ length: 45 }, (_, i) => `${PROJECTS}/-repo-a/s${String(i).padStart(2, '0')}.jsonl`)
+  const quiet = [`${PROJECTS}/-repo-b/q0.jsonl`, `${PROJECTS}/-repo-c/r0.jsonl`, `${PROJECTS}/-repo-c/r1.jsonl`]
+  // find lists them oldest first, so the quiet folders' sessions are the oldest of all.
+  engine(on, { transcripts: [...quiet, ...busy], teammateFiles: [] })
+  await $.command.run(TYPED_REVIEW)
+
+  const text = String((await callTool($, SESSIONS_TOOL, { since: SINCE })).result)
+
+  expect(text).toContain('40 sessions to review')
+  expect(text).toContain('-repo-b: q0')
+  expect(text).toContain('-repo-c: r1, r0')
+  expect(text).toContain('s44, s43')
+  expect(text).not.toContain('s07')
+  expect(text).toContain('8 older sessions left out')
+})
+
 test('review_sessions refuses a since that is not a time', async ($, on) => {
   engine(on)
   await $.command.run(TYPED_REVIEW)

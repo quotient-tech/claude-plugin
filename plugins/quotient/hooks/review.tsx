@@ -161,7 +161,32 @@ async function listSessions($: Api, since: string): Promise<{ files: string[]; h
   const clean = typed.filter(file => !held.has(file))
   if (clean.length === 0) return { files: [], held: held.size, older: 0 }
   const newest = (await outputOf($, ['ls', '-t', '--', ...clean])).filter(file => clean.includes(file))
-  return { files: newest.slice(0, MAX_SESSIONS), held: held.size, older: Math.max(0, newest.length - MAX_SESSIONS) }
+  const files = spreadAcrossFolders(newest, MAX_SESSIONS)
+  return { files, held: held.size, older: newest.length - files.length }
+}
+
+/**
+ * Picks at most `max` sessions, taking each project folder's newest in turn,
+ * so one busy folder can't crowd out the rest.
+ *
+ * @param newest - The sessions, newest first
+ * @param max - The most to pick
+ * @returns The picked sessions, newest first
+ */
+function spreadAcrossFolders(newest: readonly string[], max: number): string[] {
+  const byFolder = new Map<string, string[]>()
+  for (const file of newest) {
+    const folder = file.slice(0, file.lastIndexOf('/'))
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), file])
+  }
+  const picked = new Set<string>()
+  for (let turn = 0; picked.size < Math.min(max, newest.length); turn++) {
+    for (const files of byFolder.values()) {
+      const file = files[turn]
+      if (file !== undefined && picked.size < max) picked.add(file)
+    }
+  }
+  return newest.filter(file => picked.has(file))
 }
 
 /**
@@ -183,7 +208,7 @@ function listingText(files: readonly string[], held: number, older: number): str
     `${plural(files.length, 'session')} to review, newest first, by project folder:`,
     ...[...byFolder].map(([folder, names]) => `${folder}: ${names.join(', ')}`),
     held === 0 ? '' : `${plural(held, 'session')} left out because ${held === 1 ? 'it holds' : 'they hold'} teammates' fixes.`,
-    older === 0 ? '' : `${plural(older, 'older session')} left out: only the ${MAX_SESSIONS} newest are listed.`,
+    older === 0 ? '' : `${plural(older, 'older session')} left out: at most ${MAX_SESSIONS} are listed, the newest of each project folder in turn.`,
   ]
     .filter(Boolean)
     .join('\n')
