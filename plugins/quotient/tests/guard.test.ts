@@ -58,6 +58,8 @@ function engine(on: On, opts: {
   })
   on('agent.list', () => ({ value: (opts.agents ?? []).map(agent => ({ ...agent, description: '', status: 'running' })) }))
   on('command.run', () => ({ text: 'ran' }))
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
   on('tool.check', () => opts.below ?? { decision: 'allow' })
   return seen
 }
@@ -316,9 +318,14 @@ test("after review-frictions or setup starts, a transcript that holds teammates'
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
 
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
   expect(await check($, 'Grep', { pattern: 'x', path: SHOWN })).toBe('deny')
   expect(await check($, 'Read', { file_path: '/home/op/code/app/notes.md' })).toBe('allow')
+
+  // Once the review's turn ends, only the transcripts that hold teammates' fixes stay held back.
+  await endTurn($)
+  expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
 
   await $.command.run({ ...COMMAND, command: 'quotient:fix-friction' })
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('allow')
@@ -351,16 +358,28 @@ test("once setup holds transcripts back, a Bash command naming them is refused w
   expect(await bash('git status')).toBe('allow')
 })
 
-test('once setup holds transcripts back, a Bash command naming them goes on when none holds teammate text', async ($, on) => {
+test("once setup's run ends, a Bash command naming transcripts goes on when none holds teammate text", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   expect(await check($, 'Bash', { command: 'grep -r x ~/.claude/projects' })).toBe('allow')
 })
 
-test("the refusal of a Bash command naming transcripts points to Read, not Grep, which a session may lack", async ($, on) => {
+test("during setup, the refusal of a Bash command naming transcripts points to quotient's digests", async ($, on) => {
   engine(on, { grepExit: { [`${CONFIG}/projects`]: 0 } })
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: `cat ${SHOWN}` } } as Parameters<Engine['tool']['check']>[0])
+
+  expect(verdict.reason).toContain("only through quotient's digests: setup_digest")
+  expect(verdict.reason).not.toContain('Grep')
+})
+
+test("after setup's run, the refusal of a Bash command naming transcripts points to Read, not Grep, which a session may lack", async ($, on) => {
+  engine(on, { grepExit: { [`${CONFIG}/projects`]: 0 } })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: `cat ${SHOWN}` } } as Parameters<Engine['tool']['check']>[0])
 
@@ -368,12 +387,12 @@ test("the refusal of a Bash command naming transcripts points to Read, not Grep,
   expect(verdict.reason).not.toContain('Grep')
 })
 
-test("setup's reviewer subagent reads the listed sessions, but never a transcript that holds teammates' fixes or teammates' frictions", async ($, on) => {
+test("setup's reviewer subagent reads sessions only through setup_digest, and never teammates' frictions", async ($, on) => {
   engine(on, { agents: [{ id: 'rev-1', type: 'quotient:setup-reviewer' }], grepExit: { [SHOWN]: 0 } })
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
 
   expect(await check($, 'Read', { file_path: SHOWN }, 'rev-1')).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN }, 'rev-1')).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN }, 'rev-1')).toBe('deny')
   expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' }, 'rev-1')).toBe('allow')
   expect(await check($, `${AGEX}list_teammate_frictions`, {}, 'rev-1')).toBe('deny')
 })
@@ -427,9 +446,10 @@ test("once setup holds transcripts back, another server's tool naming them is re
   expect(await ctx({ path: '/home/op/code/app/notes.md' })).toBe('allow')
 })
 
-test("once setup holds transcripts back, another server's tool naming them goes on when none holds teammate text", async ($, on) => {
+test("once setup's run ends, another server's tool naming transcripts goes on when none holds teammate text", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   expect(await check($, CTX_FILE, { path: PLAIN })).toBe('allow')
 })
@@ -441,11 +461,11 @@ test("quotient's own setup_digest may name a transcript while they're held back"
   expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
 })
 
-test("a daily review-frictions run never reads a transcript that holds teammates' fixes", async ($, on) => {
+test("a daily review-frictions run never reads a transcript, whether or not it holds teammates' fixes", async ($, on) => {
   engine(on, { kind: 'review-frictions', grepExit: { [SHOWN]: 0 } })
 
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
 })
 
 test("a find-solutions run reads teammates' text by design, so its transcripts aren't held back", async ($, on) => {
@@ -517,4 +537,82 @@ test("setup's teammate check may hand its report back, which quotient replaces b
   engine(on, { agents: [{ id: 'a1', type: 'quotient:teammate-check' }] })
 
   expect(await check($, 'SubagentHandback', { report: 'done' }, 'a1')).toBe('allow')
+})
+
+const PROJECT = `${CONFIG}/projects/-home-op-code-app`
+const SIDECHAIN = `${PROJECT}/s1/subagents/agent-a.jsonl`
+const MEMORY = `${PROJECT}/memory`
+const SAVED_REPLY = `${PROJECT}/s1/tool-results/remote.txt`
+
+/**
+ * Ends the main agent's turn, as the end of the turn a review ran in.
+ *
+ * @param $ - The engine
+ */
+async function endTurn($: Engine) {
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+}
+
+test("while review-frictions runs, any reach into a transcript is refused, even when none holds teammates' fixes", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: SIDECHAIN })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: PROJECT })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: `${CONFIG}/projects` })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/home/op' })).toBe('deny')
+  expect(await check($, 'Glob', { pattern: '**/*.jsonl', path: `${CONFIG}/projects` })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'cat ~/.claude/projects/-home-op-code-app/plain.jsonl' })).toBe('deny')
+  expect(await check($, 'mcp__sandbox__run_code', { code: `open('${PLAIN}').read()` })).toBe('deny')
+})
+
+test('while review-frictions runs, auto-memories, saved replies and quotient\'s review tools stay open', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: `${MEMORY}/MEMORY.md` })).toBe('allow')
+  expect(await check($, 'Grep', { pattern: 'lint', path: MEMORY })).toBe('allow')
+  expect(await check($, 'Read', { file_path: SAVED_REPLY })).toBe('allow')
+  expect(await check($, 'Read', { file_path: `${REPO}/package.json` })).toBe('allow')
+  expect(await check($, 'mcp__quotient__review_sessions', { since: '2026-11-05T10:00:00Z' })).toBe('allow')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'plain' })).toBe('allow')
+})
+
+test('while setup runs, a transcript is reached only through setup_digest', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'grep -l trig_ ~/.claude/projects/*/*.jsonl' })).toBe('deny')
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
+})
+
+test("setup's teammate check still searches the operator's sessions while setup runs", async ($, on) => {
+  engine(on, { agents: [{ id: 'a1', type: 'quotient:teammate-check' }] })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Grep', { pattern: 'lint', path: PROJECT }, 'a1')).toBe('allow')
+})
+
+test('a daily review-frictions run never reads a transcript itself, even in a folder it may read', async ($, on) => {
+  engine(on, { kind: 'review-frictions' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: `${MEMORY}/MEMORY.md` })).toBe('allow')
+})
+
+test("once the review's turn ends, transcripts read as they did before it", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+  await endTurn($)
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+})
+
+test('outside setup and review-frictions, transcripts are left alone', async ($, on) => {
+  engine(on)
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'cat ~/.claude/projects/-home-op-code-app/plain.jsonl' })).toBe('allow')
 })

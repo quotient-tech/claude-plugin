@@ -79,7 +79,9 @@ export const REVIEW_TOOLS_SPECS = [
 ] as const
 
 const NO_RUN: ReviewRun = { isRunning: false, listed: {} }
-const run = atom({ plugin: 'quotient', key: 'reviewRun' } as const, NO_RUN, { shape: 'review-1' })
+// The guard reads the run's state by its key, so it checks this tag itself.
+export const REVIEW_SHAPE = 'review-1'
+const run = atom({ plugin: 'quotient', key: 'reviewRun' } as const, NO_RUN, { shape: REVIEW_SHAPE })
 
 /**
  * Tells whether a review-frictions run is going: one the operator or the

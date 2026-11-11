@@ -27,6 +27,7 @@ import {
 } from './sandbox'
 import type { Scope } from './sandbox'
 import { privateText } from './privacy'
+import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
 import { isOwnQuotientCall, ownCallVerdict } from './self-allow'
 import { HIDES_FIXES, SHOWN_ALREADY } from './teammate-text'
@@ -70,6 +71,8 @@ const DENIED_TRANSCRIPT =
 // folder and then its projects folder. Matching a command's text is a best
 // effort, so the skills read transcripts with Read and Grep instead.
 const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bprojects\b/i
+const DENIED_LOCKED_TRANSCRIPT =
+  "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
 const DENIED_BASH_TRANSCRIPT =
   "quotient: some transcripts hold teammates' fixes, which review-frictions and setup never read: read transcripts with Read, one session at a time, or during setup through setup_digest"
 
@@ -266,6 +269,63 @@ async function transcriptDenial($: EngineInterface, tool: string, input: Record<
 }
 
 /**
+ * Tells whether setup or review-frictions is running, when nothing but
+ * quotient's digests may reach a transcript: setup's run, a review the
+ * operator or the model started, or a daily review-frictions run.
+ *
+ * @param $ - The engine
+ * @returns Whether the transcripts are locked
+ */
+async function isLockedDown($: EngineInterface): Promise<boolean> {
+  if ((await $.env.get('QUOTIENT_DAILY_RUN_KIND')) === 'review-frictions') return true
+  const setupRun = await read($, { plugin: 'quotient', key: 'setupRun' } as const)
+  if (setupRun?.shape === RUN_SHAPE && setupRun.value.isRunning) return true
+  const reviewRun = await read($, { plugin: 'quotient', key: 'reviewRun' } as const)
+  return reviewRun?.shape === REVIEW_SHAPE && reviewRun.value.isRunning
+}
+
+/**
+ * Says why a call is refused while the transcripts are locked, whatever
+ * they hold: a Read of a transcript (`*.jsonl` under the projects folder),
+ * a Grep or Glob of a folder that holds any, or a Bash command or another
+ * server's call that names them. A project's auto-memory folder and other
+ * files under the projects folder, such as a saved reply, stay readable.
+ *
+ * @param $ - The engine
+ * @param tool - The tool's full name
+ * @param input - The call's input
+ * @param reach - Looks up the config folder, among others, for a call that can name a path
+ * @returns The reason, or null when the call reaches no transcript
+ */
+async function lockedTranscriptDenial(
+  $: EngineInterface,
+  tool: string,
+  input: Record<string, unknown>,
+  reach: () => Promise<SandboxReach>,
+): Promise<string | null> {
+  if (tool !== 'Bash' && !isOtherServer(tool) && !READ_TOOLS.includes(tool)) return null
+  const where = await reach()
+  const projects = `${where.dirs.config}/projects`
+  if (tool === 'Bash' || isOtherServer(tool)) {
+    const named = tool === 'Bash' ? input.command : JSON.stringify(input)
+    return typeof named === 'string' && (BASH_TRANSCRIPTS.test(named) || named.includes(projects)) ? DENIED_LOCKED_TRANSCRIPT : null
+  }
+  const cwd = await $.session.cwd()
+  const written = tool === 'Glob' ? globRoot(input, where.dirs, cwd) : fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
+  // A path that can't be placed, such as one with `..`, could reach the transcripts.
+  if (written === null) return DENIED_LOCKED_TRANSCRIPT
+  const stat = await $.fs.stat(written, { resolve: true }).catch(() => undefined)
+  const paths = [written, stat?.realPath ?? written]
+  const isTranscript = (path: string) => path.startsWith(`${projects}/`) && path.endsWith('.jsonl')
+  if (paths.some(isTranscript)) return DENIED_LOCKED_TRANSCRIPT
+  if (tool === 'Read' || stat?.kind === 'file') return null
+  // A search of a folder reads every transcript under it, outside a project's auto-memory.
+  const isMemory = (path: string) => /^[^/]+\/memory(\/|$)/.test(path.slice(projects.length + 1)) && path.startsWith(`${projects}/`)
+  const holdsTranscripts = (path: string) => path === projects || path.startsWith(`${projects}/`) || projects.startsWith(`${path === '/' ? '' : path}/`)
+  return paths.some(path => holdsTranscripts(path) && !isMemory(path)) ? DENIED_LOCKED_TRANSCRIPT : null
+}
+
+/**
  * Tells whether a tool belongs to another MCP server than Quotient's or
  * quotient's mod. Such a tool, like a sandbox that runs code on a file, can
  * read any transcript its input names, and quotient can't see what it reads.
@@ -416,8 +476,11 @@ export function registerGuard(on: On): void {
     }
     const isHeld = (['Read', 'Grep', 'Bash'].includes(e.tool) || isOtherServer(e.tool)) && (await holdsTranscripts($, scope))
     const where = async (): Promise<SandboxReach> => reachFor($, scope?.withRepos ?? false)
+    // setup's teammate check searches the operator's sessions by design; it can't write or run a shell.
+    const isLocked = scope?.tools !== TEAMMATE_CHECK_TOOLS && (await isLockedDown($))
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
+      (isLocked ? await lockedTranscriptDenial($, e.tool, input, where) : null) ??
       (!isHeld
         ? null
         : e.tool === 'Bash' || isOtherServer(e.tool)
