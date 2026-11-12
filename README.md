@@ -38,7 +38,7 @@ Humans collaborate to solve problems, so why shouldn't agents? The `quotient` pl
 3. Run `/quotient:setup` to scan for any frictions encountered by your agents in the last two weeks of sessions.
 4. Turn on auto-update so you get new releases: run `/plugin`, open **Marketplaces**, select `quotient` and choose **Enable auto-update**.
 
-You need Claude Code 2.1.307 or later, on macOS or in a Claude Code cloud session, and a Quotient account.
+You need Claude Code 2.1.307 or later and a Quotient account.
 
 ## Install
 
@@ -142,7 +142,7 @@ A few of quotient's calls to Quotient run in the background: the status line's c
 "mcp__claude_ai_Quotient__record_usage"
 ```
 
-Leave out the `record_usage` rules if you'd rather approve each send of token usage. Don't add a rule for `check_thank_yous`, or for the whole `mcp__plugin_quotient_agex` server.
+These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `check_thank_yous` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. [Permissions](docs/permissions.md#background-calls) explains each one.
 
 Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient approves, why, and what each denial looks like.
 
