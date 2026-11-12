@@ -215,6 +215,33 @@ test("measure-setup: a friction with no frictionId in its reply is listed by its
   assert.deepEqual(measureSetup([main]).frictions, [ZSH]);
 });
 
+// Setup rewrites a refused field and sends the whole call again; the refused
+// call stored nothing, so its friction has no id until the retry.
+test("measure-setup: a refused call's friction is replaced by its corrected retry, not listed twice", () => {
+  const refused = submitFrictions("toolu_b1", "2026-11-09T10:05:00.000Z", [{ ...ZSH, severity: "medium" }], []);
+  const retry = submitFrictions("toolu_b1r", "2026-11-09T10:06:00.000Z", [ZSH], [{ status: "new", frictionId: "f-zsh" }]);
+  const main = { path: MAIN.path, text: [START, ...refused, ...retry].join("\n") };
+  assert.deepEqual(measureSetup([main]).frictions, [ZSH]);
+});
+
+test("measure-setup: lists only the frictions of the run it measures, not a later setup in the same session", () => {
+  const measured = submitFrictions("toolu_b1", "2026-11-09T10:05:00.000Z", [ZSH], [{ status: "new", frictionId: "f-zsh" }]);
+  const summaryCall = request("r5", "2026-11-09T10:17:00.000Z", { input: 1, write: 0, read: 10, output: 5 }, {
+    content: [{ type: "tool_use", id: "toolu_summary", name: "mcp__quotient__setup_summary", input: {} }],
+  });
+  const summaryReply = JSON.stringify({
+    type: "user",
+    sessionId: SESSION,
+    timestamp: "2026-11-09T10:17:10.000Z",
+    uuid: "u-summary",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_summary", content: "shown" }] },
+  });
+  const laterStart = JSON.stringify({ ...JSON.parse(START), timestamp: "2026-11-09T11:00:00.000Z", uuid: "u-start-2" });
+  const later = submitFrictions("toolu_b9", "2026-11-09T11:05:00.000Z", [LINT], [{ status: "new", frictionId: "f-lint" }]);
+  const main = { path: MAIN.path, text: [START, ...measured, summaryCall, summaryReply, laterStart, ...later].join("\n") };
+  assert.deepEqual(measureSetup([main]).frictions, [ZSH]);
+});
+
 test("measure-setup: a run that submitted no frictions lists none", () => {
   assert.deepEqual(measureSetup([MAIN, REVIEWER]).frictions, []);
 });

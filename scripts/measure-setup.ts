@@ -158,7 +158,10 @@ function submittedFrictions(lines: readonly Record<string, unknown>[]): Submitte
       if (!Array.isArray(sent)) continue;
       sent.forEach((friction: Record<string, unknown>, i) => {
         const replyId = Array.isArray(replies) ? (replies[i] as { frictionId?: unknown } | undefined)?.frictionId : undefined;
-        const key = friction.frictionId ?? replyId ?? `title:${String(friction.title)}`;
+        const titleKey = `title:${String(friction.title)}`;
+        const key = friction.frictionId ?? replyId ?? titleKey;
+        // A refused call has no ids; its corrected retry replaces it.
+        if (key !== titleKey) byKey.delete(titleKey);
         const { title, impact, severity, affectedSessionCount } = friction;
         byKey.set(key, { title, impact, severity, affectedSessionCount });
       });
@@ -188,13 +191,17 @@ export function measureSetup(files: readonly TranscriptFile[]): SetupMeasurement
   });
   const bySkill: Record<string, Tokens> = {};
   for (const skill of new Set(rows.map((r) => r.skill))) bySkill[skill] = sum(rows.filter((r) => r.skill === skill));
+  const inRun = lines.filter((line) => {
+    const at = Date.parse(String(line.timestamp));
+    return at >= begin && at <= end;
+  });
   return {
     wallSeconds: Math.round((end - begin) / 1000),
     total: sum(rows),
     subagents: sum(rows.filter((r) => r.isSubagent)),
     bySkill,
     newFrictions: newFrictions(lines),
-    frictions: submittedFrictions(lines),
+    frictions: submittedFrictions(inRun),
   };
 }
 
