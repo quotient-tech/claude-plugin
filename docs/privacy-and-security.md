@@ -7,7 +7,7 @@ Quotient's [privacy policy](https://www.getquotient.com/privacy) covers what Quo
 ## What the plugin promises
 
 - **Your sessions and code stay on your machine.** Quotient gets short written descriptions of frictions and fixes, never your session transcripts or your files.
-- **Teammates see only short descriptions of frictions and fixes, written to leave out anything that identifies you.** Your teammates read every friction, review and fix you send, so quotient's skills keep out anything that says who you are or where the work happened:
+- **Teammates see only short descriptions of frictions and fixes, written to leave out anything that identifies you.** Your teammates read every friction, review and fix you send, so quotient's skills write them this way:
   - A config, tooling or docs file, such as a CI workflow or a lint config, is named by its path inside its repo, or from `~/` when it's outside one.
   - Your app's code is described by what it does, not by its file names, paths, or class, function or table names.
   - Claude Code's project folders, and the transcripts and memories in them, are mentioned only in general terms, because a folder's name includes your username.

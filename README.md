@@ -65,7 +65,7 @@ Commit this to the repo's `.claude/settings.json`:
 }
 ```
 
-This turns the plugin on for the repo but doesn't download it, so each teammate runs `claude plugin install quotient@quotient --scope project` once per clone. With `autoUpdate`, their copies then update to each new release.
+This turns the plugin on for the repo but doesn't download it. Once a teammate trusts the folder in Claude Code, they run `claude plugin install quotient@quotient --scope project` once per clone. With `autoUpdate`, their copies then update to each new release.
 
 ### Sign in to Quotient
 
