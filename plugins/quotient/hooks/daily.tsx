@@ -122,11 +122,8 @@ async function recentProjects($: Api, home: string, runs: string): Promise<strin
   const dirs = { config, home, runs }
   try {
     const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
-    const files = found.stdout.split('\n').filter(line => line !== '')
-    // Output cut off mid-line can end in part of a path.
-    if (found.isStdoutTruncated) files.pop()
-    const names = files.map(file => file.split('/').at(-2) ?? '')
-    return [...new Set(names)].filter(name => !isSkippedProject(name, dirs)).sort()
+    const names = found.stdout.split('\n').map(file => file.split('/').at(-2) ?? '')
+    return [...new Set(names)].filter(name => name !== '' && !isSkippedProject(name, dirs)).sort()
   } catch {
     return []
   }
