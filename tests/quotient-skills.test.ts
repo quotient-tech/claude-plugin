@@ -340,6 +340,14 @@ test("find-solutions: answers without a fix only after searching the setup and e
   assert.match(body, /Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it/);
 });
 
+// A page holds up to 50 frictions and a machine dozens of active project
+// folders: a Grep per friction per folder is thousands of calls.
+test("find-solutions: searches each project folder once per page, for every friction on it", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /In each project folder, run one Grep whose pattern combines the key terms of every friction on the page/);
+  assert.match(body, /then read only the sessions it matches/);
+});
+
 test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /A search quotient refuses searched nothing/);

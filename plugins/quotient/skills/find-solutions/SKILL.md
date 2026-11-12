@@ -52,6 +52,8 @@ Read or search one project folder at a time, never `~/.claude/projects/` as a wh
 
 Outside a daily run, find the project folders with a session from the last two weeks yourself. Glob lists files oldest first and shows at most 100, so a Glob of every transcript leaves out the newest sessions: list each folder on its own.
 
+Search past sessions for the whole page at once, not friction by friction. In each project folder, run one Grep whose pattern combines the key terms of every friction on the page, then read only the sessions it matches. That one Grep searches the folder for each of those frictions.
+
 ## Answer
 For each friction, write one answer with these fields:
 - `frictionId`: the friction's `id`, copied exactly
