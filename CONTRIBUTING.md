@@ -52,7 +52,7 @@ claude --plugin-dir ~/path/to/claude-plugin/plugins/quotient
 
 Run it from the repo you want to test the plugin in. Start a new session to pick up edits.
 
-The skills have no dry run and they send to whichever Quotient the plugin's MCP server points at, which is production by default. Quotient engineers should test against dev or a local Quotient instead, as below.
+Running a skill sends to whichever Quotient the plugin's MCP server points at, which is production by default. Quotient engineers should test against dev or a local Quotient instead, as below.
 
 ### Point quotient at dev or a local Quotient
 
