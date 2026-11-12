@@ -87,6 +87,7 @@ function launch(
  * @param opts.launchExit - Each run's launch exit code, by the prompt it starts; 0 when absent
  * @param opts.launchRejects - Whether every launch rejects
  * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
+ * @param opts.isFindTruncated - Whether `find`'s output was cut off after the listed lines
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part and the thank-yous check made
@@ -103,6 +104,7 @@ function engine(
     launchExit?: Record<string, number>
     launchRejects?: boolean
     transcripts?: string[] | 'rejects'
+    isFindTruncated?: boolean
   } = {},
 ) {
   const seen = {
@@ -151,8 +153,10 @@ function engine(
     if (e.argv[0] === 'find') {
       seen.found.push(e.argv)
       if (opts.transcripts === 'rejects') throw new Error('find failed')
-      const stdout = (opts.transcripts ?? []).map(file => `${file}\n`).join('')
-      return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      // Output cut off ends mid-line, without a newline.
+      const isStdoutTruncated = opts.isFindTruncated === true
+      const stdout = (opts.transcripts ?? []).join('\n') + (isStdoutTruncated ? '' : '\n')
+      return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated, isStderrTruncated: false } }
     }
     seen.launched.push(e.argv)
     seen.launchEnv.push(e.init?.env)
@@ -612,4 +616,18 @@ test('a find-solutions run still starts, naming no folders, when the transcripts
   await clock.settle()
 
   expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS)])
+})
+
+test("a cut-off transcript listing drops its last line, which may name only part of a folder", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1') },
+    transcripts: ['/home/op/.claude/projects/-home-op-api/a.jsonl', '/home/op/.claude/projects/-home-op-we'],
+    isFindTruncated: true,
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS, undefined, ['-home-op-api'])])
 })
