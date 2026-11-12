@@ -340,6 +340,8 @@ const REVIEW_TOOLS = [
   'mcp__plugin_quotient_agex__submit_friction',
   'mcp__plugin_quotient_agex__submit_review',
   'mcp__plugin_quotient_agex__complete_daily_run',
+  'mcp__quotient__review_sessions',
+  'mcp__quotient__review_digest',
 ]
 
 test('a due run starts detached, in its own folder, with only its own tools', async ($, on) => {
@@ -438,6 +440,8 @@ test("through the Quotient connector, the run's tools carry the connector's pref
       'mcp__claude_ai_Quotient__submit_friction',
       'mcp__claude_ai_Quotient__submit_review',
       'mcp__claude_ai_Quotient__complete_daily_run',
+      'mcp__quotient__review_sessions',
+      'mcp__quotient__review_digest',
     ]),
   ])
 })

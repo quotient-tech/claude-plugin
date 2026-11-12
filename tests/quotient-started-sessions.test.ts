@@ -1,15 +1,14 @@
 // setup leaves out a session whose first typed prompt ran one of quotient's
 // own skills. The mod's tests can't run a process, so this runs the awk
-// program setup.tsx uses, read from its source, against sample transcripts.
+// program setup.tsx uses against sample transcripts.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-const SETUP = readFileSync(join(import.meta.dirname, "../plugins/quotient/hooks/setup.tsx"), "utf8");
-const PROGRAM = /const QUOTIENT_STARTED = String\.raw`([^`]+)`/.exec(SETUP)?.[1] ?? "";
+import { QUOTIENT_STARTED as PROGRAM } from "../plugins/quotient/hooks/sessions.ts";
 
 // One transcript per case, each a list of JSONL records, and whether setup
 // should leave it out.

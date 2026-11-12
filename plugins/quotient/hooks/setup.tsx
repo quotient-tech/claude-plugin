@@ -21,6 +21,7 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
+import { heldVerdict, holdsTeammateText, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -67,14 +68,6 @@ const SEVERITY_WIDTH = 6
 // The card's inner width: the skill's text sample is 72 columns inside its box.
 const CARD_WIDTH = 72
 const SEVERITIES = ['high', 'medium', 'low'] as const
-// Prints each transcript whose first prompt typed one of quotient's own
-// skills: a review of it would find problems with quotient itself, which
-// aren't the operator's frictions to share. It stops reading each file at
-// that prompt, which isn't a meta message such as a command's caveat. A typed
-// command's prompt starts with its command tags, as Claude Code records it,
-// so a prompt that only quotes one doesn't count.
-const QUOTIENT_STARTED = String.raw`/"type": ?"user"/ && !/"isMeta": ?true/ { if (/"content": ?"<command-(name>\/|message>)quotient:/) print FILENAME; nextfile }`
-
 const DIGEST_SCHEMA = {
   type: 'object',
   properties: {
@@ -878,9 +871,6 @@ const NOT_LISTED = 'setup_digest reads only the sources setup_start listed in th
 const NOT_SETUP = 'setup_digest works only while /quotient:setup is running'
 const HOLDS_FIXES = "This session's transcript holds teammates' fixes, which setup never reads: skip it"
 const UNCHECKED = "quotient couldn't check this transcript for teammates' fixes, so it isn't read: skip it"
-// How many lines one read of a transcript asks for. Output stops at 4 MiB,
-// so a range that runs past it is halved until it fits.
-const LINES_PER_READ = 500
 
 /**
  * Shortens a RemoteTrigger reply setup reads, keeping its shape: a routine
@@ -920,9 +910,10 @@ async function answerDigest($: Api, input: Record<string, unknown>): Promise<{ d
   if (path === undefined || typeof source !== 'string') return { deny: NOT_LISTED }
   // The transcript can gain teammates' fixes after setup_start, such as setup's own session's.
   const held = await $.process.run(['grep', '-q', '-E', '--', TEAMMATE_TOOL_USE, path], { timeoutMs: 30_000 }).catch(() => undefined)
-  if (held?.exitCode === 0) return { deny: HOLDS_FIXES }
-  if (held?.exitCode !== 1) return { deny: UNCHECKED }
-  return { result: digest(source, await readLines($, path)) }
+  const verdict = heldVerdict(held?.exitCode)
+  if (verdict !== 'clean') return { deny: verdict === 'holds' ? HOLDS_FIXES : UNCHECKED }
+  const lines = await readLines($, path)
+  return holdsTeammateText(lines, TEAMMATE_TOOL_USE) ? { deny: HOLDS_FIXES } : { result: digest(source, lines) }
 }
 
 /**
@@ -1094,11 +1085,7 @@ async function countSources(
  * @throws When the transcripts can't be listed
  */
 async function windowFiles($: Api, dirs: NonNullable<SetupRun['dirs']>, window?: PinnedWindow): Promise<string[]> {
-  const changed = window === undefined ? ['-mtime', `-${WINDOW_DAYS}`] : ['-newermt', window.start, '!', '-newermt', window.end]
-  const found = await $.process.run(
-    ['find', `${dirs.config}/projects`, '-mindepth', '2', '-maxdepth', '2', '-type', 'f', '-name', '*.jsonl', ...changed],
-    { timeoutMs: 30_000 },
-  )
+  const found = await $.process.run(transcriptFindArgs(`${dirs.config}/projects`, window ?? { days: WINDOW_DAYS }), { timeoutMs: 30_000 })
   if (found.exitCode !== 0) throw new Error(`find exited ${found.exitCode}`)
   return found.stdout.split('\n').filter(file => file !== '' && !isSkippedProject(file.split('/').at(-2) ?? '', dirs))
 }

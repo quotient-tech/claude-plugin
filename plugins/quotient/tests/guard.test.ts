@@ -255,6 +255,21 @@ test('the refusal names the field and what it holds, never the text, and asks fo
   expect(reason).not.toContain('jane@example.com')
 })
 
+test("a daily review-frictions run may list and digest its sessions through quotient's review tools, and call no other of quotient's own tools", async ($, on) => {
+  engine(on, { kind: 'review-frictions' })
+
+  expect(await check($, 'mcp__quotient__review_sessions', { since: '2026-11-05T10:00:00Z' })).toBe('allow')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'a0' })).toBe('allow')
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'a0' })).toBe('deny')
+})
+
+test("a daily find-solutions run may not call review-frictions' tools", async ($, on) => {
+  engine(on, { kind: 'find-solutions' })
+
+  expect(await check($, 'mcp__quotient__review_sessions', { since: '2026-11-05T10:00:00Z' })).toBe('deny')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'a0' })).toBe('deny')
+})
+
 test('private text is refused in a daily run and in the teammate-check subagent too', async ($, on) => {
   engine(on, { kind: 'review-frictions' })
 

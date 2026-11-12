@@ -148,6 +148,13 @@ export type SetupRun = {
   teammateAnswers: SetupAnswer[]
 }
 
+/** The review-frictions run in progress, if any, and the sessions it may read. */
+export type ReviewRun = {
+  isRunning: boolean
+  /** Each transcript `review_sessions` listed, by its name without `.jsonl`: the only ones `review_digest` reads. */
+  listed: Record<string, string>
+}
+
 /** One answer setup's teammate check sent to a teammate's friction. */
 export type SetupAnswer = { frictionId: string; fix: string | null }
 
@@ -164,6 +171,7 @@ declare module 'claude-code' {
       statusParts: StatusParts
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
+      reviewRun: Shaped<ReviewRun>
       sandboxReach: Shaped<SandboxReach | null>
       sandboxedAgents: Shaped<string[]>
       teammateTextMode: TeammateTextMode

@@ -50,7 +50,7 @@ export type Dirs = SandboxReach['dirs']
 export type Reach = { dirs: Dirs; repos: readonly string[] }
 
 /** What one sandboxed agent may do: which Quotient tools and skills it calls, and whether it reads repos. */
-export type Scope = { tools: readonly string[]; skills: readonly string[]; withRepos: boolean }
+export type Scope = { tools: readonly string[]; ownTools: readonly string[]; skills: readonly string[]; withRepos: boolean }
 
 /**
  * Names the project folder Claude Code keeps a session's transcripts in.
