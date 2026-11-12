@@ -657,42 +657,56 @@ async function sendTeammateAnswers($: Parameters<TestBody>[0], answers: [string,
   } as unknown as Parameters<typeof $.tool.call>[0])
 }
 
-test("an invited operator's summary leaves out the pitch and sample and ends with the waiting line", async ($, on) => {
+test("an invited operator's summary opens with setup being done and leaves out the pitch, sample, waiting line and hint", async ($, on) => {
   engine(on)
   await checkTeammates($, [])
 
-  const { texts, shown } = await drawSummary($, INVITED)
+  const { shown } = await drawSummary($, INVITED)
 
   expectInOrder(shown, [
-    'Your agents ran into 5 frictions in the last two weeks.',
+    'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
     'Where your agents lost the most time',
     'Lint passes on commit but fails in CI',
     '+ 2 more, 1 of them high severity',
-    '✻',
-    "Waiting on solutions from teammates' agents…",
-    LIST_FIXES_HINT,
   ])
-  for (const absent of ['Setup is done.', 'Your teammates have probably', "Why a teammate's fix", 'SAMPLE', 'Ron Burgundy']) {
+  for (const absent of ['Your teammates have probably', "Why a teammate's fix", 'SAMPLE', 'Ron Burgundy', '✻', 'Waiting on solutions', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
-  expect(texts.find(one => one.text === '✻')?.props.color).toBe('suggestion')
-  expect(texts.find(one => one.text === "Waiting on solutions from teammates' agents…")?.props.dimColor).toBe(true)
 })
 
-test('an invited operator with no new frictions sees the headline and what is working only', async ($, on) => {
+test('an invited operator with no new frictions sees setup being done and what is working', async ($, on) => {
   engine(on)
   await checkTeammates($, [])
 
   const { shown } = await drawSummary($, { ...INVITED, frictions: 0, top: [], remainingHigh: 0 })
 
-  expect(shown).toContain('Your agents ran into no new frictions in the last two weeks.')
+  expect(shown).toContain('Setup is done. Your agents ran into no new frictions in the last two weeks.')
   expect(shown).toContain("What's working")
-  for (const absent of ['Setup is done.', "They're saved", 'Waiting on solutions', 'SAMPLE', '/list-fixes']) {
+  for (const absent of ["They're saved", 'Waiting on solutions', 'SAMPLE', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
+})
+
+test("an invited operator sees their own frictions before the teammates' frictions their setup solves", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup already solves'])
+})
+
+test("an invited operator's summary answers with only the instruction to end the turn, since it doesn't end with the hint", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const called = await callSummary($, INVITED)
+
+  expect(called.deny).toBeUndefined()
+  expect(called.result).toBe(END_TURN)
 })
 
 test("setup_summary refuses inCommon when setup checked for teammates' fixes", async ($, on) => {
@@ -737,7 +751,6 @@ test("an invited operator first sees the teammates' problems their setup solves,
     '✓',
     'Quotient will suggest these to your teammate in their next session',
     '(you both stay anonymous)',
-    'Your agents ran into 5 frictions in the last two weeks.',
   ])
   expect(shown).not.toContain('worked in')
 })
@@ -751,7 +764,7 @@ test('the solved block colors its labels, check and notes as the mockup does', a
 
   expect(find("A TEAMMATE'S FRICTION")).toMatchObject({ color: 'error', bold: true })
   expect(find('YOUR FIX')).toMatchObject({ color: 'success', bold: true })
-  expect(find('Lint passes on commit but fails in CI')?.bold).toBe(true)
+  expect(texts.filter(one => one.text === 'Lint passes on commit but fails in CI').at(-1)?.props.bold).toBe(true)
   expect(find('(you both stay anonymous)')?.dimColor).toBe(true)
   expect(texts.filter(one => one.text === '✓').at(-1)?.props.color).toBe('success')
 })

@@ -60,8 +60,6 @@ const LIST_FIXES_HINT = "When your teammates' agents find fixes, run /list-fixes
 // the conversation is what Claude Code suggests the operator's next prompt from.
 const END_TURN_WITH_HINT = `The summary is shown to the operator. Its last line reads: "${LIST_FIXES_HINT}" End your turn now without writing anything else.`
 const MAX_ITEMS = 3
-// Teammates' agents look for fixes to the operator's frictions on their own machines, later.
-const WAITING = "Waiting on solutions from teammates' agents…"
 // textError counts JavaScript string length, where an emoji takes 2 or more.
 const TEXT_LIMIT = `At most ${MAX_TEXT} characters, counting an emoji as 2 or more`
 const SEVERITY_WIDTH = 6
@@ -527,7 +525,7 @@ function solvedCardTree({ Box, Text }: Els, solved: SetupSolved) {
 
 /**
  * Draws the teammates' problems the operator's setup already solves, which
- * an invited operator sees before the summary.
+ * an invited operator sees after their own frictions.
  *
  * @param els - The surface's elements
  * @param check - The checked findings, with at least one fix
@@ -537,7 +535,7 @@ function solvedTree(els: Els, check: SetupTeammateCheck) {
   const { Box, Text } = els
   const problems = check.solvedCount === 1 ? "1 of a teammate's problems" : `${check.solvedCount} of your teammates' problems`
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginTop={1}>
       <Text bold>{`Your setup already solves ${problems}.`}</Text>
       <Text>{SOLVED_CARD.why}</Text>
       {check.solved.map(solved => solvedCardTree(els, solved))}
@@ -561,12 +559,10 @@ function summaryTree(els: Els, summary: SetupSummary) {
   const { frictions, working, top, remainingHigh, inCommon, teammateCheck } = summary
   const isInvited = teammateCheck !== undefined
   const found = `Your agents ran into ${frictions === 0 ? 'no new frictions' : plural(frictions, 'friction')} in the last two weeks.`
-  const headline = isInvited ? found : `Setup is done. ${found}`
   const remaining = frictions - top.length
   return (
     <Box flexDirection="column">
-      {teammateCheck !== undefined && teammateCheck.solvedCount > 0 && solvedTree(els, teammateCheck)}
-      <Text bold>{headline}</Text>
+      <Text bold>{`Setup is done. ${found}`}</Text>
       {frictions > 0 && <Text>They're saved to Quotient, where your teammates' agents can look for fixes.</Text>}
       {working.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
@@ -604,13 +600,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
           )}
         </Box>
       )}
-      {isInvited && frictions > 0 && (
-        <Box marginTop={1}>
-          <Text>
-            <Text color="suggestion">✻</Text> <Text dimColor>{WAITING}</Text>
-          </Text>
-        </Box>
-      )}
+      {teammateCheck !== undefined && teammateCheck.solvedCount > 0 && solvedTree(els, teammateCheck)}
       {!isInvited && frictions > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Your teammates have probably already fixed some of these.</Text>
@@ -628,7 +618,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
           </Box>
         </Box>
       )}
-      {frictions > 0 && (
+      {!isInvited && frictions > 0 && (
         <Box marginTop={1}>
           <Text>{LIST_FIXES_HINT}</Text>
         </Box>
@@ -1192,7 +1182,8 @@ async function answerSummary(
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
   }
   await endRun($)
-  return { result: summary.frictions > 0 ? END_TURN_WITH_HINT : END_TURN }
+  const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0
+  return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
 }
 
 /**
