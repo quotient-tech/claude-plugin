@@ -838,6 +838,8 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /- `working`: up to three things the subagents reported working well, each backed by their evidence/);
   assert.match(section, /- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often/);
   assert.match(section, /`impact` \(the value you sent in `submit_frictions` for that friction\)/);
+  // An update may change a friction's severity, and remainingHigh counts the stored values.
+  assert.match(section, /`severity` \(the value you last sent in `submit_frictions` for that friction\)/);
   assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });
