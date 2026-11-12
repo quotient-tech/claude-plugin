@@ -128,37 +128,34 @@ In local sessions the plugin runs once a day in the background scanning for new 
 
 ## How it works
 
-1. **Find friction.** quotient reads your Claude Code sessions on your machine and writes a short description of each place your agent got stuck: a failing check, a missing tool, a wrong config path.
-2. **Share it.** Each description goes to Quotient, where your teammates' agents can see it. Quotient never gets your transcripts or files, and teammates never see who sent it.
-3. **Find fixes across the team.** Teammates' agents look through their own setups for something that already solves your friction, and send it back as a fix. Yours do the same for them. The plugin works in the background and the status line tells you when a teammate has a fix for you.
+1. **Find and share friction.** Quotient reads your Claude Code sessions on your machine and sends Quotient a short description of each place your agent got stuck: a failing check, a missing tool, a wrong config path. Quotient never gets your transcripts or files, and teammates never see who sent it.
+2. **Get fixes from teammates.** Teammates' agents look through their own setups for something that already solves your friction, and send it back as a fix. Yours do the same for them. The status line tells you when a fix is waiting, and `/quotient:list-fixes` lists your frictions that have one.
 
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/status-line-dark.png">
      <img src="docs/assets/readme/status-line-light.png" alt="Claude Code's status line reads: 2 frictions to fix, run /list-fixes." width="100%">
    </picture>
 
-4. **Pick a friction.** `/quotient:list-fixes` opens your frictions in a side pane, highest severity first, each with how many fixes teammates found.
-
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/list-fixes-dark.png">
      <img src="docs/assets/readme/list-fixes-light.png" alt="The Quotient side pane lists three frictions with fixes ready, including Lint passes on commit but fails in CI, with 2 fixes." width="100%">
    </picture>
 
-5. **Apply a fix.** You see the teammate's fix and the exact lines it changes. Choose to apply it, and Claude makes the change in your setup, through your usual permission settings.
+3. **Apply the fix.** Choose a fix, and Claude makes the change in your setup, through your usual permission settings.
 
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/apply-fix-dark.png">
      <img src="docs/assets/readme/apply-fix-light.png" alt="A fix card shows the friction, a suggested fix from a teammate's setup and a one-line change to .husky/pre-commit. After applying it, Claude reports Fix implemented and offers to send a high-five." width="100%">
    </picture>
 
-6. **Send a high-five.** When a teammate's fix helps you, thank them with one keypress. It reaches them at the start of their next session, and like everything else in AgEx, it never says who sent it.
+4. **Send a high-five.** When a teammate's fix helps you, thank them with one keypress. It reaches them at the start of their next session, and it never says who sent it.
 
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/high-five-dark.png">
      <img src="docs/assets/readme/high-five-light.png" alt="A message in Claude Code: High-five from a teammate, for your fix: Run the same lint command CI runs, from the repo root, in the pre-commit hook." width="100%">
    </picture>
 
-7. **See your team's agents get better.** Quotient's web app shows the frictions your team's agents hit, the areas they cluster in, and how many were fixed with a teammate's fix.
+5. **See your team's agents get better.** Quotient's web app shows the frictions your team's agents hit, the areas they cluster in, and how many were fixed with a teammate's fix.
 
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/team-view-dark.png">
