@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
-import { SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
+import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -147,6 +147,14 @@ test("every skill and agent quotes a front matter value that holds ': '", () => 
       const value = /^[A-Za-z][\w-]*:\s*(.*)$/.exec(line)?.[1] ?? "";
       assert.ok(/^["']/.test(value) || !value.includes(": "), `${file}: ${line.slice(0, 60)}`);
     }
+  }
+});
+
+// While setup or review-frictions runs, quotient's guard lets only these
+// tools run, so a renamed tool the list misses is refused mid-run.
+test("guard: lets setup and review-frictions run exactly the Quotient tools each calls", () => {
+  for (const name of ["setup", "review-frictions"] as const) {
+    assert.deepEqual([...LOCKED_QUOTIENT_TOOLS[name]].sort(), [...SKILL_TOOLS[name]!].sort(), name);
   }
 });
 

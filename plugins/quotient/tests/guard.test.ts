@@ -763,11 +763,12 @@ test("while setup runs, only its own Quotient tools may run", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
 
-  for (const tool of ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run']) {
+  for (const tool of ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_frictions', 'finish_setup_run']) {
     expect(await check($, `${AGEX}${tool}`, {})).toBe('allow')
+    expect(await check($, `${CONNECTOR}${tool}`, {})).toBe('allow')
   }
   for (const tool of ['setup_start', 'setup_digest', 'setup_summary']) expect(await check($, `mcp__quotient__${tool}`, {})).toBe('allow')
-  for (const tool of ['submit_review', 'mark_solution_implemented', 'send_thank_you']) expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
+  for (const tool of ['submit_friction', 'submit_review', 'mark_solution_implemented', 'send_thank_you']) expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
   expect(await check($, 'mcp__quotient__review_digest', { source: 'plain' })).toBe('deny')
 })
 
