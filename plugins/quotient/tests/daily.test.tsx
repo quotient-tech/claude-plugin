@@ -39,9 +39,16 @@ function due(runId: string): string {
  * @param runId - The claimed run's id
  * @param tools - The Quotient tools the run may call, by their full names
  * @param folder - Where the run starts
+ * @param projects - The project folders the prompt names after the run id
  * @returns What `$.process.run` should receive
  */
-function launch(kind: Kind, runId: string, tools: string[], folder = '/home/op/.local/share/quotient'): string[] {
+function launch(
+  kind: Kind,
+  runId: string,
+  tools: string[],
+  folder = '/home/op/.local/share/quotient',
+  projects: string[] = [],
+): string[] {
   return [
     'sh',
     '-c',
@@ -50,7 +57,7 @@ function launch(kind: Kind, runId: string, tools: string[], folder = '/home/op/.
     folder,
     'claude',
     '-p',
-    `/quotient:${kind} daily ${runId}`,
+    [`/quotient:${kind} daily ${runId}`, ...projects].join(' '),
     '--tools',
     'Read',
     'Grep',
@@ -79,6 +86,7 @@ function launch(kind: Kind, runId: string, tools: string[], folder = '/home/op/.
  * @param opts.wait - Holds each tool reply until the test moves the clock this far
  * @param opts.launchExit - Each run's launch exit code, by the prompt it starts; 0 when absent
  * @param opts.launchRejects - Whether every launch rejects
+ * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part and the thank-yous check made
@@ -94,10 +102,12 @@ function engine(
     wait?: { clock: ReturnType<typeof mock.clock>; ms: number; kind?: Kind }
     launchExit?: Record<string, number>
     launchRejects?: boolean
+    transcripts?: string[] | 'rejects'
   } = {},
 ) {
   const seen = {
     connected: [] as string[],
+    found: [] as (readonly string[])[],
     calls: [] as { server: string; tool: string; args: Record<string, unknown> }[],
     launched: [] as (readonly string[])[],
     launchEnv: [] as (Record<string, string> | undefined)[],
@@ -138,6 +148,12 @@ function engine(
     return { value: { content: [{ type: 'text', text }], isError: false } }
   })
   on('process.run', (_, e) => {
+    if (e.argv[0] === 'find') {
+      seen.found.push(e.argv)
+      if (opts.transcripts === 'rejects') throw new Error('find failed')
+      const stdout = (opts.transcripts ?? []).map(file => `${file}\n`).join('')
+      return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     seen.launched.push(e.argv)
     seen.launchEnv.push(e.init?.env)
     if (opts.launchRejects) throw new Error('launch failed')
@@ -376,7 +392,8 @@ test('each kind that is due starts, with its own tools', async ($, on) => {
   await $.session.start(INTERACTIVE)
   await clock.settle()
 
-  expect(seen.launched).toEqual([
+  // Each run starts as soon as it's ready, in no set order.
+  expect([...seen.launched].sort((a, b) => (a[7] ?? '').localeCompare(b[7] ?? ''))).toEqual([
     launch('find-solutions', 'run-1', FIND_TOOLS),
     launch('review-frictions', 'run-2', REVIEW_TOOLS),
   ])
@@ -515,8 +532,84 @@ test('each run starts with QUOTIENT_DAILY_RUN=1 and its kind in its environment'
   await $.session.start(INTERACTIVE)
   await clock.settle()
 
-  expect(seen.launchEnv).toEqual([
+  const kindOf = (env: Record<string, string> | undefined): string => env?.QUOTIENT_DAILY_RUN_KIND ?? ''
+  expect([...seen.launchEnv].sort((a, b) => kindOf(a).localeCompare(kindOf(b)))).toEqual([
     { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: 'find-solutions' },
     { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: 'review-frictions' },
   ])
+})
+
+// Glob lists files oldest first and stops at 100, so a run can't find the
+// recent sessions itself: the prompt names their project folders.
+test("a find-solutions run's prompt names each project folder with a session from the last 14 days, once", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1') },
+    transcripts: [
+      '/home/op/.claude/projects/-home-op-api/a.jsonl',
+      '/home/op/.claude/projects/-home-op-web/b.jsonl',
+      '/home/op/.claude/projects/-home-op-api/c.jsonl',
+    ],
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.found).toEqual([
+    ['find', '/home/op/.claude/projects', '-mindepth', '2', '-maxdepth', '2', '-type', 'f', '-name', '*.jsonl', '-mtime', '-14'],
+  ])
+  expect(seen.launched).toEqual([
+    launch('find-solutions', 'run-1', FIND_TOOLS, undefined, ['-home-op-api', '-home-op-web']),
+  ])
+})
+
+test("a find-solutions run's prompt leaves out temporary folders and the daily runs' own", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1') },
+    transcripts: [
+      '/home/op/.claude/projects/-private-tmp-probe/a.jsonl',
+      '/home/op/.claude/projects/-home-op--local-share-quotient/b.jsonl',
+      '/home/op/.claude/projects/-home-op-api/c.jsonl',
+    ],
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS, undefined, ['-home-op-api'])])
+})
+
+test('the transcripts are looked up under CLAUDE_CONFIG_DIR when it is set', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1') }, env: { CLAUDE_CONFIG_DIR: '/cfg' } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.found.map(argv => argv[1])).toEqual(['/cfg/projects'])
+})
+
+test('a review-frictions run lists its own sessions, so its prompt names no folders', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'review-frictions': due('run-2') },
+    transcripts: ['/home/op/.claude/projects/-home-op-api/a.jsonl'],
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.found).toEqual([])
+  expect(seen.launched).toEqual([launch('review-frictions', 'run-2', REVIEW_TOOLS)])
+})
+
+test('a find-solutions run still starts, naming no folders, when the transcripts cannot be listed', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1') }, transcripts: 'rejects' })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS)])
 })
