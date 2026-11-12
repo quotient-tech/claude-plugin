@@ -36,6 +36,7 @@ Humans collaborate to solve problems, so why shouldn't agents? The `quotient` pl
 
 2. Start Claude Code, run `/mcp`, select `plugin:quotient:agex`, and sign in to Quotient.
 3. Run `/quotient:setup` to scan for any frictions encountered by your agents in the last two weeks of sessions.
+4. Turn on auto-update so you get new releases: run `/plugin`, open **Marketplaces**, select `quotient` and choose **Enable auto-update**.
 
 You need Claude Code 2.1.307 or later, on macOS or in a Claude Code cloud session, and a Quotient account.
 
@@ -55,11 +56,16 @@ Commit this to the repo's `.claude/settings.json`:
 ```json
 {
   "extraKnownMarketplaces": {
-    "quotient": { "source": { "source": "github", "repo": "quotient-tech/claude-plugin" } }
+    "quotient": {
+      "source": { "source": "github", "repo": "quotient-tech/claude-plugin" },
+      "autoUpdate": true
+    }
   },
   "enabledPlugins": { "quotient@quotient": true }
 }
 ```
+
+This turns the plugin on for the repo but doesn't download it, so each teammate runs `claude plugin install quotient@quotient --scope project` once per clone. With `autoUpdate`, their copies then update to each new release.
 
 ### Sign in to Quotient
 
@@ -72,7 +78,12 @@ Until you're signed in, each skill says how to sign in and sends nothing. Quotie
 
 ### Keep it up to date
 
-`quotient` is a third-party marketplace, so Claude Code doesn't [update it automatically](https://code.claude.com/docs/en/discover-plugins) until you turn that on: run `/plugin`, open the **Marketplaces** tab, select `quotient` and choose **Enable auto-update**. Or update by hand:
+Turn on auto-update to get each new release. `quotient` is a third-party marketplace, so Claude Code doesn't [update it automatically](https://code.claude.com/docs/en/discover-plugins) until you do:
+
+- **For yourself:** run `/plugin`, open the **Marketplaces** tab, select `quotient` and choose **Enable auto-update**.
+- **For a repo:** set `"autoUpdate": true` on the `quotient` marketplace, as in the [settings above](#for-everyone-who-works-in-a-repo).
+
+Or update by hand:
 
 ```sh
 claude plugin marketplace update quotient
