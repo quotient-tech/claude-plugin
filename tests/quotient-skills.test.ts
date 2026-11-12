@@ -83,7 +83,7 @@ const SKILL_TOOLS: Record<string, string[]> = {
   "fix-friction": ["list_my_frictions", "mark_solution_implemented", "send_thank_you"],
   "list-fixes": ["list_my_frictions"],
   "review-frictions": ["list_my_frictions", "submit_friction", "submit_review", "complete_daily_run"],
-  setup: ["start_setup_run", "record_setup_progress", "submit_friction", "finish_setup_run", "list_teammate_frictions"],
+  setup: ["start_setup_run", "record_setup_progress", "submit_frictions", "finish_setup_run", "list_teammate_frictions"],
 };
 
 // Each skill gives these sign-in steps word for word, as a quote that may be
@@ -434,16 +434,80 @@ test("setup: starts or resumes the run before the long analysis starts", () => {
   assert.match(skill("setup").body, /before anything else, call `start_setup_run`/i);
 });
 
-test("setup: submits each friction as soon as it's found, in submit_friction's shape", () => {
+test("setup: sends each batch's frictions in one submit_frictions call, each friction with submit_friction's fields", () => {
   const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
   for (const field of ["runId", "title", "description", "frequency", "affectedSessionCount", "reviewedSessionCount", "impact", "severity", "tags", "origin"]) {
-    assert.ok(body.includes(`- \`${field}\`:`), `${field} isn't a friction field`);
+    assert.ok(section.includes(`- \`${field}\`:`), `${field} isn't a friction field`);
   }
-  assert.ok(body.includes('- `origin`: `"setup"`'));
+  assert.ok(section.includes('- `origin`: `"setup"`'));
   assert.ok(!body.includes("- `fix`:"), "fix is still a friction field");
   assert.ok(!body.includes("- `discoveredAt`:"), "Quotient records when it was found");
-  assert.match(body, /As soon as you've found a friction, call `submit_friction`/);
+  assert.match(section, /Send each batch's frictions in one call to `submit_frictions`, with them as `frictions`/);
+  assert.doesNotMatch(body, /`submit_friction`/, "setup sends only through submit_frictions");
   assert.ok(!/queue|sent\//.test(body));
+});
+
+// Quotient rejects a call of more than 100 frictions before storing any.
+test("setup: splits a batch of more than 100 frictions into several calls", () => {
+  const { body } = skill("setup");
+  assert.match(body, /It takes at most 100, so a batch with more goes in several calls of up to 100/);
+});
+
+// Later batches update a friction by the frictionId its reply gave, which
+// only the reply's order ties to the friction sent.
+test("setup: reads submit_frictions' reply by position, keeps each friction's id, and drops refused frictions", () => {
+  const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.match(section, /one entry per friction, in the order you sent them: the first entry is the first friction's/);
+  assert.match(section, /`new` or `updated`, with the friction's `frictionId`: keep it, to update that friction from a later batch/);
+  assert.match(section, /`alreadyReported` for a friction you'd already reported elsewhere, which isn't stored again/);
+  assert.match(section, /`refused`, with the `reason`, for one Quotient didn't store\. Don't send a refused friction again\./);
+});
+
+// Quotient checks an update's fields as it checks a new friction's, so an
+// update sent with only the fields that changed is refused, and then dropped.
+test("setup: sends an update to a friction with every field, as well as its frictionId", () => {
+  const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.match(section, /An update to a friction already submitted carries every field above, as a new one does, and its `frictionId`\./);
+});
+
+// Quotient's reply is an error when it refused every friction in the call,
+// and dropping them must not end the run.
+test("setup: goes on to record progress when Quotient refuses every friction in a call, and stops on any other error", () => {
+  const { body } = skill("setup");
+  assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, and stop/);
+  assert.match(body, /The one exception is the `submit_frictions` error the Friction section describes/);
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.match(
+    section,
+    /When Quotient refuses every friction in the call, it replies with an error that lists each friction's reason\. Don't send them again, and don't stop: go on to `record_setup_progress`\./,
+  );
+});
+
+// guard.ts refuses the whole call, naming a field like `frictions[2].title`,
+// numbered from 0 as privateText walks the array.
+test("setup: rewrites the friction quotient's privacy check names, counting from 0, and sends the whole call again", () => {
+  const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.match(section, /it names the field, such as `frictions\[2\]\.description`\. Friction numbers start at 0, so that is the third friction\./);
+  assert.match(section, /Rewrite that field and send the whole call again: nothing in it was sent\./);
+});
+
+// Sending before recording means a resumed run never loses a batch's
+// frictions, and recording after each batch means it never redoes one.
+test("setup: after each batch, sends its frictions in one call, then records its progress, also for batches it reviews itself", () => {
+  const { body } = skill("setup");
+  const steps = body.slice(body.indexOf("As soon as a batch is done"));
+  const send = steps.indexOf("1. Send all its frictions in one `submit_frictions` call");
+  const record = steps.indexOf("2. Then call `record_setup_progress`");
+  assert.ok(send > 0 && record > send, "the batch's frictions must be sent before its progress is recorded");
+  assert.match(steps, /When it found none, skip the call\./);
+  assert.match(
+    body,
+    /Do the same for a batch you review yourself, and for the routine runs you sampled: one `submit_frictions` call with what you found, then `record_setup_progress`\./,
+  );
 });
 
 test("setup: sends impact as one category, and puts the cost and reach in the description", () => {
@@ -678,7 +742,7 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /- `frictions`: `finish_setup_run`'s `newCount`/);
   assert.match(section, /- `working`: up to three things the subagents reported working well, each backed by their evidence/);
   assert.match(section, /- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often/);
-  assert.match(section, /`impact` \(the value you sent in `submit_friction` for that friction\)/);
+  assert.match(section, /`impact` \(the value you sent in `submit_frictions` for that friction\)/);
   assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });

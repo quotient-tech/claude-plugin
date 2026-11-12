@@ -1,6 +1,6 @@
 {
   "name": "quotient",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Find agent friction in your sessions, find fixes for teammates' friction, and apply the fixes teammates found.",
   "author": { "name": "Quotient", "url": "https://getquotient.com" },
   "homepage": "https://github.com/quotient-tech/claude-plugin#readme",

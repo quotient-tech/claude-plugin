@@ -37,7 +37,7 @@ const ACTIVE: readonly string[] = ['pending', 'running', 'waiting']
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
 const DAY = /^[A-Z][a-z]{2} [1-9]\d?$/
 const TEAMMATES_CLAUSE = ", and checking your setup for fixes to your teammates' frictions"
-const SETUP_RUN_TOOLS = ['start_setup_run', 'record_setup_progress', 'submit_friction', 'finish_setup_run']
+const SETUP_RUN_TOOLS = ['start_setup_run', 'record_setup_progress', 'submit_frictions', 'finish_setup_run']
 const TEAMMATE_CHECK_TOOLS = ['list_teammate_frictions', 'submit_solutions', 'submit_solution']
 const FIND_SOLUTIONS_SKILL = 'quotient:find-solutions'
 // Tools setup uses whose rows say nothing the operator needs to check: its
@@ -1210,7 +1210,7 @@ async function answerSummary(
 
 /**
  * Handles a teammate-check call during a setup run, after it ran. Setup's own
- * session holds submit_friction, so it learns only whether teammates have
+ * session holds submit_frictions, so it learns only whether teammates have
  * frictions, never their text. The teammate-check subagent's calls are
  * recorded instead: each friction's title as Quotient listed it, and each
  * answer as it was sent, leaving out any Quotient refused, each with a log

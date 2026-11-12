@@ -15,7 +15,7 @@ const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 const WINDOW_END = "2020-01-15";
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
 const AGEX = "mcp__plugin_quotient_agex__";
-const QUOTIENT_TOOLS = ["start_setup_run", "record_setup_progress", "submit_friction", "finish_setup_run", "list_teammate_frictions", "submit_solution"];
+const QUOTIENT_TOOLS = ["start_setup_run", "record_setup_progress", "submit_frictions", "finish_setup_run", "list_teammate_frictions", "submit_solution"];
 export const ALLOWED_TOOLS = [
   "Read",
   "Agent",

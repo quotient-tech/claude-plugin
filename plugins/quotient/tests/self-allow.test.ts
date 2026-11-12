@@ -10,6 +10,7 @@ const MOD_TOOLS = [
   'complete_daily_run',
   'record_usage',
   'check_thank_yous',
+  'submit_frictions',
 ]
 // The plugin's own server, the claude.ai connector, and a server the operator
 // set up by hand that Claude Code runs in place of the plugin's.
@@ -30,7 +31,7 @@ test("another plugin's call to the same tools is not quotient's own", () => {
 })
 
 test("quotient's call to a tool its mods don't call is not covered", () => {
-  for (const tool of ['Bash', 'Read', 'mcp__plugin_quotient_agex__submit_frictions', 'mcp__slack__send_list_my_frictions']) {
+  for (const tool of ['Bash', 'Read', 'mcp__plugin_quotient_agex__submit_friction', 'mcp__slack__send_list_my_frictions']) {
     expect(isOwnQuotientCall('quotient', tool)).toBe(false)
   }
 })

@@ -1782,9 +1782,9 @@ test("setup's own tool rows are hidden, and ctrl+o shows them", async ($, on) =>
 test('a group is hidden only when every call in it is setup’s and it holds nothing else', async ($, on) => {
   engine(on)
   engineRows(on)
-  await callQuotient($, 'submit_friction', 'toolu_before')
+  await callQuotient($, 'submit_frictions', 'toolu_before')
   await $.command.run(TYPED_SETUP)
-  await callQuotient($, 'submit_friction', 'toolu_a')
+  await callQuotient($, 'submit_frictions', 'toolu_a')
   await recordReviewed($, 'toolu_b')
 
   expect(await row($, 'ToolGroup', groupRow(['toolu_a', 'toolu_b']))).toBe('')
@@ -1797,11 +1797,11 @@ test("rows after the run ends aren't hidden, and setup's earlier rows stay hidde
   engine(on)
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await callQuotient($, 'submit_friction', 'toolu_mine')
+  await callQuotient($, 'submit_frictions', 'toolu_mine')
   await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<
     typeof $.prompt.submit
   >[0])
-  await callQuotient($, 'submit_friction', 'toolu_after')
+  await callQuotient($, 'submit_frictions', 'toolu_after')
 
   expect(await row($, 'ToolUse', bashRow('toolu_after'), 'toolu_after')).toBe("the engine's row")
   expect(await row($, 'ToolUse', bashRow('toolu_mine'), 'toolu_mine')).toBe('')
@@ -1853,7 +1853,7 @@ for (const [what, call] of [
   ...[
     'start_setup_run',
     'record_setup_progress',
-    'submit_friction',
+    'submit_frictions',
     'finish_setup_run',
     'list_teammate_frictions',
     'submit_solutions',
@@ -1875,8 +1875,8 @@ for (const [what, call] of [
 for (const [what, call] of [
   ['another shell command', { tool: 'Bash', command: 'rm -rf build' }],
   ['another Quotient tool', { tool: `${AGEX}list_my_frictions` }],
-  ['a look-alike setup tool on another server', { tool: 'mcp__other__submit_friction' }],
-  ['a look-alike setup tool name', { tool: `${AGEX}submit_friction_now` }],
+  ['a look-alike setup tool on another server', { tool: 'mcp__other__submit_frictions' }],
+  ['a look-alike setup tool name', { tool: `${AGEX}submit_frictions_now` }],
   ['a read outside the transcripts', { tool: 'Read', file_path: '/home/op/.ssh/id_ed25519' }],
   ['a read that climbs out of the transcripts', { tool: 'Read', file_path: `${PROJECTS}/../../.ssh/id_ed25519` }],
   ['another skill', { tool: 'Skill', skill: 'commit-commands:commit' }],
@@ -1927,7 +1927,7 @@ test("running setup again keeps the first run's rows hidden", async ($, on) => {
   engine(on)
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await callQuotient($, 'submit_friction', 'toolu_first')
+  await callQuotient($, 'submit_frictions', 'toolu_first')
   await $.prompt.submit({ text: 'try again', wait: false, origin: { kind: 'composer' } } as Parameters<
     typeof $.prompt.submit
   >[0])
