@@ -50,7 +50,8 @@ const SAVED = {
  * @param opts.runFails - Whether running a process rejects
  * @param opts.newFixes - How many frictions the fix-status part's read finds
  * @param opts.teammates - The teammate frictions `list_teammate_frictions` lists
- * @returns The tools the plugin registered and the commands it ran
+ * @param opts.findExit - The exit code of the `find` that lists the transcripts, 0 when absent
+ * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
   on: On,
@@ -73,6 +74,7 @@ function engine(
     routineIds?: Record<string, string[]>
     agents?: { id: string; type: string; status: 'running' | 'completed' }[]
     refused?: string[]
+    findExit?: number
   } = {},
 ) {
   const seen = {
@@ -80,6 +82,7 @@ function engine(
     argv: [] as (readonly string[])[],
     status: [] as (string | undefined)[],
     logs: [] as string[],
+    spawned: [] as { subagentType: string; prompt: string }[],
   }
   // An operator's session: not a daily run, so quotient's sandbox doesn't hold.
   mock.env(on, { HOME: '/home/op', ...opts.env })
@@ -108,6 +111,10 @@ function engine(
     })),
   }))
   on('mcp.connect', () => ({ value: { isConnected: true, server: 'plugin:quotient:agex' } }))
+  on('agent.spawn', (_, e) => {
+    seen.spawned.push({ subagentType: e.subagentType, prompt: e.prompt })
+    return { model: 'claude-test' }
+  })
   on('mcp.call', (_, e) => {
     const fix = { isOwn: false, implementedAt: null, viewedAt: null }
     const frictions = Array.from({ length: opts.newFixes ?? 0 }, () => ({ solutions: [fix] }))
@@ -145,7 +152,7 @@ function engine(
     const answer = (stdout: string, exitCode = 0) => ({
       value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
     })
-    if (e.argv[0] === 'find') return answer((opts.transcripts ?? TRANSCRIPTS).join('\n') + '\n')
+    if (e.argv[0] === 'find') return answer((opts.transcripts ?? TRANSCRIPTS).join('\n') + '\n', opts.findExit)
     if (e.argv[0] === 'grep' && e.argv.includes('"entrypoint":"sdk-')) {
       return answer((opts.automated ?? AUTOMATED).filter(file => e.argv.includes(file)).join('\n') + '\n')
     }
@@ -656,6 +663,56 @@ async function sendTeammateAnswers($: Parameters<TestBody>[0], answers: [string,
     source: 'local',
   } as unknown as Parameters<typeof $.tool.call>[0])
 }
+
+const CHECK_PROMPT = "Check my setup for fixes to my teammates' frictions."
+
+// The check reads with Read, Grep and Glob only, and Glob lists files oldest
+// first and stops at 100, so it can't find the recent sessions itself.
+test("setup's teammate check is told the project folders with a session in setup's two weeks", async ($, on) => {
+  const seen = engine(on)
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+
+  expect(seen.spawned).toEqual([
+    {
+      subagentType: 'quotient:teammate-check',
+      prompt: `${CHECK_PROMPT}\n\nThe project folders with a session from the last two weeks, under \`~/.claude/projects/\`: -repo`,
+    },
+  ])
+})
+
+test("a setup pinned to a window tells its teammate check the folders from that window", async ($, on) => {
+  const seen = engine(on, { env: { QUOTIENT_SETUP_WINDOW_END: '2026-10-29' } })
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+
+  const listings = seen.argv.filter(argv => argv[0] === 'find')
+  expect(listings.at(-1)).toContain('-newermt')
+  expect(seen.spawned.at(-1)?.prompt).toContain(': -repo')
+})
+
+test("setup's other subagents start with their prompts as written", async ($, on) => {
+  const seen = engine(on)
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' })
+
+  expect(seen.spawned).toEqual([{ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' }])
+})
+
+test("a teammate check whose sessions can't be listed starts with its prompt as written", async ($, on) => {
+  const seen = engine(on, { findExit: 1 })
+  await $.command.run(TYPED_SETUP)
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+
+  expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
+})
 
 test("an invited operator's summary opens with setup being done and leaves out the pitch, sample, waiting line and hint", async ($, on) => {
   engine(on)

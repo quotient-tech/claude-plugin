@@ -4,6 +4,8 @@
 // that outlives this one. Cloud sessions claim nothing.
 import type { Hook, McpToolResult, Register } from 'claude-code'
 
+import { isSkippedProject } from './sandbox'
+import { projectFolders, transcriptFindArgs } from './sessions'
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
 import { DENIED_HELP } from './text'
 
@@ -28,6 +30,8 @@ export const OWN_TOOLS: Record<Kind, string[]> = {
   'find-solutions': [],
   'review-frictions': ['mcp__quotient__review_sessions', 'mcp__quotient__review_digest'],
 }
+// How far back find-solutions searches the operator's sessions.
+const RECENT_DAYS = 14
 // A child of the mod dies with the session, so the run starts under nohup.
 // The folder is $1 and the run's command follows it, so nothing the server
 // sends is ever read as shell. Exits non-zero when claude can't be found or
@@ -67,9 +71,10 @@ function claimedRunId(result: McpToolResult): string | null {
  * @param server - The server the tools come from, as `$.mcp.call` takes it
  * @param kind - Which daily run
  * @param runId - The claimed run's id
+ * @param projects - The project folders the prompt names after the run id
  * @returns The argument list for `$.process.run`
  */
-function launchArgs(folder: string, server: string, kind: Kind, runId: string): string[] {
+function launchArgs(folder: string, server: string, kind: Kind, runId: string, projects: readonly string[]): string[] {
   // Claude Code names a server's tools mcp__<server>__<tool>, with each
   // character other than a letter, digit, _ or - in the server's name as _.
   const prefix = `mcp__${server.replace(/[^A-Za-z0-9_-]/g, '_')}__`
@@ -81,7 +86,7 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string): 
     folder,
     'claude',
     '-p',
-    `/quotient:${kind} daily ${runId}`,
+    [`/quotient:${kind} daily ${runId}`, ...projects].join(' '),
     '--tools',
     'Read',
     'Grep',
@@ -102,6 +107,30 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string): 
 }
 
 /**
+ * Names the project folders holding a session from the last
+ * {@link RECENT_DAYS} days, leaving out the ones every review skips. A run's
+ * Glob lists files oldest first and stops at 100, so on a busy machine it
+ * can't find these itself.
+ *
+ * @param $ - The engine
+ * @param home - The operator's home folder
+ * @param runs - The daily runs' own folder
+ * @returns The folders' names under `projects/`, sorted, or none when they can't be listed
+ */
+async function recentProjects($: Api, home: string, runs: string): Promise<string[]> {
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`
+  const dirs = { config, home, runs }
+  try {
+    const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
+    // A non-zero exit or output cut off short means the list may be missing folders.
+    const isComplete = found.exitCode === 0 && !found.isStdoutTruncated
+    return isComplete ? projectFolders(found.stdout.split('\n'), name => isSkippedProject(name, dirs)) : []
+  } catch {
+    return []
+  }
+}
+
+/**
  * Starts one claimed run, or completes it as failed when it can't start.
  *
  * @param $ - The engine
@@ -109,14 +138,16 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string): 
  * @param server - The server the run was claimed on
  * @param kind - Which daily run
  * @param runId - The claimed run's id
+ * @param home - The operator's home folder
  * @returns Whether the run started
  */
-async function startRun($: Api, folder: string, server: string, kind: Kind, runId: string): Promise<boolean> {
+async function startRun($: Api, folder: string, server: string, kind: Kind, runId: string, home: string): Promise<boolean> {
   try {
+    const projects = kind === 'find-solutions' ? await recentProjects($, home, folder) : []
     // Marks the run's session as a background run, so its requests aren't
     // counted as the operator's own, and names its kind, so guard.ts holds
     // it to that kind's tools and reads.
-    const launched = await $.process.run(launchArgs(folder, server, kind, runId), {
+    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects), {
       env: { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: kind },
     })
     if (launched.exitCode === 0) return true
@@ -169,7 +200,7 @@ async function claimRuns($: Api): Promise<void> {
         if (failure === 'denied') isDenied = true
         return { kind, isStarted: false }
       }
-      return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId)) }
+      return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId, home)) }
     }),
   )
   const started: Kind[] = claims.filter(claim => claim.isStarted).map(claim => claim.kind)

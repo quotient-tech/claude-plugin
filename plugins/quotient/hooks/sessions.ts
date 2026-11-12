@@ -50,6 +50,19 @@ export function transcriptFindArgs(projects: string, window: SessionWindow): str
 }
 
 /**
+ * Names the project folders that hold the given transcripts, leaving out the
+ * folders every review skips.
+ *
+ * @param files - Transcripts' full paths, as `find` lists them; empty lines are ignored
+ * @param isSkipped - Whether a folder, by its name, is one every review skips
+ * @returns Each folder's name under `projects/` once, sorted
+ */
+export function projectFolders(files: readonly string[], isSkipped: (name: string) => boolean): string[] {
+  const names = files.filter(file => file !== '').map(file => file.split('/').at(-2) ?? '')
+  return [...new Set(names)].filter(name => name !== '' && !isSkipped(name)).sort()
+}
+
+/**
  * Tells whether lines read from a transcript hold a call that returned
  * teammates' fixes. A session still running can gain one after a check of
  * the file, so a digest checks the very lines it was built from. A line too

@@ -329,6 +329,48 @@ test("find-solutions: searches the user settings and never reads them whole", ()
   assert.match(body, /list what's in it once/);
 });
 
+// An answer without a fix hides the friction from the operator for good, so
+// one sent after a shallow or refused search loses a fix their sessions hold.
+test("find-solutions: answers without a fix only after searching the setup and each recent project folder", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /Any names after the run id are the project folders with a session from the last two weeks/);
+  // Glob lists files oldest first and stops at 100, so a Glob of every
+  // transcript leaves out the newest sessions.
+  assert.match(body, /Glob lists files oldest first and shows at most 100/);
+  // Setup's teammate check is told them in its task.
+  assert.match(body, /Outside a daily run, search the project folders your task names, when it names them/);
+  assert.match(body, /Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it/);
+});
+
+// A page holds up to 50 frictions and a machine dozens of active project
+// folders: a Grep per friction per folder is thousands of calls.
+test("find-solutions: searches each project folder once per page, for every friction on it", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /In each project folder, run one Grep whose pattern combines the key terms of every friction on the page/);
+  assert.match(body, /then read only the sessions it matches/);
+});
+
+// The launcher names no folders when it couldn't list them; read as "there
+// are none", the search rule would hold for every friction without a search.
+test("find-solutions: a daily run told no project folders hasn't searched past sessions", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run/);
+});
+
+test("find-solutions: leaving a friction out doesn't stop the page's answers from being sent", () => {
+  const { body } = skill("find-solutions");
+  assert.ok(!/Answer every friction on the page/.test(body), "requires an answer for every friction");
+  assert.ok(!/answered every friction on the page/.test(body), "sends nothing while a friction is left out");
+  assert.match(body, /When you've worked through every friction on the page, send all the page's answers/);
+});
+
+test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /A search quotient refuses searched nothing/);
+  assert.match(body, /leave that friction out of the page's answers: Quotient offers it again next time/);
+  assert.match(body, /weren't able to find a solution.*still send its answer/);
+});
+
 test("find-solutions: reports how many answers were new, had a fix, or were refused", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /`recorded`/);
@@ -1186,7 +1228,7 @@ for (const name of ["find-solutions", "review-frictions"]) {
   test(`${name}: reads its arguments for a daily run`, () => {
     const { body } = skill(name);
     assert.match(body, /The arguments are: \$ARGUMENTS/);
-    assert.match(body, /If they are `daily` followed by a run id, this is a daily run/);
+    assert.match(body, /If they (are|start with) `daily` followed by a run id, this is a daily run/);
   });
 
   test(`${name}: a daily run never asks the operator anything`, () => {
