@@ -157,6 +157,68 @@ test("measure-setup: a run that never finished has no friction count", () => {
   assert.equal(measureSetup([unfinished]).newFrictions, null);
 });
 
+/**
+ * Builds a `submit_frictions` call and its reply, as two JSONL lines.
+ * @param id - The call's tool_use id.
+ * @param at - The call's timestamp; the reply comes a second later.
+ * @param frictions - The frictions the call sends.
+ * @param replies - The reply's entry for each friction, in the same order.
+ * @returns The call line and the reply line.
+ */
+function submitFrictions(
+  id: string,
+  at: string,
+  frictions: Record<string, unknown>[],
+  replies: Record<string, unknown>[],
+): [string, string] {
+  const call = request(`r-${id}`, at, { input: 1, write: 0, read: 1, output: 1 }, {
+    content: [{ type: "tool_use", id, name: "mcp__plugin_quotient_agex__submit_frictions", input: { frictions } }],
+  });
+  const reply = JSON.stringify({
+    type: "user",
+    sessionId: SESSION,
+    timestamp: new Date(Date.parse(at) + 1000).toISOString(),
+    uuid: `u-${id}`,
+    message: { content: [{ type: "tool_result", tool_use_id: id, content: [{ type: "text", text: JSON.stringify({ frictions: replies }) }] }] },
+  });
+  return [call, reply];
+}
+
+const LINT = { title: "Lint fails in CI after passing on commit", impact: "QUALITY", severity: "medium", affectedSessionCount: 2 };
+const ZSH = { title: "zsh glob breaks grep", impact: "TIME", severity: "low", affectedSessionCount: 1 };
+
+test("measure-setup: lists each friction as last sent, matching an update to its original by frictionId", () => {
+  const first = submitFrictions("toolu_b1", "2026-11-09T10:05:00.000Z", [LINT, ZSH], [
+    { status: "new", frictionId: "f-lint" },
+    { status: "new", frictionId: "f-zsh" },
+  ]);
+  const update = submitFrictions("toolu_b2", "2026-11-09T10:10:00.000Z", [
+    { ...LINT, title: "Lint passes locally, fails in CI", severity: "high", affectedSessionCount: 3, frictionId: "f-lint" },
+  ], [{ status: "updated", frictionId: "f-lint" }]);
+  const main = { path: MAIN.path, text: [START, ...first, ...update].join("\n") };
+  assert.deepEqual(measureSetup([main]).frictions, [
+    { title: "Lint passes locally, fails in CI", impact: "QUALITY", severity: "high", affectedSessionCount: 3 },
+    { title: "zsh glob breaks grep", impact: "TIME", severity: "low", affectedSessionCount: 1 },
+  ]);
+});
+
+test("measure-setup: counts a submit_frictions call once when an untimed copy repeats it", () => {
+  const [call, reply] = submitFrictions("toolu_b1", "2026-11-09T10:05:00.000Z", [ZSH], [{ status: "new", frictionId: "f-zsh" }]);
+  const untimedCopy = JSON.stringify({ ...JSON.parse(call), timestamp: undefined });
+  const main = { path: MAIN.path, text: [START, call, untimedCopy, reply].join("\n") };
+  assert.deepEqual(measureSetup([main]).frictions, [ZSH]);
+});
+
+test("measure-setup: a friction with no frictionId in its reply is listed by its title", () => {
+  const [call, reply] = submitFrictions("toolu_b1", "2026-11-09T10:05:00.000Z", [ZSH], [{ status: "alreadyReported" }]);
+  const main = { path: MAIN.path, text: [START, call, reply].join("\n") };
+  assert.deepEqual(measureSetup([main]).frictions, [ZSH]);
+});
+
+test("measure-setup: a run that submitted no frictions lists none", () => {
+  assert.deepEqual(measureSetup([MAIN, REVIEWER]).frictions, []);
+});
+
 test("measure-setup: refuses a transcript with no /quotient:setup in it", () => {
   const other = { path: "/p/other.jsonl", text: request("r9", "2026-11-09T10:00:05.000Z", { input: 1, write: 1, read: 1, output: 1 }) };
   assert.throws(() => measureSetup([other]), /no \/quotient:setup/);
