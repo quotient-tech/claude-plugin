@@ -111,6 +111,7 @@ Developer trust, privacy and security come first. When a change trades any of th
 ## Pull requests
 
 - Keep each pull request to one change, and describe what it changes for users and how you tested it.
+- **Use [Conventional Commits](https://www.conventionalcommits.org) for commit messages and pull request titles:** `type(scope): summary`, such as `docs: explain auto-update in the README` or `fix(hooks): skip temporary sessions`. A scope is optional. Use one of the standard types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `style`, `build`, `ci`, `chore` or `revert`. Pull requests are squash-merged, so the title becomes the commit on `main` and a line in the release notes.
 - **A pull request doesn't change `version` in `plugins/quotient/.claude-plugin/plugin.json` or `source` in `.claude-plugin/marketplace.json`.** The release workflow sets both. See [Release a new version](#release-a-new-version).
 - All [checks](#checks) pass.
 
