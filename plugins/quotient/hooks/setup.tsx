@@ -21,7 +21,7 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
-import { heldVerdict, holdsTeammateText, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import { heldVerdict, holdsTeammateText, LINES_PER_READ, projectFolders, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -1304,8 +1304,8 @@ export const registerSetup: Register = on => {
     const current = await read($, run)
     if (e.subagentType !== TEAMMATE_CHECK_AGENT || !current.isRunning || current.dirs === null) return next(e)
     const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
-    const files = await windowFiles($, current.dirs, window).catch(() => [])
-    const folders = [...new Set(files.map(file => file.split('/').at(-2) ?? ''))].sort()
+    const dirs = current.dirs
+    const folders = projectFolders(await windowFiles($, dirs, window), name => isSkippedProject(name, dirs))
     return folders.length === 0 ? next(e) : next({ ...e, prompt: `${e.prompt}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
   }).catch(($, e, next) => next(e))
 

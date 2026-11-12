@@ -683,6 +683,18 @@ test("setup's teammate check is told the project folders with a session in setup
   ])
 })
 
+test("a setup pinned to a window tells its teammate check the folders from that window", async ($, on) => {
+  const seen = engine(on, { env: { QUOTIENT_SETUP_WINDOW_END: '2026-10-29' } })
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+
+  const listings = seen.argv.filter(argv => argv[0] === 'find')
+  expect(listings.at(-1)).toContain('-newermt')
+  expect(seen.spawned.at(-1)?.prompt).toContain(': -repo')
+})
+
 test("setup's other subagents start with their prompts as written", async ($, on) => {
   const seen = engine(on)
   await $.command.run(TYPED_SETUP)

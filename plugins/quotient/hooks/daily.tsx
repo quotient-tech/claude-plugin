@@ -5,7 +5,7 @@
 import type { Hook, McpToolResult, Register } from 'claude-code'
 
 import { isSkippedProject } from './sandbox'
-import { transcriptFindArgs } from './sessions'
+import { projectFolders, transcriptFindArgs } from './sessions'
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
 import { DENIED_HELP } from './text'
 
@@ -122,8 +122,8 @@ async function recentProjects($: Api, home: string, runs: string): Promise<strin
   const dirs = { config, home, runs }
   try {
     const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
-    const names = found.stdout.split('\n').map(file => file.split('/').at(-2) ?? '')
-    return [...new Set(names)].filter(name => name !== '' && !isSkippedProject(name, dirs)).sort()
+    // A non-zero exit means part of the folder couldn't be read, so the list may be missing folders.
+    return found.exitCode === 0 ? projectFolders(found.stdout.split('\n'), name => isSkippedProject(name, dirs)) : []
   } catch {
     return []
   }

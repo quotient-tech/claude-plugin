@@ -87,6 +87,7 @@ function launch(
  * @param opts.launchExit - Each run's launch exit code, by the prompt it starts; 0 when absent
  * @param opts.launchRejects - Whether every launch rejects
  * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
+ * @param opts.findExit - The exit code of that `find`, 0 when absent
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part and the thank-yous check made
@@ -103,6 +104,7 @@ function engine(
     launchExit?: Record<string, number>
     launchRejects?: boolean
     transcripts?: string[] | 'rejects'
+    findExit?: number
   } = {},
 ) {
   const seen = {
@@ -152,7 +154,7 @@ function engine(
       seen.found.push(e.argv)
       if (opts.transcripts === 'rejects') throw new Error('find failed')
       const stdout = (opts.transcripts ?? []).map(file => `${file}\n`).join('')
-      return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      return { value: { exitCode: opts.findExit ?? 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     seen.launched.push(e.argv)
     seen.launchEnv.push(e.init?.env)
@@ -607,6 +609,22 @@ test('a review-frictions run lists its own sessions, so its prompt names no fold
 test('a find-solutions run still starts, naming no folders, when the transcripts cannot be listed', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on, { claims: { 'find-solutions': due('run-1') }, transcripts: 'rejects' })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS)])
+})
+
+// find exits non-zero when part of the folder can't be read, so its list may
+// be missing folders: the run is told none, and searches as if it had none.
+test('a find-solutions run whose transcript listing exits non-zero names no folders', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1') },
+    transcripts: ['/home/op/.claude/projects/-home-op-api/a.jsonl'],
+    findExit: 1,
+  })
 
   await $.session.start(INTERACTIVE)
   await clock.settle()
