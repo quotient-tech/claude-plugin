@@ -350,6 +350,20 @@ test("find-solutions: searches each project folder once per page, for every fric
   assert.match(body, /then read only the sessions it matches/);
 });
 
+// The launcher names no folders when it couldn't list them; read as "there
+// are none", the search rule would hold for every friction without a search.
+test("find-solutions: a daily run told no project folders hasn't searched past sessions", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run/);
+});
+
+test("find-solutions: leaving a friction out doesn't stop the page's answers from being sent", () => {
+  const { body } = skill("find-solutions");
+  assert.ok(!/Answer every friction on the page/.test(body), "requires an answer for every friction");
+  assert.ok(!/answered every friction on the page/.test(body), "sends nothing while a friction is left out");
+  assert.match(body, /When you've worked through every friction on the page, send all the page's answers/);
+});
+
 test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /A search quotient refuses searched nothing/);
