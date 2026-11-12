@@ -3,7 +3,9 @@
 // teammates' frictions. Both read teammates' text, which is untrusted, so the
 // model there may call only Read, Grep, Glob, ToolSearch, its own skill and its
 // own Quotient tools, and read only where its job needs. A deny here holds
-// over the operator's own allow rules. Anywhere else this changes nothing.
+// over the operator's own allow rules. While setup or review-frictions
+// runs, it also keeps every transcript out of reach but through quotient's
+// digests, and refuses writing a file. Anywhere else this changes nothing.
 // The same hook lets quotient's own mods reach Quotient (self-allow.ts), since
 // a module may hold only one tool.check hook without a matcher.
 import { atom, read, update } from 'claude-code'
@@ -27,6 +29,8 @@ import {
 } from './sandbox'
 import type { Scope } from './sandbox'
 import { privateText } from './privacy'
+import { SETUP_SHELL_COMMANDS } from './sessions'
+import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
 import { isOwnQuotientCall, ownCallVerdict } from './self-allow'
 import { HIDES_FIXES, SHOWN_ALREADY } from './teammate-text'
@@ -70,6 +74,27 @@ const DENIED_TRANSCRIPT =
 // folder and then its projects folder. Matching a command's text is a best
 // effort, so the skills read transcripts with Read and Grep instead.
 const BASH_TRANSCRIPTS = /\.jsonl\b|(\.claude|CLAUDE_CONFIG_DIR)[\s\S]*\bprojects\b/i
+// While setup or review-frictions runs, only the calls they make may run:
+// none writes a file, and RemoteTrigger only reads routines and their runs.
+const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
+// What setup and review-frictions use to ask the operator, wait on and stop
+// their subagents, and answer: none writes a file, runs a shell, or reaches
+// an agent or a later turn outside the lock, as SendMessage and
+// ScheduleWakeup can.
+const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']
+const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
+// The Quotient tools, under either server, and quotient's own tools each skill calls.
+const LOCKED_QUOTIENT_TOOLS = {
+  setup: ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run'],
+  'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
+} as const
+const LOCKED_OWN_TOOLS = {
+  setup: ['mcp__quotient__setup_start', 'mcp__quotient__setup_digest', 'mcp__quotient__setup_summary'],
+  'review-frictions': ['mcp__quotient__review_sessions', 'mcp__quotient__review_digest'],
+} as const
+const DENIED_LOCKED_TOOL = 'quotient: while setup or review-frictions runs, only the tools they use may run, and none of them writes a file'
+const DENIED_LOCKED_TRANSCRIPT =
+  "quotient: setup and review-frictions read sessions only through quotient's digests: setup_digest, or review_sessions and review_digest"
 const DENIED_BASH_TRANSCRIPT =
   "quotient: some transcripts hold teammates' fixes, which review-frictions and setup never read: read transcripts with Read, one session at a time, or during setup through setup_digest"
 
@@ -266,6 +291,92 @@ async function transcriptDenial($: EngineInterface, tool: string, input: Record<
 }
 
 /**
+ * Tells whether setup or review-frictions is running, when nothing but
+ * quotient's digests may reach a transcript and nothing writes a file:
+ * setup's run, a review the operator or the model started, or a daily
+ * review-frictions run.
+ *
+ * @param $ - The engine
+ * @returns Which skill is running, or null for neither
+ */
+async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions' | null> {
+  if ((await $.env.get('QUOTIENT_DAILY_RUN_KIND')) === 'review-frictions') return 'review-frictions'
+  const setupRun = await read($, { plugin: 'quotient', key: 'setupRun' } as const)
+  if (setupRun?.shape === RUN_SHAPE && setupRun.value.isRunning) return 'setup'
+  const reviewRun = await read($, { plugin: 'quotient', key: 'reviewRun' } as const)
+  return reviewRun?.shape === REVIEW_SHAPE && reviewRun.value.isRunning ? 'review-frictions' : null
+}
+
+/**
+ * Says why a call is refused while setup or review-frictions runs: only the
+ * tools they use may run: reads, the harness's tools for asking the operator
+ * and stopping subagents, the skill's own Quotient and quotient tools, a
+ * subagent in this checkout, quotient's own skills, and during setup,
+ * RemoteTrigger's reads and setup's own shell commands.
+ *
+ * @param tool - The tool's full name
+ * @param input - The call's input
+ * @param skill - The running skill
+ * @returns The reason, or null when the call may run
+ */
+function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
+  if ([...READ_TOOLS, ...ALWAYS, ...LOCKED_HARNESS_TOOLS].includes(tool)) return null
+  if (isQuotientTool(tool, LOCKED_QUOTIENT_TOOLS[skill]) || (LOCKED_OWN_TOOLS[skill] as readonly string[]).includes(tool)) return null
+  if (tool === 'Agent' && input.isolation === undefined) return null
+  if (tool === 'Skill' && isQuotientSkill(input.skill, LOCKED_SKILLS, true)) return null
+  if (skill !== 'setup') return DENIED_LOCKED_TOOL
+  if (tool === 'RemoteTrigger' && REMOTE_READS.includes(String(input.action))) return null
+  return tool === 'Bash' && typeof input.command === 'string' && SETUP_SHELL_COMMANDS.includes(input.command.trim()) ? null : DENIED_LOCKED_TOOL
+}
+
+/**
+ * Says why a call is refused while the transcripts are locked, whatever
+ * they hold: a Read of a transcript (`*.jsonl` under the projects folder),
+ * a Grep or Glob of a folder that holds any, or a Bash command that names
+ * them. A project's
+ * auto-memory folder and other files under the projects folder, such as a
+ * saved reply, stay readable. Paths compare ignoring case and Unicode form,
+ * as macOS's file system does.
+ *
+ * @param $ - The engine
+ * @param tool - The tool's full name
+ * @param input - The call's input
+ * @param reach - Looks up the config folder, among others, for a call that can name a path
+ * @returns The reason, or null when the call reaches no transcript
+ */
+async function lockedTranscriptDenial(
+  $: EngineInterface,
+  tool: string,
+  input: Record<string, unknown>,
+  reach: () => Promise<SandboxReach>,
+): Promise<string | null> {
+  if (tool !== 'Bash' && !READ_TOOLS.includes(tool)) return null
+  const where = await reach()
+  const form = (path: string) => path.normalize('NFC').toLowerCase()
+  // The projects folder as written and, when it's a link, where it leads.
+  const projectsAsWritten = `${where.dirs.config}/projects`
+  const linked = (await $.fs.stat(projectsAsWritten, { resolve: true }).catch(() => undefined))?.realPath
+  const roots = [...new Set([projectsAsWritten, linked ?? projectsAsWritten].map(form))]
+  if (tool === 'Bash') {
+    const named = typeof input.command === 'string' ? form(input.command) : ''
+    return BASH_TRANSCRIPTS.test(named) || roots.some(root => named.includes(root)) ? DENIED_LOCKED_TRANSCRIPT : null
+  }
+  const cwd = await $.session.cwd()
+  const written = tool === 'Glob' ? globRoot(input, where.dirs, cwd) : fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
+  // A path that can't be placed, such as one with `..`, could reach the transcripts.
+  if (written === null) return DENIED_LOCKED_TRANSCRIPT
+  const stat = await $.fs.stat(written, { resolve: true }).catch(() => undefined)
+  const paths = [written, stat?.realPath ?? written].map(form)
+  const isTranscript = (path: string) => roots.some(root => path.startsWith(`${root}/`)) && path.endsWith('.jsonl')
+  if (paths.some(isTranscript)) return DENIED_LOCKED_TRANSCRIPT
+  if (tool === 'Read' || stat?.kind === 'file') return null
+  // A search of a folder reads every transcript under it, outside a project's auto-memory.
+  const isMemory = (path: string, root: string) => path.startsWith(`${root}/`) && /^[^/]+\/memory(\/|$)/.test(path.slice(root.length + 1))
+  const holds = (path: string, root: string) => path === root || path.startsWith(`${root}/`) || root.startsWith(`${path === '/' ? '' : path}/`)
+  return paths.some(path => roots.some(root => holds(path, root) && !isMemory(path, root))) ? DENIED_LOCKED_TRANSCRIPT : null
+}
+
+/**
  * Tells whether a tool belongs to another MCP server than Quotient's or
  * quotient's mod. Such a tool, like a sandbox that runs code on a file, can
  * read any transcript its input names, and quotient can't see what it reads.
@@ -416,8 +527,11 @@ export function registerGuard(on: On): void {
     }
     const isHeld = (['Read', 'Grep', 'Bash'].includes(e.tool) || isOtherServer(e.tool)) && (await holdsTranscripts($, scope))
     const where = async (): Promise<SandboxReach> => reachFor($, scope?.withRepos ?? false)
+    // setup's teammate check searches the operator's sessions by design; it can't write or run a shell.
+    const locked = scope?.tools === TEAMMATE_CHECK_TOOLS ? null : await lockedBy($)
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
+      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? lockedToolDenial(e.tool, input, locked)) ??
       (!isHeld
         ? null
         : e.tool === 'Bash' || isOtherServer(e.tool)
@@ -436,6 +550,12 @@ export function registerGuard(on: On): void {
     if (next.origin.plugin !== 'engine') return next(e)
     if (isSendTool(e.tool)) return { decision: 'deny', reason: FAILED }
     const input = (e.input ?? {}) as Record<string, unknown>
+    // While setup or a review runs, or when that can't be told, a read whose
+    // check failed and any call outside their tools is refused.
+    const locked = await lockedBy($).catch(() => 'review-frictions' as const)
+    if (locked !== null && (READ_TOOLS.includes(e.tool) || lockedToolDenial(e.tool, input, locked) !== null)) {
+      return { decision: 'deny', reason: FAILED }
+    }
     const isTranscriptRead =
       e.tool === 'Read' ||
       e.tool === 'Grep' ||

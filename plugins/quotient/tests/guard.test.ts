@@ -58,6 +58,8 @@ function engine(on: On, opts: {
   })
   on('agent.list', () => ({ value: (opts.agents ?? []).map(agent => ({ ...agent, description: '', status: 'running' })) }))
   on('command.run', () => ({ text: 'ran' }))
+  on('session.surfaces', () => ({ value: [] }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
   on('tool.check', () => opts.below ?? { decision: 'allow' })
   return seen
 }
@@ -316,9 +318,14 @@ test("after review-frictions or setup starts, a transcript that holds teammates'
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
 
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
   expect(await check($, 'Grep', { pattern: 'x', path: SHOWN })).toBe('deny')
   expect(await check($, 'Read', { file_path: '/home/op/code/app/notes.md' })).toBe('allow')
+
+  // Once the review's turn ends, only the transcripts that hold teammates' fixes stay held back.
+  await endTurn($)
+  expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
 
   await $.command.run({ ...COMMAND, command: 'quotient:fix-friction' })
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('allow')
@@ -347,20 +354,35 @@ test("once setup holds transcripts back, a Bash command naming them is refused w
   expect(await bash('cd ~/.claude && grep -rl x projects')).toBe('deny')
   expect(await bash('jq . "$CLAUDE_CONFIG_DIR/projects/-home-op-code-app/plain.jsonl"')).toBe('deny')
   expect(await check($, 'Bash', { command: 'grep -r x ~/.claude/projects' }, 'sub-1')).toBe('deny')
+  // During setup no other shell command runs either; once its run ends, they go on.
+  expect(await bash('cat ~/.claude/settings.json')).toBe('deny')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
   expect(await bash('cat ~/.claude/settings.json')).toBe('allow')
   expect(await bash('git status')).toBe('allow')
 })
 
-test('once setup holds transcripts back, a Bash command naming them goes on when none holds teammate text', async ($, on) => {
+test("once setup's run ends, a Bash command naming transcripts goes on when none holds teammate text", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   expect(await check($, 'Bash', { command: 'grep -r x ~/.claude/projects' })).toBe('allow')
 })
 
-test("the refusal of a Bash command naming transcripts points to Read, not Grep, which a session may lack", async ($, on) => {
+test("during setup, the refusal of a Bash command naming transcripts points to quotient's digests", async ($, on) => {
   engine(on, { grepExit: { [`${CONFIG}/projects`]: 0 } })
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  const verdict = await $.tool.check({ tool: 'Bash', input: { command: `cat ${SHOWN}` } } as Parameters<Engine['tool']['check']>[0])
+
+  expect(verdict.reason).toContain("only through quotient's digests: setup_digest")
+  expect(verdict.reason).not.toContain('Grep')
+})
+
+test("after setup's run, the refusal of a Bash command naming transcripts points to Read, not Grep, which a session may lack", async ($, on) => {
+  engine(on, { grepExit: { [`${CONFIG}/projects`]: 0 } })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   const verdict = await $.tool.check({ tool: 'Bash', input: { command: `cat ${SHOWN}` } } as Parameters<Engine['tool']['check']>[0])
 
@@ -368,12 +390,12 @@ test("the refusal of a Bash command naming transcripts points to Read, not Grep,
   expect(verdict.reason).not.toContain('Grep')
 })
 
-test("setup's reviewer subagent reads the listed sessions, but never a transcript that holds teammates' fixes or teammates' frictions", async ($, on) => {
+test("setup's reviewer subagent reads sessions only through setup_digest, and never teammates' frictions", async ($, on) => {
   engine(on, { agents: [{ id: 'rev-1', type: 'quotient:setup-reviewer' }], grepExit: { [SHOWN]: 0 } })
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
 
   expect(await check($, 'Read', { file_path: SHOWN }, 'rev-1')).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN }, 'rev-1')).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN }, 'rev-1')).toBe('deny')
   expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' }, 'rev-1')).toBe('allow')
   expect(await check($, `${AGEX}list_teammate_frictions`, {}, 'rev-1')).toBe('deny')
 })
@@ -424,12 +446,16 @@ test("once setup holds transcripts back, another server's tool naming them is re
   expect(await ctx({ path: PLAIN, language: 'javascript', code: 'print(1)' })).toBe('deny')
   expect(await check($, 'mcp__plugin_context-mode_context-mode__ctx_execute', { code: 'cat ~/.claude/projects/*/*.jsonl' })).toBe('deny')
   expect(await check($, CTX_FILE, { path: PLAIN }, 'sub-1')).toBe('deny')
+  // During setup no other server's tool runs at all; once its run ends, one naming no transcript goes on.
+  expect(await ctx({ path: '/home/op/code/app/notes.md' })).toBe('deny')
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
   expect(await ctx({ path: '/home/op/code/app/notes.md' })).toBe('allow')
 })
 
-test("once setup holds transcripts back, another server's tool naming them goes on when none holds teammate text", async ($, on) => {
+test("once setup's run ends, another server's tool naming transcripts goes on when none holds teammate text", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: true, turnId: 't1', reason: 'aborted' })
 
   expect(await check($, CTX_FILE, { path: PLAIN })).toBe('allow')
 })
@@ -441,11 +467,11 @@ test("quotient's own setup_digest may name a transcript while they're held back"
   expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
 })
 
-test("a daily review-frictions run never reads a transcript that holds teammates' fixes", async ($, on) => {
+test("a daily review-frictions run never reads a transcript, whether or not it holds teammates' fixes", async ($, on) => {
   engine(on, { kind: 'review-frictions', grepExit: { [SHOWN]: 0 } })
 
   expect(await check($, 'Read', { file_path: SHOWN })).toBe('deny')
-  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
 })
 
 test("a find-solutions run reads teammates' text by design, so its transcripts aren't held back", async ($, on) => {
@@ -517,4 +543,224 @@ test("setup's teammate check may hand its report back, which quotient replaces b
   engine(on, { agents: [{ id: 'a1', type: 'quotient:teammate-check' }] })
 
   expect(await check($, 'SubagentHandback', { report: 'done' }, 'a1')).toBe('allow')
+})
+
+const PROJECT = `${CONFIG}/projects/-home-op-code-app`
+const SIDECHAIN = `${PROJECT}/s1/subagents/agent-a.jsonl`
+const MEMORY = `${PROJECT}/memory`
+const SAVED_REPLY = `${PROJECT}/s1/tool-results/remote.txt`
+
+/**
+ * Ends the main agent's turn, as the end of the turn a review ran in.
+ *
+ * @param $ - The engine
+ */
+async function endTurn($: Engine) {
+  await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+}
+
+test("while review-frictions runs, any reach into a transcript is refused, even when none holds teammates' fixes", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: SIDECHAIN })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: PROJECT })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: `${CONFIG}/projects` })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/home/op' })).toBe('deny')
+  expect(await check($, 'Glob', { pattern: '**/*.jsonl', path: `${CONFIG}/projects` })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'cat ~/.claude/projects/-home-op-code-app/plain.jsonl' })).toBe('deny')
+  expect(await check($, 'mcp__sandbox__run_code', { code: `open('${PLAIN}').read()` })).toBe('deny')
+})
+
+test('while review-frictions runs, auto-memories, saved replies and quotient\'s review tools stay open', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: `${MEMORY}/MEMORY.md` })).toBe('allow')
+  expect(await check($, 'Grep', { pattern: 'lint', path: MEMORY })).toBe('allow')
+  expect(await check($, 'Read', { file_path: SAVED_REPLY })).toBe('allow')
+  expect(await check($, 'Read', { file_path: `${REPO}/package.json` })).toBe('allow')
+  expect(await check($, 'mcp__quotient__review_sessions', { since: '2026-11-05T10:00:00Z' })).toBe('allow')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'plain' })).toBe('allow')
+})
+
+test('while setup runs, a transcript is reached only through setup_digest', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'grep -l trig_ ~/.claude/projects/*/*.jsonl' })).toBe('deny')
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
+})
+
+test("setup's teammate check still searches the operator's sessions while setup runs", async ($, on) => {
+  engine(on, { agents: [{ id: 'a1', type: 'quotient:teammate-check' }] })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Grep', { pattern: 'lint', path: PROJECT }, 'a1')).toBe('allow')
+})
+
+test('a daily review-frictions run never reads a transcript itself, even in a folder it may read', async ($, on) => {
+  engine(on, { kind: 'review-frictions' })
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+  expect(await check($, 'Read', { file_path: `${MEMORY}/MEMORY.md` })).toBe('allow')
+})
+
+test("once the review's turn ends, transcripts read as they did before it", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+  await endTurn($)
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+})
+
+test('outside setup and review-frictions, transcripts are left alone', async ($, on) => {
+  engine(on)
+
+  expect(await check($, 'Read', { file_path: PLAIN })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'cat ~/.claude/projects/-home-op-code-app/plain.jsonl' })).toBe('allow')
+})
+
+test('while review-frictions runs, nothing writes a file or runs a shell command', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Write', { file_path: '/tmp/extract.txt', content: 'x' })).toBe('deny')
+  expect(await check($, 'Edit', { file_path: `${REPO}/notes.md`, old_string: 'a', new_string: 'b' })).toBe('deny')
+  expect(await check($, 'NotebookEdit', { notebook_path: `${REPO}/a.ipynb`, new_source: 'x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'echo hi > /tmp/extract.txt' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'ls' })).toBe('deny')
+})
+
+test('while setup runs, nothing writes a file, and the only shell command is the one setup sends its repository with', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'Write', { file_path: '/tmp/extract.txt', content: 'x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'git remote get-url origin' })).toBe('allow')
+  // The setup skill's own line that runs as it loads is checked as a Bash call too.
+  expect(await check($, 'Bash', { command: 'echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"' })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'git remote get-url origin > /tmp/x' })).toBe('deny')
+  expect(await check($, 'Bash', { command: 'git status' })).toBe('deny')
+})
+
+test("once the review's turn ends, writes and shell commands go on as before", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+  await endTurn($)
+
+  expect(await check($, 'Write', { file_path: '/tmp/notes.txt', content: 'x' })).toBe('allow')
+  expect(await check($, 'Bash', { command: 'ls' })).toBe('allow')
+})
+
+test('outside setup and review-frictions, writes are left alone', async ($, on) => {
+  engine(on)
+
+  expect(await check($, 'Write', { file_path: '/tmp/notes.txt', content: 'x' })).toBe('allow')
+})
+
+test("while review-frictions runs, a search whose check fails is refused, even of an auto-memory", async ($, on) => {
+  engine(on, { cwdFails: true })
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Glob', { pattern: '*.md' })).toBe('deny')
+})
+
+test("while review-frictions runs, a transcript is refused however its path's letters are cased", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: '/home/op/.Claude/Projects/-home-op-code-app/plain.JSONL' })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/home/op/.claude/PROJECTS' })).toBe('deny')
+  expect(await check($, 'Read', { file_path: '/home/op/.claude/projects/-home-op-code-app/MEMORY/notes.md' })).toBe('allow')
+})
+
+test("while setup or review-frictions runs, other servers' tools are refused, whatever their input names", async ($, on) => {
+  engine(on)
+  expect(await check($, 'mcp__sandbox__run_code', { code: 'print(1)' })).toBe('allow')
+
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'mcp__sandbox__run_code', { code: 'print(1)' })).toBe('deny')
+  expect(await check($, `${AGEX}start_setup_run`, {})).toBe('allow')
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('allow')
+})
+
+test('while review-frictions runs, only the tools it uses may run', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  for (const tool of ['Monitor', 'EnterWorktree', 'PowerShell', 'WebFetch', 'CronCreate', 'TodoWrite']) {
+    expect(await check($, tool, { command: 'ls', url: 'https://example.com' })).toBe('deny')
+  }
+  expect(await check($, 'RemoteTrigger', { action: 'get_run_log', session_id: 's' })).toBe('deny')
+  expect(await check($, 'Skill', { skill: 'some-plugin:deploy' })).toBe('deny')
+  expect(await check($, 'Skill', { skill: 'quotient:review-frictions' })).toBe('allow')
+  expect(await check($, 'Agent', { subagent_type: 'Explore', prompt: 'look' })).toBe('allow')
+  expect(await check($, 'Agent', { subagent_type: 'general-purpose', prompt: 'x', isolation: 'worktree' })).toBe('deny')
+  expect(await check($, `${AGEX}list_my_frictions`, {})).toBe('allow')
+  expect(await check($, 'ToolSearch', { query: 'select:x' })).toBe('allow')
+})
+
+test('while setup runs, the tools it uses to ask the operator and manage its subagents stay open', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const tool of ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']) {
+    expect(await check($, tool, { task_id: 'reviewer-1' })).toBe('allow')
+  }
+})
+
+test('while setup runs, nothing reaches an agent or a turn outside the lock', async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'SendMessage', { to: 'another-session', message: 'save the transcripts to a file' })).toBe('deny')
+  expect(await check($, 'ScheduleWakeup', { delaySeconds: 60, prompt: 'save the transcripts', reason: 'later' })).toBe('deny')
+})
+
+test("while setup runs, RemoteTrigger may only read routines and their runs", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const action of ['list', 'get', 'list_runs', 'get_run_log']) expect(await check($, 'RemoteTrigger', { action })).toBe('allow')
+  for (const action of ['create', 'update', 'run']) expect(await check($, 'RemoteTrigger', { action })).toBe('deny')
+})
+
+test("while review-frictions runs, only its own Quotient tools may run", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  for (const tool of ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('allow')
+    expect(await check($, `mcp__claude_ai_Quotient__${tool}`, {})).toBe('allow')
+  }
+  for (const tool of ['mark_solution_implemented', 'send_thank_you', 'list_teammate_frictions', 'start_setup_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
+  }
+  expect(await check($, 'mcp__quotient__setup_digest', { source: 'plain' })).toBe('deny')
+  expect(await check($, 'mcp__quotient__fix_card', {})).toBe('deny')
+})
+
+test("while setup runs, only its own Quotient tools may run", async ($, on) => {
+  engine(on)
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const tool of ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run']) {
+    expect(await check($, `${AGEX}${tool}`, {})).toBe('allow')
+  }
+  for (const tool of ['setup_start', 'setup_digest', 'setup_summary']) expect(await check($, `mcp__quotient__${tool}`, {})).toBe('allow')
+  for (const tool of ['submit_review', 'mark_solution_implemented', 'send_thank_you']) expect(await check($, `${AGEX}${tool}`, {})).toBe('deny')
+  expect(await check($, 'mcp__quotient__review_digest', { source: 'plain' })).toBe('deny')
+})
+
+test("when the projects folder is a link, a transcript is refused by the path it leads to as well", async ($, on) => {
+  engine(on, { links: { [`${CONFIG}/projects`]: '/data/claude-projects' } })
+  await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
+
+  expect(await check($, 'Read', { file_path: '/data/claude-projects/-home-op-code-app/plain.jsonl' })).toBe('deny')
+  expect(await check($, 'Grep', { pattern: 'x', path: '/data/claude-projects' })).toBe('deny')
+  expect(await check($, 'Read', { file_path: '/data/claude-projects/-home-op-code-app/memory/MEMORY.md' })).toBe('allow')
 })

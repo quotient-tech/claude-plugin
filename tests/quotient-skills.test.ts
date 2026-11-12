@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
+import { SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -502,6 +503,16 @@ for (const name of ["setup", "find-solutions"]) {
     assert.match(body, /never `~\/\.claude\/projects\/` as a whole/);
   });
 }
+
+// While setup runs, quotient's guard refuses every shell command but these,
+// the skill's own line that runs as it loads among them.
+test("setup: every shell command it runs is one quotient's guard lets through while it runs", () => {
+  const { data, body } = skill("setup");
+  const commands = [...injected(body), ...bashRules(data["allowed-tools"])];
+  assert.deepEqual([...new Set(commands)].sort(), [...SETUP_SHELL_COMMANDS].sort());
+  const review = skill("review-frictions");
+  assert.deepEqual([...injected(review.body), ...bashRules(review.data["allowed-tools"])], []);
+});
 
 test("setup: in a cloud session, reviews this session and sends its repository", () => {
   const { data, body } = skill("setup");
