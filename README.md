@@ -116,7 +116,7 @@ In local sessions the plugin runs once a day in the background scanning for new 
 - **Teammates see only short descriptions of frictions and fixes.** quotient's skills write them to leave out names, emails, secrets, hostnames, customer data and ids. Before a friction, fix or review leaves your machine, quotient checks it for home paths, project folder names, emails and common secret formats, and won't send text that contains one. A note you write on a thank-you is sent as you typed it.
 - **Sharing is anonymous between teammates.** Teammates see your frictions and fixes but not your name or email, and you don't see theirs. High-fives work the same way. Quotient knows your account from your sign-in, but never tells teammates who sent what.
 - **A teammate's fix runs only when you choose it.** Another person's agent wrote it, so a fix could contain instructions you wouldn't want followed. Claude acts on a fix only after you pick it, and each step still goes through your permission settings. The background runs that answer teammates' frictions can only read files and use their own Quotient tools, so they can't use your other tools. They also skip common secret files, such as `.env` files, keys and anything under `.ssh` or `.aws`.
-- **Your permission settings come first.** quotient approves only its own calls to Quotient, and never overrides a rule you or your organization set.
+- **Your permission settings come first.** quotient never approves a call. Its calls to Quotient go through your permission settings like any tool call, and it never overrides a rule you or your organization set.
 - **Token usage is counts only.** To turn it off, set `"QUOTIENT_USAGE": "off"` in the `env` block of `~/.claude/settings.json`.
 
 Read [Privacy and security](docs/privacy-and-security.md) for exactly what's sent, what's checked and what quotient's agents can reach, and Quotient's [privacy policy](https://www.getquotient.com/privacy) for what Quotient does with it.
@@ -133,18 +133,26 @@ If Claude already read a teammate's fix in this session, further scanning waits 
 
 ### If Claude Code denies quotient's calls
 
-A few of quotient's calls to Quotient run in the background: the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these to `permissions.allow` in your settings:
+Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, and, in the background, the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
 
 ```json
-"mcp__plugin_quotient_agex__list_my_frictions",
-"mcp__claude_ai_Quotient__list_my_frictions",
-"mcp__plugin_quotient_agex__record_usage",
-"mcp__claude_ai_Quotient__record_usage"
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_quotient_agex__list_my_frictions",
+      "mcp__claude_ai_Quotient__list_my_frictions",
+      "mcp__plugin_quotient_agex__record_usage",
+      "mcp__claude_ai_Quotient__record_usage",
+      "mcp__plugin_quotient_agex__claim_daily_run",
+      "mcp__plugin_quotient_agex__complete_daily_run"
+    ]
+  }
+}
 ```
 
 These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `check_thank_yous` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. [Permissions](docs/permissions.md#background-calls) explains each one.
 
-Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient approves, why, and what each denial looks like.
+Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient makes and what each denial looks like.
 
 ## Report an issue
 

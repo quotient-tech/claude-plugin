@@ -6,8 +6,6 @@
 // over the operator's own allow rules. While setup or review-frictions
 // runs, it also keeps every transcript out of reach but through quotient's
 // digests, and refuses writing a file. Anywhere else this changes nothing.
-// The same hook lets quotient's own mods reach Quotient (self-allow.ts), since
-// a module may hold only one tool.check hook without a matcher.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
@@ -32,23 +30,15 @@ import { privateText } from './privacy'
 import { SETUP_SHELL_COMMANDS } from './sessions'
 import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
-import { isOwnQuotientCall, ownCallVerdict } from './self-allow'
 import { HIDES_FIXES, SHOWN_ALREADY } from './teammate-text'
 
 // The agent type setup starts its teammate check as.
 export const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
 const TEAMMATE_CHECK_TOOLS = ['list_teammate_frictions', 'submit_solutions', 'submit_solution']
 // The Quotient tools whose text teammates read, found under any server's
-// name, as self-allow.ts finds its own: an operator can run Quotient under
-// a server they set up by hand.
+// name: an operator can run Quotient under a server they set up by hand.
 const SEND_TOOLS = ['submit_friction', 'submit_frictions', 'submit_solutions', 'submit_solution', 'submit_review']
 const FIND_SOLUTIONS_SKILL = 'find-solutions'
-// The subagent setup reviews each batch with. It can only read and build
-// digests, so quotient allows the main agent's start of one during setup in
-// place of Claude Code's default ask: in auto mode, another plugin's hook that
-// rewrites an Agent call's input makes auto mode refuse it, and the model
-// then writes the whole call out again.
-const REVIEWER_AGENT = 'quotient:setup-reviewer'
 // The tools every sandboxed agent may call; Read, Grep and Glob only where it may read.
 const READ_TOOLS = ['Read', 'Grep', 'Glob']
 // SubagentHandback is how a subagent hands its report back: a teammate
@@ -489,9 +479,8 @@ async function privateTextDenial($: EngineInterface, tool: string, input: Record
 }
 
 /**
- * Adds the module's permission check: it allows quotient's own calls to
- * Quotient in place of Claude Code's default ask, and holds quotient's
- * unattended agents to their tools and reads. A subagent of any other type
+ * Adds the module's permission check: it holds quotient's unattended agents
+ * to their tools and reads. A subagent of any other type
  * may not reach teammates' frictions at all, so the sandbox never depends on
  * which type the model chose to start.
  *
@@ -499,7 +488,6 @@ async function privateTextDenial($: EngineInterface, tool: string, input: Record
  */
 export function registerGuard(on: On): void {
   on('tool.check', async ($, e, next) => {
-    if (isOwnQuotientCall(next.origin.plugin, e.tool)) return ownCallVerdict(await next(e))
     if (next.origin.plugin !== 'engine') return next(e)
     const input = (e.input ?? {}) as Record<string, unknown>
     const leak = await privateTextDenial($, e.tool, input)
@@ -538,9 +526,6 @@ export function registerGuard(on: On): void {
           ? await bashTranscriptDenial($, e.tool === 'Bash' ? input.command : JSON.stringify(input), await where())
           : await transcriptDenial($, e.tool, input, await where()))
     if (reason !== null) return { decision: 'deny', reason }
-    const isReviewerStart = scope === null && e.agentId === undefined && e.tool === 'Agent' && input.subagent_type === REVIEWER_AGENT
-    const setupRun = isReviewerStart ? await read($, { plugin: 'quotient', key: 'setupRun' } as const) : undefined
-    if (setupRun?.shape === RUN_SHAPE && setupRun.value.isRunning) return ownCallVerdict(await next(e), "quotient's own setup reviewer")
     return next(e)
   }).catch(async ($, e, next) => {
     // A failed check denies only the model's calls where the sandbox holds,

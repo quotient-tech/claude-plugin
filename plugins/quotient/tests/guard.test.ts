@@ -418,32 +418,12 @@ test("setup's reviewer subagent reads sessions only through setup_digest, and ne
 const DEFAULT_ASK = { decision: 'ask', reason: "Claude requested permissions to use Agent, but you haven't granted it yet." } as const
 const REVIEWER = { subagent_type: 'quotient:setup-reviewer', description: 'Review batch 1', prompt: 'Review these sources.' }
 
-test("during setup, the main agent's start of a setup-reviewer is allowed in place of Claude Code's default ask", async ($, on) => {
-  engine(on, { below: DEFAULT_ASK })
-  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
-
-  expect(await check($, 'Agent', REVIEWER)).toBe('allow')
-})
-
-for (const [why, below] of [
-  ['an ask rule', { decision: 'ask', rule: 'Agent' }],
-  ['a deny rule', { decision: 'deny', rule: 'Agent' }],
-  ["a settings hook's ask", { decision: 'ask', hook: 'PreToolUse' }],
-  ["another plugin's ask", { decision: 'ask', plugin: 'another-plugin' }],
-] as const) {
-  test(`the operator's ${why} for Agent stands over a setup-reviewer start`, async ($, on) => {
-    engine(on, { below })
-    await $.command.run({ ...COMMAND, command: 'quotient:setup' })
-
-    expect(await check($, 'Agent', REVIEWER)).toBe(below.decision)
-  })
-}
-
-test('no other Agent start is allowed: outside setup, from a subagent, or of another type', async ($, on) => {
+test("every Agent start is left to Claude Code's own verdict, setup's reviewer included", async ($, on) => {
   engine(on, { below: DEFAULT_ASK })
   expect(await check($, 'Agent', REVIEWER)).toBe('ask')
 
   await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+  expect(await check($, 'Agent', REVIEWER)).toBe('ask')
   expect(await check($, 'Agent', REVIEWER, 'sub-1')).toBe('ask')
   expect(await check($, 'Agent', { ...REVIEWER, subagent_type: 'general-purpose' })).toBe('ask')
   expect(await check($, 'Agent', { ...REVIEWER, subagent_type: 'quotient:teammate-check' })).toBe('ask')
