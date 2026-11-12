@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
-import { SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
+import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -147,6 +147,14 @@ test("every skill and agent quotes a front matter value that holds ': '", () => 
       const value = /^[A-Za-z][\w-]*:\s*(.*)$/.exec(line)?.[1] ?? "";
       assert.ok(/^["']/.test(value) || !value.includes(": "), `${file}: ${line.slice(0, 60)}`);
     }
+  }
+});
+
+// While setup or review-frictions runs, quotient's guard lets only these
+// tools run, so a renamed tool the list misses is refused mid-run.
+test("guard: lets setup and review-frictions run exactly the Quotient tools each calls", () => {
+  for (const name of ["setup", "review-frictions"] as const) {
+    assert.deepEqual([...LOCKED_QUOTIENT_TOOLS[name]].sort(), [...SKILL_TOOLS[name]!].sort(), name);
   }
 });
 
@@ -523,6 +531,11 @@ test("setup: after each batch, sends its frictions in one call, then records its
   const send = steps.indexOf("1. Send all its frictions to `submit_frictions`");
   const record = steps.indexOf("2. Then call `record_setup_progress`");
   assert.ok(send > 0 && record > send, "the batch's frictions must be sent before its progress is recorded");
+  // A failed send stops setup, and the batch must stay unrecorded so a resumed run reviews it again.
+  assert.ok(
+    steps.includes("Wait for every `submit_frictions` reply first: never send `record_setup_progress` in the same message as a `submit_frictions` call. When a `submit_frictions` error stops setup, don't record the batch, so a resumed run reviews it again. A reply that refuses some frictions, or the error that refuses every friction in the call, still lets you record it."),
+    "progress may be sent alongside the frictions",
+  );
   assert.match(steps, /When it found none, skip the call\./);
   assert.match(
     body,

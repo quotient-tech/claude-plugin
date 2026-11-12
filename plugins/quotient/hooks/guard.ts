@@ -27,7 +27,7 @@ import {
 } from './sandbox'
 import type { Scope } from './sandbox'
 import { privateText } from './privacy'
-import { SETUP_SHELL_COMMANDS } from './sessions'
+import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from './sessions'
 import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
 import { HIDES_FIXES, SHOWN_ALREADY } from './teammate-text'
@@ -73,11 +73,7 @@ const REMOTE_READS = ['list', 'get', 'list_runs', 'get_run_log']
 // ScheduleWakeup can.
 const LOCKED_HARNESS_TOOLS = ['AskUserQuestion', 'ReadNotifications', 'StructuredOutput', 'TaskStop']
 const LOCKED_SKILLS = ['setup', 'review-frictions', FIND_SOLUTIONS_SKILL]
-// The Quotient tools, under either server, and quotient's own tools each skill calls.
-const LOCKED_QUOTIENT_TOOLS = {
-  setup: ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_friction', 'finish_setup_run'],
-  'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
-} as const
+// quotient's own tools each skill calls.
 const LOCKED_OWN_TOOLS = {
   setup: ['mcp__quotient__setup_start', 'mcp__quotient__setup_digest', 'mcp__quotient__setup_summary'],
   'review-frictions': ['mcp__quotient__review_sessions', 'mcp__quotient__review_digest'],

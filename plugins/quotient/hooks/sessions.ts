@@ -13,6 +13,13 @@ export const QUOTIENT_STARTED = String.raw`/"type": ?"user"/ && !/"isMeta": ?tru
 // line its skill runs as it loads, and the one that sends a cloud session's
 // repository. Each is checked as a Bash call; review-frictions runs none.
 export const SETUP_SHELL_COMMANDS = ['echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"', 'git remote get-url origin']
+// The Quotient tools, under either server, that each skill calls while its run
+// holds the transcripts. Every other tool's call is refused, so each list must
+// match its skill's allowed-tools.
+export const LOCKED_QUOTIENT_TOOLS = {
+  setup: ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_frictions', 'finish_setup_run'],
+  'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
+} as const
 // How many lines one read of a transcript asks for. Output stops at 4 MiB,
 // so a range that runs past it is halved until it fits.
 export const LINES_PER_READ = 500
