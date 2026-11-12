@@ -9,7 +9,7 @@ allowed-tools: mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_a
 
 The arguments are: $ARGUMENTS
 
-If they are `daily` followed by a run id, this is a daily run: quotient started it in the background, and the run id is the `runId` for `complete_daily_run`. Otherwise, skip this section.
+If they start with `daily` followed by a run id, this is a daily run: quotient started it in the background, and the run id is the `runId` for `complete_daily_run`. Any names after the run id are the project folders with a session from the last two weeks, under `~/.claude/projects/`: those are the folders to search for past sessions. If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run. Otherwise, skip this section.
 
 In a daily run, nobody is at the prompt: never ask the operator anything. Where a step below says to stop, do what this section says first:
 - If you aren't signed in, or a call fails because the sign-in ended, stop and call nothing else, not even `complete_daily_run`. The next session's claim resumes the run.
@@ -30,7 +30,7 @@ Before anything else, call `list_teammate_frictions`. Use Quotient's tools from 
 - If the tool returns an error, show its text exactly and stop: don't explain it, retry, or look for the cause.
 - Its reply is one page: `frictions`, your teammates' frictions you haven't answered yet, and `nextCursor`. If the first page has no frictions, say there are no teammates' frictions to check and stop.
 
-Work through the frictions one page at a time. Answer every friction on the page and send the page's answers, as Answer says, before you read the next page. Then, while `nextCursor` isn't null, call `list_teammate_frictions` again with `cursor` set to that value, and work through that page the same way. Never read the next page early: a run cut short keeps the answers of every page it sent, and the frictions it didn't answer are offered again next time.
+Work through the frictions one page at a time. Answer the frictions on the page and send the page's answers, as Answer says, before you read the next page. Then, while `nextCursor` isn't null, call `list_teammate_frictions` again with `cursor` set to that value, and work through that page the same way. Never read the next page early: a run cut short keeps the answers of every page it sent, and the frictions it didn't answer are offered again next time.
 
 ## Goal
 Search for any potential solutions or improvements to these frictions.
@@ -50,15 +50,21 @@ Skip these sessions under `~/.claude/projects/`:
 
 Read or search one project folder at a time, never `~/.claude/projects/` as a whole. In a daily run or setup's teammate check you can read only `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`, and the folders `~/.claude/skills`, `~/.claude/plugins`, `~/.claude/agents`, `~/.claude/commands` and `~/.claude/projects/<one project folder>`, which holds that project's transcripts and auto-memories. Search each of them on its own: a search of `~/.claude` as a whole is refused, as is any read elsewhere.
 
+Outside a daily run, search the project folders your task names, when it names them. Otherwise, find the project folders with a session from the last two weeks yourself. Glob lists files oldest first and shows at most 100, so a Glob of every transcript leaves out the newest sessions: list each folder on its own.
+
+Search past sessions for the whole page at once, not friction by friction. In each project folder, run one Grep whose pattern combines the key terms of every friction on the page, then read only the sessions it matches. That one Grep searches the folder for each of those frictions.
+
 ## Answer
 For each friction, write one answer with these fields:
 - `frictionId`: the friction's `id`, copied exactly
 - `description`: a 1-2 sentence description of the best solution you have that may potentially resolve the friction. If several solutions combine, fold them into one
 - `prompt`: a prompt you would provide to another agent to implement the solution
 
-If you weren't able to find a solution for a friction, still send its answer, but leave `description` and `prompt` out of it: send only its `frictionId`. That tells Quotient you checked it, so it isn't sent to you again. Never send `""` or other placeholder text in their place, because Quotient stores any text as a fix.
+Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it. A search quotient refuses searched nothing: search each part on its own instead. If you still can't search them all, for example because a search keeps being refused or the run is running long, leave that friction out of the page's answers: Quotient offers it again next time, while an answer without a fix hides it from you for good.
 
-When you've answered every friction on the page, send all the page's answers in one call to `submit_solutions`, with the answers as `answers` and `source` set to `"local"`. It takes at most 100 answers, so a page with more goes in several calls of up to 100. If you don't have `submit_solutions`, send each of the page's answers with its own call to `submit_solution` instead, with the answer's fields and `source` set to `"local"`.
+If you searched them all and weren't able to find a solution for a friction, still send its answer, but leave `description` and `prompt` out of it: send only its `frictionId`. That tells Quotient you checked it, so it isn't sent to you again. Never send `""` or other placeholder text in their place, because Quotient stores any text as a fix.
+
+When you've worked through every friction on the page, send all the page's answers in one call to `submit_solutions`, with the answers as `answers` and `source` set to `"local"`. It takes at most 100 answers, so a page with more goes in several calls of up to 100. If you don't have `submit_solutions`, send each of the page's answers with its own call to `submit_solution` instead, with the answer's fields and `source` set to `"local"`.
 
 Its reply has one entry per answer: `status` is `recorded` for a new answer, `alreadyRecorded` for one Quotient had, and `refused` for one it didn't store, with the `reason`. Don't send a refused answer again. If the call returns an error, show its text exactly and stop: the frictions you haven't answered are offered again next time.
 

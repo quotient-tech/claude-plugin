@@ -21,7 +21,7 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
-import { heldVerdict, holdsTeammateText, LINES_PER_READ, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import { heldVerdict, holdsTeammateText, LINES_PER_READ, projectFolders, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -33,6 +33,8 @@ const START_TOOL = 'mcp__quotient__setup_start'
 const DIGEST_TOOL = 'mcp__quotient__setup_digest'
 // The subagent setup reviews each batch with.
 const REVIEWER_AGENT = 'quotient:setup-reviewer'
+const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
+const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under `~/.claude/projects/`:'
 // A subagent that hasn't reported back yet.
 const ACTIVE: readonly string[] = ['pending', 'running', 'waiting']
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
@@ -1293,6 +1295,18 @@ export const registerSetup: Register = on => {
   on('command.run', { command: SETUP_COMMAND }, async ($, e, next) => {
     await startSetupRun($)
     return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The teammate check reads with Read, Grep and Glob only, and Glob lists
+  // files oldest first and stops at 100, so it can't find the window's
+  // sessions itself: its prompt names their project folders.
+  on('agent.spawn', async ($, e, next) => {
+    const current = await read($, run)
+    if (e.subagentType !== TEAMMATE_CHECK_AGENT || !current.isRunning || current.dirs === null) return next(e)
+    const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
+    const dirs = current.dirs
+    const folders = projectFolders(await windowFiles($, dirs, window), name => isSkippedProject(name, dirs))
+    return folders.length === 0 ? next(e) : next({ ...e, prompt: `${e.prompt}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
   }).catch(($, e, next) => next(e))
 
   // One hook for every call: the summary tool's name isn't in the generated
