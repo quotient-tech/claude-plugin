@@ -126,7 +126,10 @@ Send each batch's frictions in one call to `submit_frictions`, with them as `fri
   - `OPERATOR_ATTENTION`: the operator had to step in: correct or redirect the agent, answer extra questions, do steps by hand, or re-run something
   - `COST`: the main harm is tokens, context or compute, such as oversized output, duplicate work or context bloat, rather than turns
   - `TIME`: the agent wasted turns, tool calls or minutes, then finished correctly without the operator's help
-- `severity`: exactly `high`, `medium` or `low`
+- `severity`: exactly `high`, `medium` or `low`: the friction's overall priority. Start from the level its `impact` sets, then raise it one level for each of these that applies, up to `high`. Never send a level below the starting one.
+  - Start at `high` for `SAFETY`, `medium` for `QUALITY`, `BLOCKED` or `OPERATOR_ATTENTION`, and `low` for `COST` or `TIME`
+  - Costly each time: each occurrence cost about 15 minutes or 25 tool calls or more, or as many tokens or as much context
+  - Recurring: it appeared in 3 or more sessions or routine runs
 - `tags`: tag keywords describing the friction
 - `origin`: `"setup"`
 

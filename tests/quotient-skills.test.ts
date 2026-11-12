@@ -38,6 +38,36 @@ function bashRules(allowedTools = ""): string[] {
   return [...allowedTools.matchAll(/Bash\(([^)]*)\)/g)].map((m) => m[1]!);
 }
 
+/**
+ * The severity rule's lines, in order, as both skills write them, so the same
+ * evidence gets the same severity whichever skill rates it.
+ * @param reach - What the skill reviews, as the recurring condition names it.
+ * @returns The field's line, then its starting levels and raise conditions.
+ */
+function severityRule(reach: string): string[] {
+  return [
+    "- `severity`: exactly `high`, `medium` or `low`: the friction's overall priority. Start from the level its `impact` sets, then raise it one level for each of these that applies, up to `high`. Never send a level below the starting one.",
+    "  - Start at `high` for `SAFETY`, `medium` for `QUALITY`, `BLOCKED` or `OPERATOR_ATTENTION`, and `low` for `COST` or `TIME`",
+    "  - Costly each time: each occurrence cost about 15 minutes or 25 tool calls or more, or as many tokens or as much context",
+    `  - Recurring: it appeared in 3 or more ${reach}`,
+  ];
+}
+
+/**
+ * Checks that a skill's friction fields carry the severity rule word for word
+ * and in order.
+ * @param section - The part of the skill body that lists the friction fields.
+ * @param reach - What the skill reviews, as the recurring condition names it.
+ */
+function assertSeverityRule(section: string, reach: string): void {
+  let last = -1;
+  for (const line of severityRule(reach)) {
+    const at = section.indexOf(line);
+    assert.ok(at > last, `severity rule line is missing, reworded or out of order: ${line}`);
+    last = at;
+  }
+}
+
 // Quotient's FrictionImpact values, in the order an agent tries them, each
 // with when to pick it.
 const IMPACT_CATEGORIES: [string, string][] = [
@@ -548,6 +578,11 @@ test("setup: sends impact as one category, and puts the cost and reach in the de
   assertImpactCategories(body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see")), "sessions or routines");
 });
 
+test("setup: rates severity by the shared rule, from impact, cost each time and recurrence", () => {
+  const { body } = skill("setup");
+  assertSeverityRule(body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see")), "sessions or routine runs");
+});
+
 test("setup: sends a short title with each friction, and shows titles in the summary", () => {
   const { body } = skill("setup");
   assert.match(body, /- `title`: a few words naming the friction, for a list, such as `Lint fails in CI after passing on commit`\. Say what goes wrong, not the fix/);
@@ -956,6 +991,11 @@ test("review-frictions: submits each new friction in submit_friction's shape, fr
 test("review-frictions: sends impact as one category, and puts the cost and reach in the description", () => {
   const { body } = skill("review-frictions");
   assertImpactCategories(body.slice(body.indexOf("## New frictions"), body.indexOf("## Agent Experiences")), "sessions");
+});
+
+test("review-frictions: rates severity by the shared rule, from impact, cost each time and recurrence", () => {
+  const { body } = skill("review-frictions");
+  assertSeverityRule(body.slice(body.indexOf("## New frictions"), body.indexOf("## Agent Experiences")), "sessions");
 });
 
 // setup and the review look for the same kinds of friction, so the two lists
