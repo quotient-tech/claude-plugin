@@ -337,6 +337,8 @@ test("find-solutions: answers without a fix only after searching the setup and e
   // Glob lists files oldest first and stops at 100, so a Glob of every
   // transcript leaves out the newest sessions.
   assert.match(body, /Glob lists files oldest first and shows at most 100/);
+  // Setup's teammate check is told them in its task.
+  assert.match(body, /Outside a daily run, search the project folders your task names, when it names them/);
   assert.match(body, /Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it/);
 });
 

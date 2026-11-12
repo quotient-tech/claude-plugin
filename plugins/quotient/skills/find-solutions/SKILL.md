@@ -50,7 +50,7 @@ Skip these sessions under `~/.claude/projects/`:
 
 Read or search one project folder at a time, never `~/.claude/projects/` as a whole. In a daily run or setup's teammate check you can read only `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`, and the folders `~/.claude/skills`, `~/.claude/plugins`, `~/.claude/agents`, `~/.claude/commands` and `~/.claude/projects/<one project folder>`, which holds that project's transcripts and auto-memories. Search each of them on its own: a search of `~/.claude` as a whole is refused, as is any read elsewhere.
 
-Outside a daily run, find the project folders with a session from the last two weeks yourself. Glob lists files oldest first and shows at most 100, so a Glob of every transcript leaves out the newest sessions: list each folder on its own.
+Outside a daily run, search the project folders your task names, when it names them. Otherwise, find the project folders with a session from the last two weeks yourself. Glob lists files oldest first and shows at most 100, so a Glob of every transcript leaves out the newest sessions: list each folder on its own.
 
 Search past sessions for the whole page at once, not friction by friction. In each project folder, run one Grep whose pattern combines the key terms of every friction on the page, then read only the sessions it matches. That one Grep searches the folder for each of those frictions.
 
