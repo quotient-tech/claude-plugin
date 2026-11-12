@@ -1,8 +1,8 @@
 ---
 name: setup
-description: Find the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and send each friction to Quotient as you find it, so teammates' agents can look for fixes.
+description: Find the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and send each batch's frictions to Quotient as soon as it's reviewed, so teammates' agents can look for fixes.
 disable-model-invocation: true
-allowed-tools: mcp__plugin_quotient_agex__start_setup_run, mcp__claude_ai_Quotient__start_setup_run, mcp__plugin_quotient_agex__record_setup_progress, mcp__claude_ai_Quotient__record_setup_progress, mcp__plugin_quotient_agex__submit_friction, mcp__claude_ai_Quotient__submit_friction, mcp__plugin_quotient_agex__finish_setup_run, mcp__claude_ai_Quotient__finish_setup_run, mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, Skill(quotient:find-solutions), mcp__quotient__setup_start, mcp__quotient__setup_digest, mcp__quotient__setup_summary, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"), Bash(git remote get-url origin)
+allowed-tools: mcp__plugin_quotient_agex__start_setup_run, mcp__claude_ai_Quotient__start_setup_run, mcp__plugin_quotient_agex__record_setup_progress, mcp__claude_ai_Quotient__record_setup_progress, mcp__plugin_quotient_agex__submit_frictions, mcp__claude_ai_Quotient__submit_frictions, mcp__plugin_quotient_agex__finish_setup_run, mcp__claude_ai_Quotient__finish_setup_run, mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, Skill(quotient:find-solutions), mcp__quotient__setup_start, mcp__quotient__setup_digest, mcp__quotient__setup_summary, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"), Bash(git remote get-url origin)
 ---
 
 ## Setup run
@@ -21,7 +21,7 @@ Otherwise, before anything else, call `start_setup_run`. Use Quotient's tools fr
   > - In a Claude Code cloud session: connect the Quotient connector at claude.ai/customize/connectors.
   >
   > Then try again.
-- If any of these tools returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again.
+- If any of these tools returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again. The one exception is the `submit_frictions` error the Friction section describes.
 - While its `nextCursor` isn't null, call it again with `cursor` set to that value, for the rest of `reportedFrictions`.
 
 Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).
@@ -102,15 +102,17 @@ When `setup_start`'s reply lists batches, review exactly those, in that order, t
 Review sources in small batches of at most 10 sessions or routine runs. Hand each batch of local sessions to its own subagent with the Agent tool, `subagent_type: "quotient:setup-reviewer"`, at most 16 running at once. Its prompt gives the batch's sources by name, each with its folder, and the titles of the frictions this run has submitted and of its `reportedFrictions`. The reviewer already has the Agent Experiences section above, so don't repeat it. When there's only one batch, review it yourself. Review the routine runs you sampled yourself, since a subagent can't fetch their logs. Without that agent type, review a batch yourself or hand batches to subagents, several at a time. The review subagents only report back. For each source, they give its id (a session's transcript file name without `.jsonl`, or a routine run's id), the frictions they found, with evidence, and anything that clearly worked well for the agent, with evidence. A friction that is the same problem as one of the titles they were given comes marked `matches: <title>`. They never submit frictions or record progress. Keep what worked well for the summary: it's never sent to Quotient.
 
 As soon as a batch is done, start the next waiting batch's reviewer, if any, then, before waiting on another:
-1. Submit its new frictions, or update the matching friction already submitted (its frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total).
+1. Send all its frictions to `submit_frictions`, in one call, or several of up to 100 when it found more: each new friction, and for one already submitted, its `frictionId`, to update the matching friction already submitted (its frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total). When it found none, skip the call.
 2. Then call `record_setup_progress` with the run's `runId`, its `sources` except any the reviewer skipped because `setup_digest` refused them, so a resumed run tries those again, and as `skippedFrictionIds` the ids of the `reportedFrictions` it found again.
+
+Do the same for a batch you review yourself, and for the routine runs you sampled: one `submit_frictions` call with what you found, then `record_setup_progress`.
 
 Never hold reviewed sources back to record at the end: an interrupted run redoes every source it didn't record.
 
 When every session and sampled routine run in the window has been recorded, call `finish_setup_run` with the run's `runId`. Its reply has the run's `counts` by severity (`high`, `medium`, `low` and `other`), `newCount`, the frictions it stored, and `alreadyReportedCount`, the frictions it found already reported, counting the ones you left out. Then end with the summary below.
 
 ## Friction
-As soon as you've found a friction, call `submit_friction` with these fields:
+Send each batch's frictions in one call to `submit_frictions`, with them as `frictions`. It takes at most 100, so a batch with more goes in several calls of up to 100. Give each friction these fields:
 - `runId`: the run's `runId`
 - `title`: a few words naming the friction, for a list, such as `Lint fails in CI after passing on commit`. Say what goes wrong, not the fix
 - `description`: the friction in 1-2 sentences. End with what it cost and which sessions or routines it reaches, such as `About 15 minutes and 25 tool calls in each new worktree.`
@@ -128,9 +130,18 @@ As soon as you've found a friction, call `submit_friction` with these fields:
 - `tags`: tag keywords describing the friction
 - `origin`: `"setup"`
 
+An update to a friction already submitted carries every field above, as a new one does, and its `frictionId`.
+
 Locally, leave `repository` out: the sessions come from many repos. In a cloud session, also send `repository`: run `git remote get-url origin` and send the repository as `owner/name`.
 
-Its reply's `status` is `new`, `updated`, or `alreadyReported` for a friction you'd already reported elsewhere, which isn't stored again.
+Its reply's `frictions` has one entry per friction, in the order you sent them: the first entry is the first friction's. Each entry's `status` is:
+- `new` or `updated`, with the friction's `frictionId`: keep it, to update that friction from a later batch;
+- `alreadyReported` for a friction you'd already reported elsewhere, which isn't stored again;
+- `refused`, with the `reason`, for one Quotient didn't store. Don't send a refused friction again.
+
+When Quotient refuses every friction in the call, it replies with an error that lists each friction's reason. Don't send them again, and don't stop: send the batch's remaining calls, if any, then go on to `record_setup_progress`. Any other error stops setup, as the Setup run section says.
+
+If quotient refuses the call because a friction's text holds something teammates mustn't see, it names the field, such as `frictions[2].description`. Friction numbers start at 0, so that is the third friction. Rewrite that field and send the whole call again: nothing in it was sent.
 
 ## What teammates see
 Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:
@@ -154,7 +165,7 @@ If quotient refuses a call because its text holds one of these, rewrite that fie
 Call quotient's `setup_summary` tool once with these fields, then end your turn without writing anything else. Each piece of text it takes (every `working` item, every `top` description and `inCommon`) is at most 200 characters, counting an emoji as 2 or more:
 - `frictions`: `finish_setup_run`'s `newCount`.
 - `working`: up to three things the subagents reported working well, each backed by their evidence, as a list of text. Give fewer when that's all there is, and none when there's none.
-- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (`high`, `medium` or `low`), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_friction` for that friction), and `sessions` (the count from the start of its frequency).
+- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (`high`, `medium` or `low`), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_frictions` for that friction), and `sessions` (the count from the start of its frequency).
 - `remainingHigh`: the `counts` high number minus the high frictions in `top`, or 0 when `frictions` is 3 or fewer.
 - `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them. For example: "Two of your top three involve your CI and local setup. Whoever set those up has likely hit the same problems and solved them in their own Claude setup." Leave it out when `frictions` is 0, and when this setup checked your setup for fixes to teammates' frictions: quotient adds what that check found itself.
 

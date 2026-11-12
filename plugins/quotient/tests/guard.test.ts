@@ -244,6 +244,20 @@ test('a page of answers sent together is refused when any answer holds private t
   expect(JSON.stringify(found)).not.toContain('/home/op/notes')
 })
 
+test("a batch of frictions sent together is refused when any friction holds private text, naming that friction's field", async ($, on) => {
+  engine(on)
+  const clean = { runId: 'r1', title: 'Lint fails in CI after passing on commit', description: 'No pre-commit hook runs lint.', origin: 'setup' }
+  const send = (frictions: Record<string, unknown>[]) => ({ frictions })
+
+  for (const prefix of [AGEX, CONNECTOR]) {
+    expect(await check($, `${prefix}submit_frictions`, send([clean, { ...clean, frictionId: 'f2' }]))).toBe('allow')
+    const found = await verdict($, `${prefix}submit_frictions`, send([clean, { ...clean, description: 'Fails in /home/op/code/app' }]))
+    expect(found.decision).toBe('deny')
+    expect(JSON.stringify(found)).toContain('`frictions[1].description`')
+    expect(JSON.stringify(found)).not.toContain('/home/op/code/app')
+  }
+})
+
 test('the refusal names the field and what it holds, never the text, and asks for a rewrite', async ($, on) => {
   engine(on)
 
@@ -303,6 +317,7 @@ test("a send to Quotient is refused when the home folder can't be read, and othe
   on('tool.check', () => ({ decision: 'allow' }))
 
   expect(await check($, `${AGEX}submit_friction`, { title: 'Lint fails in CI' })).toBe('deny')
+  expect(await check($, `${AGEX}submit_frictions`, { frictions: [{ title: 'Lint fails in CI' }] })).toBe('deny')
   expect(await check($, 'Bash', { command: 'ls' })).toBe('allow')
 })
 

@@ -41,7 +41,7 @@ const TEAMMATE_CHECK_TOOLS = ['list_teammate_frictions', 'submit_solutions', 'su
 // The Quotient tools whose text teammates read, found under any server's
 // name, as self-allow.ts finds its own: an operator can run Quotient under
 // a server they set up by hand.
-const SEND_TOOLS = ['submit_friction', 'submit_solutions', 'submit_solution', 'submit_review']
+const SEND_TOOLS = ['submit_friction', 'submit_frictions', 'submit_solutions', 'submit_solution', 'submit_review']
 const FIND_SOLUTIONS_SKILL = 'find-solutions'
 // The subagent setup reviews each batch with. It can only read and build
 // digests, so quotient allows the main agent's start of one during setup in
