@@ -88,6 +88,7 @@ function launch(
  * @param opts.launchRejects - Whether every launch rejects
  * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
  * @param opts.findExit - The exit code of that `find`, 0 when absent
+ * @param opts.isFindTruncated - Whether that `find`'s output was cut off
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part and the thank-yous check made
@@ -105,6 +106,7 @@ function engine(
     launchRejects?: boolean
     transcripts?: string[] | 'rejects'
     findExit?: number
+    isFindTruncated?: boolean
   } = {},
 ) {
   const seen = {
@@ -154,7 +156,8 @@ function engine(
       seen.found.push(e.argv)
       if (opts.transcripts === 'rejects') throw new Error('find failed')
       const stdout = (opts.transcripts ?? []).map(file => `${file}\n`).join('')
-      return { value: { exitCode: opts.findExit ?? 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      const isStdoutTruncated = opts.isFindTruncated === true
+      return { value: { exitCode: opts.findExit ?? 0, stdout, stderr: '', isStdoutTruncated, isStderrTruncated: false } }
     }
     seen.launched.push(e.argv)
     seen.launchEnv.push(e.init?.env)
@@ -624,6 +627,22 @@ test('a find-solutions run whose transcript listing exits non-zero names no fold
     claims: { 'find-solutions': due('run-1') },
     transcripts: ['/home/op/.claude/projects/-home-op-api/a.jsonl'],
     findExit: 1,
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS)])
+})
+
+// Output cut off short can still exit 0, and the folders past the cut would be
+// missing from a list the run takes as complete.
+test('a find-solutions run whose transcript listing was cut off names no folders', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1') },
+    transcripts: ['/home/op/.claude/projects/-home-op-api/a.jsonl'],
+    isFindTruncated: true,
   })
 
   await $.session.start(INTERACTIVE)

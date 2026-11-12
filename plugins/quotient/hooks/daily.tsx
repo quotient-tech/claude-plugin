@@ -122,8 +122,9 @@ async function recentProjects($: Api, home: string, runs: string): Promise<strin
   const dirs = { config, home, runs }
   try {
     const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
-    // A non-zero exit means part of the folder couldn't be read, so the list may be missing folders.
-    return found.exitCode === 0 ? projectFolders(found.stdout.split('\n'), name => isSkippedProject(name, dirs)) : []
+    // A non-zero exit or output cut off short means the list may be missing folders.
+    const isComplete = found.exitCode === 0 && !found.isStdoutTruncated
+    return isComplete ? projectFolders(found.stdout.split('\n'), name => isSkippedProject(name, dirs)) : []
   } catch {
     return []
   }
