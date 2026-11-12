@@ -35,7 +35,6 @@ Quotient's [privacy policy](https://www.getquotient.com/privacy) covers what Quo
 - **quotient doesn't review its own work.** A session that started with one of quotient's skills, such as `/quotient:setup` or a daily run, is never reviewed or counted, so a problem with quotient itself is never sent as one of your frictions.
 - **No ids and no extra blocks.** The skills never show you a friction's or a fix's id, and never add your output style's Insight or recap blocks. The daily runs always use the default output style.
 - **Token usage is counts only, and you can turn it off.** quotient sends how many tokens its own skills used, never prompts, replies or files. See [Token usage](#token-usage).
-- **There is no dry run.** `QUOTIENT_DRY_RUN=1` doesn't stop the skills: they send to whichever Quotient the plugin's MCP server points at, which is production by default.
 
 ## What quotient's agents can reach
 
