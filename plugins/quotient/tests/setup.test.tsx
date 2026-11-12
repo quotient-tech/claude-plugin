@@ -714,42 +714,56 @@ test("a teammate check whose sessions can't be listed starts with its prompt as 
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
 })
 
-test("an invited operator's summary leaves out the pitch and sample and ends with the waiting line", async ($, on) => {
+test("an invited operator's summary opens with setup being done and leaves out the pitch, sample, waiting line and hint", async ($, on) => {
   engine(on)
   await checkTeammates($, [])
 
-  const { texts, shown } = await drawSummary($, INVITED)
+  const { shown } = await drawSummary($, INVITED)
 
   expectInOrder(shown, [
-    'Your agents ran into 5 frictions in the last two weeks.',
+    'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
     'Where your agents lost the most time',
     'Lint passes on commit but fails in CI',
     '+ 2 more, 1 of them high severity',
-    '✻',
-    "Waiting on solutions from teammates' agents…",
-    LIST_FIXES_HINT,
   ])
-  for (const absent of ['Setup is done.', 'Your teammates have probably', "Why a teammate's fix", 'SAMPLE', 'Ron Burgundy']) {
+  for (const absent of ['Your teammates have probably', "Why a teammate's fix", 'SAMPLE', 'Ron Burgundy', '✻', 'Waiting on solutions', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
-  expect(texts.find(one => one.text === '✻')?.props.color).toBe('suggestion')
-  expect(texts.find(one => one.text === "Waiting on solutions from teammates' agents…")?.props.dimColor).toBe(true)
 })
 
-test('an invited operator with no new frictions sees the headline and what is working only', async ($, on) => {
+test('an invited operator with no new frictions sees setup being done and what is working', async ($, on) => {
   engine(on)
   await checkTeammates($, [])
 
   const { shown } = await drawSummary($, { ...INVITED, frictions: 0, top: [], remainingHigh: 0 })
 
-  expect(shown).toContain('Your agents ran into no new frictions in the last two weeks.')
+  expect(shown).toContain('Setup is done. Your agents ran into no new frictions in the last two weeks.')
   expect(shown).toContain("What's working")
-  for (const absent of ['Setup is done.', "They're saved", 'Waiting on solutions', 'SAMPLE', '/list-fixes']) {
+  for (const absent of ["They're saved", 'Waiting on solutions', 'SAMPLE', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
+})
+
+test("an invited operator sees their own frictions before the teammates' frictions their setup solves", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup already solves'])
+})
+
+test("an invited operator's summary answers with only the instruction to end the turn, since it doesn't end with the hint", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const called = await callSummary($, INVITED)
+
+  expect(called.deny).toBeUndefined()
+  expect(called.result).toBe(END_TURN)
 })
 
 test("setup_summary refuses inCommon when setup checked for teammates' fixes", async ($, on) => {
@@ -770,7 +784,45 @@ test('setup_summary refuses a teammateCheck the model sends, since quotient buil
   expect(called.deny).toBe('teammateCheck: leave it out, quotient adds it')
 })
 
-test("an invited operator first sees the teammates' problems their setup solves, each card from what was sent", async ($, on) => {
+test("an invited operator sees one example of the teammates' frictions their setup solves, its card from what was sent", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [
+    ['t1', FIXES[0]],
+    ['t2', FIXES[1]],
+    ['t3', FIXES[2]],
+  ])
+
+  const { texts, shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, [
+    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    "A TEAMMATE'S FRICTION",
+    'Lint passes on commit but fails in CI',
+    'YOUR FIX',
+    FIXES[0],
+  ])
+  expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(1)
+  for (const absent of [FIXES[1], FIXES[2], 'Their agents keep running into these', 'worked in', 'Quotient will suggest these']) {
+    expect(shown).not.toContain(absent)
+  }
+})
+
+test('the solved block and closing sections color their labels, headings and notes as the mockup does', async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { texts } = await drawSummary($, INVITED)
+  const find = (text: string) => texts.find(one => one.text === text)?.props
+
+  expect(find("A TEAMMATE'S FRICTION")).toMatchObject({ color: 'error', bold: true })
+  expect(find('YOUR FIX')).toMatchObject({ color: 'success', bold: true })
+  expect(texts.filter(one => one.text === 'Lint passes on commit but fails in CI').at(-1)?.props.bold).toBe(true)
+  expect(find("What's next")?.bold).toBe(true)
+  expect(find('What you can do now')?.bold).toBe(true)
+  expect(find('(you both stay anonymous)')?.dimColor).toBe(true)
+})
+
+test("an invited operator's summary ends with what's next and what they can do now", async ($, on) => {
   engine(on)
   await checkTeammates($, [
     ['t1', FIXES[0]],
@@ -781,55 +833,108 @@ test("an invited operator first sees the teammates' problems their setup solves,
   const { shown } = await drawSummary($, INVITED)
 
   expectInOrder(shown, [
-    "Your setup already solves 3 of your teammates' problems.",
-    "Their agents keep running into these. Yours don't, because of something in your setup.",
-    "A TEAMMATE'S FRICTION",
-    'Lint passes on commit but fails in CI',
-    'YOUR FIX',
+    'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
+    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
     FIXES[0],
-    "Agents can't sign in to the local app",
-    FIXES[1],
-    'zsh quoting breaks shell commands',
-    FIXES[2],
-    '✓',
-    'Quotient will suggest these to your teammate in their next session',
+    "What's next",
+    '1. Quotient will suggest all 3 to your teammates in their next session',
     '(you both stay anonymous)',
-    'Your agents ran into 5 frictions in the last two weeks.',
+    "2. I'll notify you when I have some proven solutions for you to consider",
+    'What you can do now',
+    'Invite more teammates. The more the merrier.',
   ])
-  expect(shown).not.toContain('worked in')
+  expect(shown.trimEnd().endsWith('Invite more teammates. The more the merrier.')).toBe(true)
 })
 
-test('the solved block colors its labels, check and notes as the mockup does', async ($, on) => {
+test("one fix found is suggested to one teammate in what's next", async ($, on) => {
   engine(on)
   await checkTeammates($, [['t1', FIXES[0]]])
 
-  const { texts } = await drawSummary($, INVITED)
-  const find = (text: string) => texts.find(one => one.text === text)?.props
+  const { shown } = await drawSummary($, INVITED)
 
-  expect(find("A TEAMMATE'S FRICTION")).toMatchObject({ color: 'error', bold: true })
-  expect(find('YOUR FIX')).toMatchObject({ color: 'success', bold: true })
-  expect(find('Lint passes on commit but fails in CI')?.bold).toBe(true)
-  expect(find('(you both stay anonymous)')?.dimColor).toBe(true)
-  expect(texts.filter(one => one.text === '✓').at(-1)?.props.color).toBe('success')
+  expectInOrder(shown, [
+    '1. Quotient will suggest it to your teammate in their next session',
+    "2. I'll notify you when I have some proven solutions for you to consider",
+  ])
 })
 
-test('the solved headline counts every answer with a fix, beyond the three cards shown, and none without', async ($, on) => {
+test("no fix found leaves only the notify line in what's next, numbered first", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', null]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ["What's next", "1. I'll notify you when I have some proven solutions for you to consider", 'What you can do now'])
+  expect(shown).not.toContain('2. ')
+})
+
+test("an invited operator with no new frictions still sees what's next and what they can do now", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [])
+
+  const { shown } = await drawSummary($, { ...INVITED, frictions: 0, top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, ["What's next", "1. I'll notify you when I have some proven solutions", 'What you can do now', 'Invite more teammates.'])
+})
+
+test("an operator setup didn't check for teammates' fixes sees neither closing section", async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawSummary($, SAVED)
+
+  for (const absent of ["What's next", 'What you can do now', 'Invite more teammates']) {
+    expect(shown).not.toContain(absent)
+  }
+})
+
+test('the solved headline counts every answer with a fix, beyond the one card shown, and none without', async ($, on) => {
   engine(on)
   await checkTeammates($, [...TEAMMATES.map(({ id }, i): [string, string | null] => [id, FIXES[i] ?? null]), ['t5', null]])
 
   const { texts, shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 5 of your teammates' problems.")
-  expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(3)
+  expect(shown).toContain("Your setup already solves 5 of your teammates' frictions. Here's an example:")
+  expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(1)
 })
 
-test("one fix found reads as one teammate's problem", async ($, on) => {
+test("one fix found reads as one of your teammates' frictions, with its card", async ($, on) => {
   engine(on)
   await checkTeammates($, [['t1', FIXES[0]], ['t2', null]])
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 1 of a teammate's problems.")
+  expectInOrder(shown, ["Your setup already solves one of your teammates' frictions:", "A TEAMMATE'S FRICTION", FIXES[0]])
+  expect(shown).not.toContain("Here's an example")
+})
+
+test("fixes whose cards can't be shown keep the count but drop the example", async ($, on) => {
+  engine(on, {
+    teammates: [
+      { id: 't1', title: 'Lint fails, see fr-20261029-4' },
+      { id: 't2', title: 'Sign-in breaks for ron@example.com' },
+    ],
+  })
+  await checkTeammates($, [
+    ['t1', FIXES[0]],
+    ['t2', 'Point the sign-in hook at the repo root.'],
+  ])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions.")
+  for (const absent of ["Here's an example", "A TEAMMATE'S FRICTION", 'YOUR FIX']) {
+    expect(shown).not.toContain(absent)
+  }
+})
+
+test("one fix whose card can't be shown reads as one of your teammates' frictions, with no card", async ($, on) => {
+  engine(on, { teammates: [{ id: 't1', title: 'Sign-in breaks for ron@example.com' }] })
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expect(shown).toContain("Your setup already solves one of your teammates' frictions.")
+  expect(shown).not.toContain("A TEAMMATE'S FRICTION")
 })
 
 test('no fix found leaves out the solved block', async ($, on) => {
@@ -849,7 +954,7 @@ test('the desktop app draws the solved block too', async ($, on) => {
 
   const { shown } = await drawSummary($, INVITED, 'desktop')
 
-  expect(shown).toContain("Your setup already solves 1 of a teammate's problems.")
+  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
   expect(shown).toContain('YOUR FIX')
 })
 
@@ -869,7 +974,7 @@ test("a card whose text holds an id or an email is left out but still counted, a
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 3 of your teammates' problems.")
+  expect(shown).toContain("Your setup already solves 3 of your teammates' frictions. Here's an example:")
   expect(shown).not.toContain('fr-20261029-4')
   expect(shown).not.toContain('ron@example.com')
   expect(shown).toContain('Builds are slow')
@@ -907,7 +1012,7 @@ test('each answer in a batch the teammate check sends gets a row of its own, and
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
-  expect(shown).toContain("Your setup already solves 1 of a teammate's problems.")
+  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
   expect(shown).not.toContain(FIXES[2])
 })
 
@@ -919,7 +1024,7 @@ test('a batch whose reply cannot be read still counts every answer it sent', asy
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
-  expect(shown).toContain("Your setup already solves 2 of your teammates' problems.")
+  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions. Here's an example:")
 })
 
 test("setup's own session learns only whether teammates have frictions, never their text", async ($, on) => {
