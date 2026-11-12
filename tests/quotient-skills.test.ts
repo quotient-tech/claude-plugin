@@ -530,6 +530,21 @@ test("setup: sends an update to a friction with every field, as well as its fric
   assert.match(section, /An update to a friction already submitted carries every field above, as a new one does, and its `frictionId`\./);
 });
 
+// Severity counts the sessions a friction appeared in, which an update raises.
+test("setup: rates an updated friction's severity again with its new count", () => {
+  const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.ok(section.includes("Rate its `severity` again by the rule above, with its new `affectedSessionCount`."));
+});
+
+// A reviewer sees one batch, so it can't count a friction's sessions across
+// batches: it reports what each occurrence cost, and setup sets the severity.
+test("setup: rates impact and severity itself, from what the reviewers report each occurrence cost", () => {
+  const { body } = skill("setup");
+  assert.ok(body.includes("the frictions they found, with evidence and what each occurrence cost,"));
+  assert.ok(body.includes("Set each friction's `impact` and `severity` yourself, from their reports and the run's counts."));
+});
+
 // Quotient's reply is an error when it refused every friction in the call,
 // and dropping them must not end the run. Progress recorded before a split
 // batch's last call would leave that call's frictions unsent for good.
@@ -595,17 +610,17 @@ test("setup: counts the sessions each friction appeared in against every source 
   assert.match(body, /- `reviewedSessionCount`: how many sessions, automated runs and cloud routine runs this setup reviews in all: the sum of the three counts in the start message\. It is/);
   assert.match(body, /never smaller than `affectedSessionCount`/);
   assert.match(body, /as a whole number of at least 1/);
-  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total/);
+  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total/);
   assert.match(body, /The start message's counts already leave out every session you skip/);
   assert.match(body, /leaving out the sessions listed below/);
-  assert.ok(body.includes("update the matching friction already submitted (its frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total)"));
+  assert.ok(body.includes("update the matching friction already submitted (its frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total)"));
 });
 
 test("setup: resumes an unfinished run from the progress Quotient recorded", () => {
   const { body } = skill("setup");
   assert.match(body, /`reviewedSources`/);
   assert.match(body, /`frictionsInRun`/);
-  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount` and impact/);
+  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity/);
   assert.match(body, /call `record_setup_progress` with the run's `runId`, its `sources`/);
   // A source setup_digest refused wasn't reviewed, so recording it would skip it on resume.
   assert.match(body, /its `sources` except any the reviewer skipped because `setup_digest` refused them, so a resumed run tries those again/);
@@ -749,6 +764,8 @@ test("setup-reviewer: reads only through setup_digest, and only reports back", (
   assert.match(body, /its id, the frictions you found, each with evidence cited by the digest's line numbers/);
   assert.match(body, /`matches: <title>`/);
   assert.match(body, /anything that clearly worked well for the agent, with evidence/);
+  assert.ok(body.includes("its category, what harm it did, and what each occurrence cost in minutes, tool calls or tokens, as the digest shows"));
+  assert.ok(!body.includes("how severe it looks"), "the reviewer still rates severity, which needs counts it can't see");
 });
 
 /**
