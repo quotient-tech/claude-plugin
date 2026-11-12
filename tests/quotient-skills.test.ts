@@ -48,7 +48,7 @@ function severityRule(reach: string): string[] {
   return [
     "- `severity`: exactly `high`, `medium` or `low`: the friction's overall priority. Start from the level its `impact` sets, then raise it one level for each of these that applies, up to `high`. Never send a level below the starting one.",
     "  - Start at `high` for `SAFETY`, `medium` for `QUALITY`, `BLOCKED` or `OPERATOR_ATTENTION`, and `low` for `COST` or `TIME`",
-    "  - Costly each time: each occurrence cost about 15 minutes or 25 tool calls or more, or as many tokens or as much context",
+    "  - Costly each time: each occurrence cost about 15 minutes, 25 tool calls or 100,000 characters of tool results, or more",
     `  - Recurring: it appeared in 3 or more ${reach}`,
   ];
 }
@@ -764,7 +764,7 @@ test("setup-reviewer: reads only through setup_digest, and only reports back", (
   assert.match(body, /its id, the frictions you found, each with evidence cited by the digest's line numbers/);
   assert.match(body, /`matches: <title>`/);
   assert.match(body, /anything that clearly worked well for the agent, with evidence/);
-  assert.ok(body.includes("its category, what harm it did, and what each occurrence cost in minutes, tool calls or tokens, as the digest shows"));
+  assert.ok(body.includes("its category, what harm it did, and what each occurrence cost in minutes, tool calls or characters of tool results, as the digest shows"));
   assert.ok(!body.includes("how severe it looks"), "the reviewer still rates severity, which needs counts it can't see");
 });
 

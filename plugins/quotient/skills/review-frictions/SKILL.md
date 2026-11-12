@@ -74,7 +74,7 @@ For each friction left, call `submit_friction` with these fields:
   - `TIME`: the agent wasted turns, tool calls or minutes, then finished correctly without the operator's help
 - `severity`: exactly `high`, `medium` or `low`: the friction's overall priority. Start from the level its `impact` sets, then raise it one level for each of these that applies, up to `high`. Never send a level below the starting one.
   - Start at `high` for `SAFETY`, `medium` for `QUALITY`, `BLOCKED` or `OPERATOR_ATTENTION`, and `low` for `COST` or `TIME`
-  - Costly each time: each occurrence cost about 15 minutes or 25 tool calls or more, or as many tokens or as much context
+  - Costly each time: each occurrence cost about 15 minutes, 25 tool calls or 100,000 characters of tool results, or more
   - Recurring: it appeared in 3 or more sessions
 - `tags`: tag keywords describing the friction
 - `origin`: `"review"`
