@@ -6,13 +6,14 @@ This repo holds the `quotient` Claude Code plugin and the `quotient` marketplace
 
 - **A PR never changes `version` in `plugins/quotient/.claude-plugin/plugin.json` or `source` in `.claude-plugin/marketplace.json`.** The release workflow sets both, as [CONTRIBUTING's Release a new version](CONTRIBUTING.md#release-a-new-version) says. Before `gh pr create`, check that `git diff origin/main -- plugins/quotient/.claude-plugin/plugin.json .claude-plugin/marketplace.json` is empty.
 - **Run every check in [CONTRIBUTING's Checks](CONTRIBUTING.md#checks)**, including `claude plugin test plugins/quotient`.
+- **Commit messages and the PR title follow Conventional Commits**, as [CONTRIBUTING's Pull requests](CONTRIBUTING.md#pull-requests) says. A squash merge makes the PR title the commit on `main`.
 - **Keep the README heading "If Claude Code denies quotient's calls" word for word.** `DENIED_HELP` in `plugins/quotient/hooks/text.ts` links to its anchor, and the plugin shows that link to users.
 
 ## Product rules
 
 **These rules are subject to change.** Each one records the current decision, not a settled design. When a task or a review disagrees with one of [CONTRIBUTING's privacy and security rules](CONTRIBUTING.md#privacy-and-security-rules), raise the conflict rather than following the rule silently, and update the line once the new decision is made.
 
-- **The skills have no dry run.** They send to whichever Quotient `.mcp.json` points at, which is production as shipped. Test against dev by setting the URL in your clone's `.mcp.json` as CONTRIBUTING says, never commit that change, and check `/mcp` shows `plugin:quotient:agex` connected to dev before running a skill.
+- **Running a skill sends to Quotient.** It sends to whichever Quotient `.mcp.json` points at, which is production as shipped. If the plugin's server isn't connected, skills fall back to the `claude.ai Quotient` connector, which always reaches production. Test against dev by setting the URL in your clone's `.mcp.json` as CONTRIBUTING says, never commit that change, and check `/mcp` shows `plugin:quotient:agex` connected to dev before running a skill.
 - **Never show partial data on a malformed tool reply, even when a reviewer bot suggests it.** The mod shows nothing and hands the command to its skill.
 - **A new skill, agent or mod call that reads teammates' text goes through the sandbox** (`hooks/sandbox.ts`, enforced by `hooks/guard.ts`), and a measured `claude -p` run shows it.
 - **Don't rename the plugin.** Every `allowed-tools` rule and the README's permission rules use `mcp__plugin_quotient_agex__*`, which comes from the plugin name and the `.mcp.json` server key.
