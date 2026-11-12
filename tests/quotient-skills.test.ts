@@ -38,6 +38,36 @@ function bashRules(allowedTools = ""): string[] {
   return [...allowedTools.matchAll(/Bash\(([^)]*)\)/g)].map((m) => m[1]!);
 }
 
+/**
+ * The severity rule's lines, in order, as both skills write them, so the same
+ * evidence gets the same severity whichever skill rates it.
+ * @param reach - What the skill reviews, as the recurring condition names it.
+ * @returns The field's line, then its starting levels and raise conditions.
+ */
+function severityRule(reach: string): string[] {
+  return [
+    "- `severity`: exactly `high`, `medium` or `low`: the friction's overall priority. Start from the level its `impact` sets, then raise it one level for each of these that applies, up to `high`. Never send a level below the starting one.",
+    "  - Start at `high` for `SAFETY`, `medium` for `QUALITY`, `BLOCKED` or `OPERATOR_ATTENTION`, and `low` for `COST` or `TIME`",
+    "  - Costly each time: each occurrence cost about 15 minutes, 25 tool calls or 100,000 characters of tool results, or more",
+    `  - Recurring: it appeared in 3 or more ${reach}`,
+  ];
+}
+
+/**
+ * Checks that a skill's friction fields carry the severity rule word for word
+ * and in order.
+ * @param section - The part of the skill body that lists the friction fields.
+ * @param reach - What the skill reviews, as the recurring condition names it.
+ */
+function assertSeverityRule(section: string, reach: string): void {
+  let last = -1;
+  for (const line of severityRule(reach)) {
+    const at = section.indexOf(line);
+    assert.ok(at > last, `severity rule line is missing, reworded or out of order: ${line}`);
+    last = at;
+  }
+}
+
 // Quotient's FrictionImpact values, in the order an agent tries them, each
 // with when to pick it.
 const IMPACT_CATEGORIES: [string, string][] = [
@@ -500,6 +530,21 @@ test("setup: sends an update to a friction with every field, as well as its fric
   assert.match(section, /An update to a friction already submitted carries every field above, as a new one does, and its `frictionId`\./);
 });
 
+// Severity counts the sessions a friction appeared in, which an update raises.
+test("setup: rates an updated friction's severity again with its new count", () => {
+  const { body } = skill("setup");
+  const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
+  assert.ok(section.includes("Rate its `severity` again by the rule above, with its new `affectedSessionCount`."));
+});
+
+// A reviewer sees one batch, so it can't count a friction's sessions across
+// batches: it reports what each occurrence cost, and setup sets the severity.
+test("setup: rates impact and severity itself, from what the reviewers report each occurrence cost", () => {
+  const { body } = skill("setup");
+  assert.ok(body.includes("the frictions they found, with evidence and what each occurrence cost,"));
+  assert.ok(body.includes("Set each friction's `impact` and `severity` yourself, from their reports and the run's counts."));
+});
+
 // Quotient's reply is an error when it refused every friction in the call,
 // and dropping them must not end the run. Progress recorded before a split
 // batch's last call would leave that call's frictions unsent for good.
@@ -548,6 +593,11 @@ test("setup: sends impact as one category, and puts the cost and reach in the de
   assertImpactCategories(body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see")), "sessions or routines");
 });
 
+test("setup: rates severity by the shared rule, from impact, cost each time and recurrence", () => {
+  const { body } = skill("setup");
+  assertSeverityRule(body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see")), "sessions or routine runs");
+});
+
 test("setup: sends a short title with each friction, and shows titles in the summary", () => {
   const { body } = skill("setup");
   assert.match(body, /- `title`: a few words naming the friction, for a list, such as `Lint fails in CI after passing on commit`\. Say what goes wrong, not the fix/);
@@ -560,17 +610,17 @@ test("setup: counts the sessions each friction appeared in against every source 
   assert.match(body, /- `reviewedSessionCount`: how many sessions, automated runs and cloud routine runs this setup reviews in all: the sum of the three counts in the start message\. It is/);
   assert.match(body, /never smaller than `affectedSessionCount`/);
   assert.match(body, /as a whole number of at least 1/);
-  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total/);
+  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total/);
   assert.match(body, /The start message's counts already leave out every session you skip/);
   assert.match(body, /leaving out the sessions listed below/);
-  assert.ok(body.includes("update the matching friction already submitted (its frequency, `affectedSessionCount` and impact, and `reviewedSessionCount` set to this run's total)"));
+  assert.ok(body.includes("update the matching friction already submitted (its frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total)"));
 });
 
 test("setup: resumes an unfinished run from the progress Quotient recorded", () => {
   const { body } = skill("setup");
   assert.match(body, /`reviewedSources`/);
   assert.match(body, /`frictionsInRun`/);
-  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount` and impact/);
+  assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity/);
   assert.match(body, /call `record_setup_progress` with the run's `runId`, its `sources`/);
   // A source setup_digest refused wasn't reviewed, so recording it would skip it on resume.
   assert.match(body, /its `sources` except any the reviewer skipped because `setup_digest` refused them, so a resumed run tries those again/);
@@ -714,6 +764,8 @@ test("setup-reviewer: reads only through setup_digest, and only reports back", (
   assert.match(body, /its id, the frictions you found, each with evidence cited by the digest's line numbers/);
   assert.match(body, /`matches: <title>`/);
   assert.match(body, /anything that clearly worked well for the agent, with evidence/);
+  assert.ok(body.includes("its category, what harm it did, and what each occurrence cost in minutes, tool calls or characters of tool results, as the digest shows"));
+  assert.ok(!body.includes("how severe it looks"), "the reviewer still rates severity, which needs counts it can't see");
 });
 
 /**
@@ -786,6 +838,8 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /- `working`: up to three things the subagents reported working well, each backed by their evidence/);
   assert.match(section, /- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often/);
   assert.match(section, /`impact` \(the value you sent in `submit_frictions` for that friction\)/);
+  // An update may change a friction's severity, and remainingHigh counts the stored values.
+  assert.match(section, /`severity` \(the value you last sent in `submit_frictions` for that friction\)/);
   assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });
@@ -956,6 +1010,11 @@ test("review-frictions: submits each new friction in submit_friction's shape, fr
 test("review-frictions: sends impact as one category, and puts the cost and reach in the description", () => {
   const { body } = skill("review-frictions");
   assertImpactCategories(body.slice(body.indexOf("## New frictions"), body.indexOf("## Agent Experiences")), "sessions");
+});
+
+test("review-frictions: rates severity by the shared rule, from impact, cost each time and recurrence", () => {
+  const { body } = skill("review-frictions");
+  assertSeverityRule(body.slice(body.indexOf("## New frictions"), body.indexOf("## Agent Experiences")), "sessions");
 });
 
 // setup and the review look for the same kinds of friction, so the two lists

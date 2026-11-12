@@ -16,10 +16,15 @@ export type SetupMeasurement = {
   subagents: Tokens;
   bySkill: Record<string, Tokens>;
   newFrictions: number | null;
+  frictions: SubmittedFriction[];
 };
+
+/** One friction's fields as the run last sent them to `submit_frictions`. */
+export type SubmittedFriction = { title: unknown; impact: unknown; severity: unknown; affectedSessionCount: unknown };
 
 const SETUP_COMMAND = "<command-message>quotient:setup</command-message>";
 const FINISH_TOOL = /__finish_setup_run$/;
+const SUBMIT_TOOL = /__submit_frictions$/;
 const SUMMARY_TOOL = /^mcp__quotient__setup_summary$/;
 
 /**
@@ -101,22 +106,68 @@ function replyTo(
 }
 
 /**
+ * Parses the JSON object in a tool result's content, which is either text or
+ * text blocks.
+ * @param content - The tool_result block's content.
+ * @returns The first part that parses as a JSON object, or undefined.
+ */
+function jsonReply(content: unknown): Record<string, unknown> | undefined {
+  const parts = Array.isArray(content) ? (content as { text?: unknown }[]) : [{ text: content }];
+  for (const part of parts) {
+    try {
+      const reply: unknown = JSON.parse(String(part.text));
+      if (typeof reply === "object" && reply !== null && !Array.isArray(reply)) return reply as Record<string, unknown>;
+    } catch {
+      // Not the JSON reply.
+    }
+  }
+  return undefined;
+}
+
+/**
  * Reads `newCount` from the reply to the run's `finish_setup_run` call.
  * @param lines - Every line of the run.
  * @returns The count, or null when the run never finished.
  */
 function newFrictions(lines: readonly Record<string, unknown>[]): number | null {
-  const content = replyTo(lines, FINISH_TOOL)?.block.content;
-  const parts = Array.isArray(content) ? (content as { text?: unknown }[]) : [{ text: content }];
-  for (const part of parts) {
-    try {
-      const reply = JSON.parse(String(part.text)) as { newCount?: unknown };
-      if (typeof reply.newCount === "number") return reply.newCount;
-    } catch {
-      // Not the JSON reply.
+  const newCount = jsonReply(replyTo(lines, FINISH_TOOL)?.block.content)?.newCount;
+  return typeof newCount === "number" ? newCount : null;
+}
+
+/**
+ * Lists each friction the run sent to `submit_frictions`, as last sent. An
+ * update carries the `frictionId` that its original's reply gave, at the
+ * original's index, so the two are matched by that id; a friction with no id
+ * is matched by its title.
+ * @param lines - Every line of the run.
+ * @returns The frictions, in the order first sent.
+ */
+function submittedFrictions(lines: readonly Record<string, unknown>[]): SubmittedFriction[] {
+  const results = new Map<unknown, unknown>();
+  for (const line of lines) {
+    for (const b of blocks(line)) if (b.type === "tool_result") results.set(b.tool_use_id, b.content);
+  }
+  const seen = new Set<unknown>();
+  const byKey = new Map<unknown, SubmittedFriction>();
+  for (const line of lines) {
+    for (const call of blocks(line)) {
+      if (call.type !== "tool_use" || !SUBMIT_TOOL.test(String(call.name)) || seen.has(call.id)) continue;
+      seen.add(call.id);
+      const sent = (call.input as { frictions?: unknown } | undefined)?.frictions;
+      const replies = jsonReply(results.get(call.id))?.frictions;
+      if (!Array.isArray(sent)) continue;
+      sent.forEach((friction: Record<string, unknown>, i) => {
+        const replyId = Array.isArray(replies) ? (replies[i] as { frictionId?: unknown } | undefined)?.frictionId : undefined;
+        const titleKey = `title:${String(friction.title)}`;
+        const key = friction.frictionId ?? replyId ?? titleKey;
+        // A refused call has no ids; its corrected retry replaces it.
+        if (key !== titleKey) byKey.delete(titleKey);
+        const { title, impact, severity, affectedSessionCount } = friction;
+        byKey.set(key, { title, impact, severity, affectedSessionCount });
+      });
     }
   }
-  return null;
+  return [...byKey.values()];
 }
 
 /**
@@ -140,12 +191,17 @@ export function measureSetup(files: readonly TranscriptFile[]): SetupMeasurement
   });
   const bySkill: Record<string, Tokens> = {};
   for (const skill of new Set(rows.map((r) => r.skill))) bySkill[skill] = sum(rows.filter((r) => r.skill === skill));
+  const inRun = lines.filter((line) => {
+    const at = Date.parse(String(line.timestamp));
+    return at >= begin && at <= end;
+  });
   return {
     wallSeconds: Math.round((end - begin) / 1000),
     total: sum(rows),
     subagents: sum(rows.filter((r) => r.isSubagent)),
     bySkill,
     newFrictions: newFrictions(lines),
+    frictions: submittedFrictions(inRun),
   };
 }
 
