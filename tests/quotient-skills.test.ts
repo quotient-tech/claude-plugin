@@ -329,6 +329,24 @@ test("find-solutions: searches the user settings and never reads them whole", ()
   assert.match(body, /list what's in it once/);
 });
 
+// An answer without a fix hides the friction from the operator for good, so
+// one sent after a shallow or refused search loses a fix their sessions hold.
+test("find-solutions: answers without a fix only after searching the setup and each recent project folder", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /Any names after the run id are the project folders with a session from the last two weeks/);
+  // Glob lists files oldest first and stops at 100, so a Glob of every
+  // transcript leaves out the newest sessions.
+  assert.match(body, /Glob lists files oldest first and shows at most 100/);
+  assert.match(body, /Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it/);
+});
+
+test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
+  const { body } = skill("find-solutions");
+  assert.match(body, /A search quotient refuses searched nothing/);
+  assert.match(body, /leave that friction out of the page's answers: Quotient offers it again next time/);
+  assert.match(body, /weren't able to find a solution.*still send its answer/);
+});
+
 test("find-solutions: reports how many answers were new, had a fix, or were refused", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /`recorded`/);
@@ -1186,7 +1204,7 @@ for (const name of ["find-solutions", "review-frictions"]) {
   test(`${name}: reads its arguments for a daily run`, () => {
     const { body } = skill(name);
     assert.match(body, /The arguments are: \$ARGUMENTS/);
-    assert.match(body, /If they are `daily` followed by a run id, this is a daily run/);
+    assert.match(body, /If they (are|start with) `daily` followed by a run id, this is a daily run/);
   });
 
   test(`${name}: a daily run never asks the operator anything`, () => {
