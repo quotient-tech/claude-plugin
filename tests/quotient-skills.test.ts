@@ -531,6 +531,11 @@ test("setup: after each batch, sends its frictions in one call, then records its
   const send = steps.indexOf("1. Send all its frictions to `submit_frictions`");
   const record = steps.indexOf("2. Then call `record_setup_progress`");
   assert.ok(send > 0 && record > send, "the batch's frictions must be sent before its progress is recorded");
+  // A failed send stops setup, and the batch must stay unrecorded so a resumed run reviews it again.
+  assert.ok(
+    steps.includes("Wait for every `submit_frictions` reply first: never send `record_setup_progress` in the same message as a `submit_frictions` call, so a batch whose frictions weren't stored is never recorded."),
+    "progress may be sent alongside the frictions",
+  );
   assert.match(steps, /When it found none, skip the call\./);
   assert.match(
     body,
