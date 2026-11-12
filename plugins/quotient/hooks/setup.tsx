@@ -144,7 +144,6 @@ const CARD = {
 const SOLVED_CARD = {
   frictionTitle: "A TEAMMATE'S FRICTION",
   fixTitle: 'YOUR FIX',
-  suggested: 'Quotient will suggest these to your teammate in their next session',
   anonymous: '(you both stay anonymous)',
 } as const
 
@@ -539,9 +538,37 @@ function solvedTree(els: Els, check: SetupTeammateCheck) {
     <Box flexDirection="column" marginTop={1}>
       <Text bold>{`Your setup already solves ${count} of your teammates' frictions${intro}`}</Text>
       {example !== undefined && solvedCardTree(els, example)}
-      <Text>
-        <Text color="success">✓</Text> {SOLVED_CARD.suggested} <Text dimColor>{SOLVED_CARD.anonymous}</Text>
-      </Text>
+    </Box>
+  )
+}
+
+/**
+ * Draws what happens after an invited operator's setup and what they can do
+ * now. The suggestion item shows only when their setup solves a teammate's
+ * friction, and the list is numbered from what's shown.
+ *
+ * @param els - The surface's elements
+ * @param solvedCount - How many teammates' frictions the operator's setup solves
+ * @returns The closing sections
+ */
+function nextTree({ Box, Text }: Els, solvedCount: number) {
+  const suggestion = solvedCount === 1 ? 'it to your teammate' : `all ${solvedCount} to your teammates`
+  const notifyNumber = solvedCount > 0 ? 2 : 1
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold>What's next</Text>
+        {solvedCount > 0 && (
+          <Text>
+            {`1. Quotient will suggest ${suggestion} in their next session`} <Text dimColor>{SOLVED_CARD.anonymous}</Text>
+          </Text>
+        )}
+        <Text>{`${notifyNumber}. I'll notify you when I have some proven solutions for you to consider`}</Text>
+      </Box>
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold>What you can do now</Text>
+        <Text>Invite more teammates. The more the merrier.</Text>
+      </Box>
     </Box>
   )
 }
@@ -601,6 +628,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
         </Box>
       )}
       {teammateCheck !== undefined && teammateCheck.solvedCount > 0 && solvedTree(els, teammateCheck)}
+      {teammateCheck !== undefined && nextTree(els, teammateCheck.solvedCount)}
       {!isInvited && frictions > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Your teammates have probably already fixed some of these.</Text>

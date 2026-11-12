@@ -743,17 +743,14 @@ test("an invited operator sees one example of the teammates' frictions their set
     'Lint passes on commit but fails in CI',
     'YOUR FIX',
     FIXES[0],
-    '✓',
-    'Quotient will suggest these to your teammate in their next session',
-    '(you both stay anonymous)',
   ])
   expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(1)
-  for (const absent of [FIXES[1], FIXES[2], 'Their agents keep running into these', 'worked in']) {
+  for (const absent of [FIXES[1], FIXES[2], 'Their agents keep running into these', 'worked in', 'Quotient will suggest these']) {
     expect(shown).not.toContain(absent)
   }
 })
 
-test('the solved block colors its labels, check and notes as the mockup does', async ($, on) => {
+test('the solved block and closing sections color their labels, headings and notes as the mockup does', async ($, on) => {
   engine(on)
   await checkTeammates($, [['t1', FIXES[0]]])
 
@@ -763,8 +760,74 @@ test('the solved block colors its labels, check and notes as the mockup does', a
   expect(find("A TEAMMATE'S FRICTION")).toMatchObject({ color: 'error', bold: true })
   expect(find('YOUR FIX')).toMatchObject({ color: 'success', bold: true })
   expect(texts.filter(one => one.text === 'Lint passes on commit but fails in CI').at(-1)?.props.bold).toBe(true)
+  expect(find("What's next")?.bold).toBe(true)
+  expect(find('What you can do now')?.bold).toBe(true)
   expect(find('(you both stay anonymous)')?.dimColor).toBe(true)
-  expect(texts.filter(one => one.text === '✓').at(-1)?.props.color).toBe('success')
+})
+
+test("an invited operator's summary ends with what's next and what they can do now", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [
+    ['t1', FIXES[0]],
+    ['t2', FIXES[1]],
+    ['t3', FIXES[2]],
+  ])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, [
+    'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
+    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    FIXES[0],
+    "What's next",
+    '1. Quotient will suggest all 3 to your teammates in their next session',
+    '(you both stay anonymous)',
+    "2. I'll notify you when I have some proven solutions for you to consider",
+    'What you can do now',
+    'Invite more teammates. The more the merrier.',
+  ])
+  expect(shown.trimEnd().endsWith('Invite more teammates. The more the merrier.')).toBe(true)
+})
+
+test("one fix found is suggested to one teammate in what's next", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, [
+    '1. Quotient will suggest it to your teammate in their next session',
+    "2. I'll notify you when I have some proven solutions for you to consider",
+  ])
+})
+
+test("no fix found leaves only the notify line in what's next, numbered first", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [['t1', null]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ["What's next", "1. I'll notify you when I have some proven solutions for you to consider", 'What you can do now'])
+  expect(shown).not.toContain('2. ')
+})
+
+test("an invited operator with no new frictions still sees what's next and what they can do now", async ($, on) => {
+  engine(on)
+  await checkTeammates($, [])
+
+  const { shown } = await drawSummary($, { ...INVITED, frictions: 0, top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, ["What's next", "1. I'll notify you when I have some proven solutions", 'What you can do now', 'Invite more teammates.'])
+})
+
+test("an operator setup didn't check for teammates' fixes sees neither closing section", async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawSummary($, SAVED)
+
+  for (const absent of ["What's next", 'What you can do now', 'Invite more teammates']) {
+    expect(shown).not.toContain(absent)
+  }
 })
 
 test('the solved headline counts every answer with a fix, beyond the one card shown, and none without', async ($, on) => {
