@@ -142,7 +142,6 @@ const CARD = {
 // The solved block's fixed text. The teammate stays unnamed: Quotient never
 // says who raised a friction.
 const SOLVED_CARD = {
-  why: "Their agents keep running into these. Yours don't, because of something in your setup.",
   frictionTitle: "A TEAMMATE'S FRICTION",
   fixTitle: 'YOUR FIX',
   suggested: 'Quotient will suggest these to your teammate in their next session',
@@ -533,12 +532,13 @@ function solvedCardTree({ Box, Text }: Els, solved: SetupSolved) {
  */
 function solvedTree(els: Els, check: SetupTeammateCheck) {
   const { Box, Text } = els
-  const problems = check.solvedCount === 1 ? "1 of a teammate's problems" : `${check.solvedCount} of your teammates' problems`
+  const example = check.solved[0]
+  const count = check.solvedCount === 1 ? 'one' : String(check.solvedCount)
+  const intro = example === undefined ? '.' : check.solvedCount === 1 ? ':' : ". Here's an example:"
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text bold>{`Your setup already solves ${problems}.`}</Text>
-      <Text>{SOLVED_CARD.why}</Text>
-      {check.solved.map(solved => solvedCardTree(els, solved))}
+      <Text bold>{`Your setup already solves ${count} of your teammates' frictions${intro}`}</Text>
+      {example !== undefined && solvedCardTree(els, example)}
       <Text>
         <Text color="success">✓</Text> {SOLVED_CARD.suggested} <Text dimColor>{SOLVED_CARD.anonymous}</Text>
       </Text>
