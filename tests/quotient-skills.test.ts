@@ -452,6 +452,7 @@ test("setup: sends each batch's frictions in one submit_frictions call, each fri
 test("setup: splits a batch of more than 100 frictions into several calls", () => {
   const { body } = skill("setup");
   assert.match(body, /It takes at most 100, so a batch with more goes in several calls of up to 100/);
+  assert.match(body, /Send all its frictions to `submit_frictions`, in one call, or several of up to 100 when it found more:/);
 });
 
 // Later batches update a friction by the frictionId its reply gave, which
@@ -474,15 +475,16 @@ test("setup: sends an update to a friction with every field, as well as its fric
 });
 
 // Quotient's reply is an error when it refused every friction in the call,
-// and dropping them must not end the run.
-test("setup: goes on to record progress when Quotient refuses every friction in a call, and stops on any other error", () => {
+// and dropping them must not end the run. Progress recorded before a split
+// batch's last call would leave that call's frictions unsent for good.
+test("setup: sends the batch's remaining calls, then records progress, when Quotient refuses every friction in a call, and stops on any other error", () => {
   const { body } = skill("setup");
   assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, and stop/);
   assert.match(body, /The one exception is the `submit_frictions` error the Friction section describes/);
   const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
   assert.match(
     section,
-    /When Quotient refuses every friction in the call, it replies with an error that lists each friction's reason\. Don't send them again, and don't stop: go on to `record_setup_progress`\./,
+    /When Quotient refuses every friction in the call, it replies with an error that lists each friction's reason\. Don't send them again, and don't stop: send the batch's remaining calls, if any, then go on to `record_setup_progress`\./,
   );
 });
 
@@ -500,7 +502,7 @@ test("setup: rewrites the friction quotient's privacy check names, counting from
 test("setup: after each batch, sends its frictions in one call, then records its progress, also for batches it reviews itself", () => {
   const { body } = skill("setup");
   const steps = body.slice(body.indexOf("As soon as a batch is done"));
-  const send = steps.indexOf("1. Send all its frictions in one `submit_frictions` call");
+  const send = steps.indexOf("1. Send all its frictions to `submit_frictions`");
   const record = steps.indexOf("2. Then call `record_setup_progress`");
   assert.ok(send > 0 && record > send, "the batch's frictions must be sent before its progress is recorded");
   assert.match(steps, /When it found none, skip the call\./);
