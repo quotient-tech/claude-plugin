@@ -2,7 +2,7 @@
 name: setup
 description: Find the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and send each batch's frictions to Quotient as soon as it's reviewed, so teammates' agents can look for fixes.
 disable-model-invocation: true
-allowed-tools: mcp__plugin_quotient_agex__start_setup_run, mcp__claude_ai_Quotient__start_setup_run, mcp__plugin_quotient_agex__record_setup_progress, mcp__claude_ai_Quotient__record_setup_progress, mcp__plugin_quotient_agex__submit_frictions, mcp__claude_ai_Quotient__submit_frictions, mcp__plugin_quotient_agex__finish_setup_run, mcp__claude_ai_Quotient__finish_setup_run, mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, Skill(quotient:find-solutions), mcp__quotient__setup_start, mcp__quotient__setup_digest, mcp__quotient__setup_summary, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"), Bash(git remote get-url origin)
+allowed-tools: 'mcp__plugin_quotient_agex__start_setup_run, mcp__claude_ai_Quotient__start_setup_run, mcp__plugin_quotient_agex__record_setup_progress, mcp__claude_ai_Quotient__record_setup_progress, mcp__plugin_quotient_agex__submit_frictions, mcp__claude_ai_Quotient__submit_frictions, mcp__plugin_quotient_agex__finish_setup_run, mcp__claude_ai_Quotient__finish_setup_run, mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, Skill(quotient:find-solutions), mcp__quotient__setup_start, mcp__quotient__setup_digest, mcp__quotient__setup_summary, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"), Bash(git remote get-url origin)'
 ---
 
 ## Setup run

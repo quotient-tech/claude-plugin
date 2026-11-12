@@ -2,7 +2,7 @@
 // refuses, or that exits non-zero, makes the whole skill do nothing while
 // the run still reports success, so every injected command is checked here.
 import assert from "node:assert/strict";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
@@ -131,6 +131,23 @@ const SENDS_TEAMMATE_TEXT = ["find-solutions", "review-frictions", "setup"];
 
 test("every skill under plugins/quotient/skills is checked here", () => {
   assert.deepEqual(readdirSync(join(PLUGIN, "skills")).sort(), Object.keys(SKILL_TOOLS).sort());
+});
+
+// An unquoted value that holds ": " isn't valid YAML, so Claude Code can't read
+// the file's front matter. readFrontmatter is too lenient to notice, so this
+// reads the raw lines.
+test("every skill and agent quotes a front matter value that holds ': '", () => {
+  const files = [
+    ...readdirSync(join(PLUGIN, "skills")).map((name) => join(PLUGIN, "skills", name, "SKILL.md")),
+    ...readdirSync(join(PLUGIN, "agents")).map((name) => join(PLUGIN, "agents", name)),
+  ];
+  for (const file of files) {
+    const frontmatter = readFileSync(file, "utf8").split("\n---\n")[0] ?? "";
+    for (const line of frontmatter.split("\n").slice(1)) {
+      const value = /^[A-Za-z][\w-]*:\s*(.*)$/.exec(line)?.[1] ?? "";
+      assert.ok(/^["']/.test(value) || !value.includes(": "), `${file}: ${line.slice(0, 60)}`);
+    }
+  }
 });
 
 for (const [name, tools] of Object.entries(SKILL_TOOLS)) {
@@ -289,7 +306,7 @@ test("fix-friction: list-fixes can start it with the picked friction and fix IDs
   const { data, body } = skill("fix-friction");
   assert.equal(data["disable-model-invocation"], undefined);
   assert.match(data.when_to_use ?? "", /\/quotient:list-fixes/);
-  assert.equal(data["argument-hint"], '"[frictionId] [solutionId]"');
+  assert.equal(data["argument-hint"], '[frictionId] [solutionId]');
   assert.ok(body.includes("$ARGUMENTS"));
   const step5 = body.slice(body.indexOf("\n5. "), body.indexOf("\n6. "));
   assert.match(step5, /If the solution ID names one of this friction's teammate solutions without an `implementedAt`, that is the one: go to step 6 without asking/);

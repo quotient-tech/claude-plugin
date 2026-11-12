@@ -52,7 +52,7 @@ export function plural(count: number, noun: string, nouns: string = `${noun}s`):
 // (`ESC ]`) up to its BEL or ST, or a two-character escape.
 const ESCAPES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g
 // Control characters, and the marks that reorder how text around them reads.
-const CONTROLS = /[\x00-\x1f\x7f-\x9f؜‎‏‪-‮⁦-⁩]/g
+const CONTROLS = /[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
 
 /**
  * Makes text a teammate's agent wrote safe to draw: no escape sequence, no control

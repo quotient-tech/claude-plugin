@@ -56,29 +56,34 @@ Running a skill sends to whichever Quotient the plugin's MCP server points at, w
 
 ### Point quotient at dev or a local Quotient
 
-The plugin reaches Quotient through its MCP server, which is production (`https://mcp.getquotient.com/mcp`) unless `AGEX_MCP_URL` names another. Quotient engineers can get the dev URL, shown as `<dev-mcp-url>` below, from the team. To point a single session at dev:
-
-```sh
-AGEX_MCP_URL=<dev-mcp-url> claude --plugin-dir ~/path/to/claude-plugin/plugins/quotient
-```
-
-To use dev or a local Quotient in every session, so nothing you send reaches production, set it in the `env` block of `~/.claude/settings.json`:
+The plugin reaches Quotient through the MCP server in `plugins/quotient/.mcp.json`, which is production (`https://mcp.getquotient.com/mcp`). Quotient engineers can get the dev URL, shown as `<dev-mcp-url>` below, from the team. To point quotient at dev, set `url` in your clone's `plugins/quotient/.mcp.json`:
 
 ```json
 {
-  "env": {
-    "AGEX_MCP_URL": "<dev-mcp-url>"
+  "mcpServers": {
+    "agex": {
+      "type": "http",
+      "url": "<dev-mcp-url>"
+    }
   }
 }
 ```
 
-Use `http://localhost:3000/mcp` for a local Quotient. Remove the line to go back to production. An `AGEX_MCP_URL` saved in settings can win over the one on the command line, so remove it while you test with the command-line form.
+Then load your clone for the session:
+
+```sh
+claude --plugin-dir ~/path/to/claude-plugin/plugins/quotient
+```
+
+Use `http://localhost:3000/mcp` for a local Quotient. Only sessions that load your clone reach dev. A session that loads the installed plugin still reaches production.
+
+Never commit the changed URL. The directory links the plugin to Quotient's connector only through the production URL, and a test fails when `.mcp.json` names any other.
 
 Before you run a skill, start a new session, run `/mcp`, and check that `plugin:quotient:agex` shows the URL you expect and is connected and signed in. Each URL has its own sign-in. If the plugin's server isn't connected, the skills fall back to the `claude.ai Quotient` connector, which always reaches production.
 
 ### Measure and check `/quotient:setup`
 
-Three scripts run setup headless on made-up sessions with planted frictions (`plugins/quotient/tests/fixtures/setup-sessions/`, listed in its `MANIFEST.md`), against a local Quotient only. Each copies the sessions into `~/.claude/projects` for the run and removes them after. Drop the local Quotient's tables before each run, so every run starts the same.
+This section is for Quotient engineers, since it needs a local Quotient. Three scripts run setup headless on made-up sessions with planted frictions (`plugins/quotient/tests/fixtures/setup-sessions/`, listed in its `MANIFEST.md`), against a local Quotient only. The first two reach whichever Quotient `plugins/quotient/.mcp.json` names, and refuse to run unless it's local, so set it to `http://localhost:3000/mcp` as above first. Each copies the sessions into `~/.claude/projects` for the run and removes them after. Drop the local Quotient's tables before each run, so every run starts the same.
 
 - `node scripts/run-setup-fixture.ts [--permission-mode <mode>]` runs setup once and prints its time, tokens and new frictions.
 - `node scripts/check-setup.ts [--permission-mode <mode>]` checks that a run stopped after its first recorded batch resumes without reviewing that batch again, and that setup never reviews the session holding teammates' fixes. It exits non-zero on a failure. It also counts the status lines setup wrote while its reviewers ran, which quotient draws as nothing in a session.
