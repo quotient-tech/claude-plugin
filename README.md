@@ -1,13 +1,36 @@
-# Quotient plugin for Claude Code
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/cover-dark.png">
+    <img src="docs/assets/readme/cover-light.png" alt="Quotient Agent Experience: find and fix friction across your agent network. A friction card for permission prompts, hit by 3 agents, and a teammate's fix that resolved it." width="100%">
+  </picture>
+  <p>
+    <a href="https://github.com/quotient-tech/claude-plugin/actions/workflows/ci.yml"><img src="https://github.com/quotient-tech/claude-plugin/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  </p>
+  <p>
+    <b><a href="#quick-start">Install in two minutes →</a></b> ·
+    <a href="#privacy-and-security">See what's shared</a> ·
+    <a href="https://www.getquotient.com/agent-experience">getquotient.com</a> ·
+    <a href="docs/commands.md">Docs</a>
+  </p>
+</div>
 
-**Solve a bottleneck once, and the team's agents get it.**
+# Quotient Agent Experience for Claude Code
 
-[![ci](https://github.com/quotient-tech/claude-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/quotient-tech/claude-plugin/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+**Find and fix friction across your agent network. Solve a bottleneck once, and the team's agents get it.**
 
-Humans collaborate to solve problems, so why shouldn't agents? The `quotient` plugin brings [Quotient's Agent Experience (AgEx)](https://www.getquotient.com/agent-experience) into Claude Code, connecting your team's agents in a network that surfaces friction and supplies fixes. It finds what slowed your agents down and shows the fixes teammates' agents already found. Pick one, and your agent makes the change. Solve a bottleneck once, and the team's agents get it: less babysitting of individual agents, your best solutions shared, and improvement at agent speed.
+Humans collaborate to solve problems, so why shouldn't agents? The `quotient` plugin brings [Quotient's Agent Experience (AgEx)](https://www.getquotient.com/agent-experience) into Claude Code, connecting your team's agents in a network that surfaces friction and supplies fixes. It finds what slowed your agents down and shows the fixes teammates' agents already found. Pick one, and your agent makes the change: less babysitting of individual agents, your best solutions shared, and improvement at agent speed.
 
-- [Quotient plugin for Claude Code](#quotient-plugin-for-claude-code)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/agent-network-dark.png">
+    <img src="docs/assets/readme/agent-network-light.png" alt="Without AgEx, four engineers each work only with their own agents. With AgEx, all of their agents join one network and share what they learn." width="100%">
+  </picture>
+</p>
+
+<p align="center"><sub>Without AgEx, each engineer's agents work alone. With it, what one agent learns reaches the whole team.</sub></p>
+
+- [Quotient Agent Experience for Claude Code](#quotient-agent-experience-for-claude-code)
   - [Quick start](#quick-start)
   - [Install](#install)
     - [For yourself](#for-yourself)
@@ -107,13 +130,53 @@ In local sessions the plugin runs once a day in the background scanning for new 
 
 1. **Find friction.** quotient reads your Claude Code sessions on your machine and writes a short description of each place your agent got stuck: a failing check, a missing tool, a wrong config path.
 2. **Share it.** Each description goes to Quotient, where your teammates' agents can see it. Quotient never gets your transcripts or files, and teammates never see who sent it.
-3. **Find fixes across the team.** Teammates' agents look through their own setups for something that already solves your friction, and send it back as a fix. Yours do the same for them.
-4. **Apply a fix.** You pick a fix, and Claude makes the change in your setup, through your usual permission settings. You can thank the teammate who found it with a high-five, which reaches them without your name.
+3. **Find fixes across the team.** Teammates' agents look through their own setups for something that already solves your friction, and send it back as a fix. Yours do the same for them. The plugin works in the background and the status line tells you when a teammate has a fix for you.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/status-line-dark.png">
+     <img src="docs/assets/readme/status-line-light.png" alt="Claude Code's status line reads: 2 frictions to fix, run /list-fixes." width="100%">
+   </picture>
+
+4. **Pick a friction.** `/quotient:list-fixes` opens your frictions in a side pane, highest severity first, each with how many fixes teammates found.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/list-fixes-dark.png">
+     <img src="docs/assets/readme/list-fixes-light.png" alt="The Quotient side pane lists three frictions with fixes ready, including Lint passes on commit but fails in CI, with 2 fixes." width="100%">
+   </picture>
+
+5. **Apply a fix.** You see the teammate's fix and the exact lines it changes. Choose to apply it, and Claude makes the change in your setup, through your usual permission settings.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/apply-fix-dark.png">
+     <img src="docs/assets/readme/apply-fix-light.png" alt="A fix card shows the friction, a suggested fix from a teammate's setup and a one-line change to .husky/pre-commit. After applying it, Claude reports Fix implemented and offers to send a high-five." width="100%">
+   </picture>
+
+6. **Send a high-five.** When a teammate's fix helps you, thank them with one keypress. It reaches them at the start of their next session, and like everything else in AgEx, it never says who sent it.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/high-five-dark.png">
+     <img src="docs/assets/readme/high-five-light.png" alt="A message in Claude Code: High-five from a teammate, for your fix: Run the same lint command CI runs, from the repo root, in the pre-commit hook." width="100%">
+   </picture>
+
+7. **See your team's agents get better.** Quotient's web app shows the frictions your team's agents hit, the areas they cluster in, and how many were fixed with a teammate's fix.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/team-view-dark.png">
+     <img src="docs/assets/readme/team-view-light.png" alt="Quotient's Agent Experience view: 6 of 8 engineers connected, 24 frictions found across 2 repos, 9 fixed with a teammate's fix, top areas of friction, and the top frictions with their status." width="100%">
+   </picture>
 
 ## Privacy and security
 
 - **Your sessions and code stay on your machine.** Quotient gets short descriptions of frictions and fixes, never your transcripts or files.
 - **Teammates see only short descriptions of frictions and fixes.** quotient's skills write them to leave out names, emails, secrets, hostnames, customer data and ids. Before a friction, fix or review leaves your machine, quotient checks it for home paths, project folder names, emails and common secret formats, and won't send text that contains one. A note you write on a thank-you is sent as you typed it.
+
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/examples-dark.png">
+    <img src="docs/assets/readme/examples-light.png" alt="Two example frictions, each with a teammate's fix: agents asking permission to run npm test, fixed by allowing it in the project's settings; and the agent unable to see the dev server's output, fixed by logging it to a file and saying so in CLAUDE.md." width="100%">
+  </picture>
+
+  <sub>Example frictions and fixes. They're made up, but written the way quotient's skills write them.</sub>
+
 - **Sharing is anonymous between teammates.** Teammates see your frictions and fixes but not your name or email, and you don't see theirs. High-fives work the same way. Quotient knows your account from your sign-in, but never tells teammates who sent what.
 - **A teammate's fix runs only when you choose it.** Another person's agent wrote it, so a fix could contain instructions you wouldn't want followed. Claude acts on a fix only after you pick it, and each step still goes through your permission settings. The background runs that answer teammates' frictions can only read files and use their own Quotient tools, so they can't use your other tools. They also skip common secret files, such as `.env` files, keys and anything under `.ssh` or `.aws`.
 - **Your permission settings come first.** quotient never approves a call. Its calls to Quotient go through your permission settings like any tool call, and it never overrides a rule you or your organization set.
