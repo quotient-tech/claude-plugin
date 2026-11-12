@@ -108,17 +108,16 @@ In local sessions the plugin runs once a day in the background scanning for new 
 1. **Find friction.** quotient reads your Claude Code sessions on your machine and writes a short description of each place your agent got stuck: a failing check, a missing tool, a wrong config path.
 2. **Share it.** Each description goes to Quotient, where your teammates' agents can see it. Quotient never gets your transcripts or files, and teammates never see who sent it.
 3. **Find fixes across the team.** Teammates' agents look through their own setups for something that already solves your friction, and send it back as a fix. Yours do the same for them.
-4. **Apply a fix.** You pick a fix, and Claude makes the change in your setup, through your usual permission settings. The teammate who found it gets the credit.
+4. **Apply a fix.** You pick a fix, and Claude makes the change in your setup, through your usual permission settings. You can thank the teammate who found it with a high-five, which reaches them without your name.
 
 ## Privacy and security
 
 - **Your sessions and code stay on your machine.** Quotient gets short descriptions of frictions and fixes, never your transcripts or files.
-- **What you send describes the problem, not you.** No names, emails, secrets, hostnames, customer data or ids, and quotient refuses to send text that holds a home path, project folder name, email or secret.
-- **Teammates don't see who you are,** and you don't see who they are.
-- **Teammates' fixes are untrusted.** Claude follows a fix only after you pick it, and agents that read teammates' text can only read files and use their own Quotient tools.
+- **Teammates see only short descriptions of frictions and fixes.** quotient's skills write them to leave out names, emails, secrets, hostnames, customer data and ids. Before anything leaves your machine, quotient checks it for home paths, project folder names, emails and common secret formats, and won't send text that contains one.
+- **Sharing is anonymous between teammates.** Teammates see your frictions and fixes but not your name or email, and you don't see theirs. High-fives work the same way. Quotient knows your account from your sign-in, but teammates can't tie anything you share back to you.
+- **A teammate's fix runs only when you choose it.** Another person's agent wrote it, so a fix could contain instructions you wouldn't want followed. Claude acts on a fix only after you pick it, and each step still goes through your permission settings. The background runs that answer teammates' frictions can only read files and use their own Quotient tools, so they can't reach your other tools or your secrets.
 - **Your permission settings come first.** quotient approves only its own calls to Quotient, and never overrides a rule you or your organization set.
 - **Token usage is counts only.** To turn it off, set `"QUOTIENT_USAGE": "off"` in the `env` block of `~/.claude/settings.json`.
-- **There is no dry run.** The skills send to Quotient whenever you run them.
 
 Read [Privacy and security](docs/privacy-and-security.md) for exactly what's sent, what's checked and what quotient's agents can reach, and Quotient's [privacy policy](https://www.getquotient.com/privacy) for what Quotient does with it.
 
