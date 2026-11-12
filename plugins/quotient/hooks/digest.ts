@@ -8,11 +8,16 @@
 export type TranscriptLine = { n: number; text: string | null; bytes: number }
 
 // How a digest entry is kept when the digest runs over its budget: `keep`
-// entries stay, `text` (the agent's own words) goes next, and `call` (a
-// plain successful tool call) goes first.
-type Tier = 'keep' | 'text' | 'call'
+// entries stay, `call` (a plain successful tool call) goes first, then
+// `text` (the agent's own words), then `repeat` (a call that repeats an
+// earlier one, which a run log can hold by the hundred).
+type Tier = 'keep' | 'repeat' | 'text' | 'call'
 type Entry = { n: number; tier: Tier; text: string }
 type Call = { n: number; name: string; input: string }
+// How a digest marks and names what its entries are numbered by.
+type Unit = { mark: string; name: string }
+const LINE: Unit = { mark: 'L', name: 'line' }
+const EVENT: Unit = { mark: 'E', name: 'event' }
 
 /** The most characters a digest holds: about 4K tokens, so a reviewer can hold ten. */
 export const DIGEST_BUDGET = 16_000
@@ -158,17 +163,23 @@ function called(call: Call, result: string, isError: boolean, seen: Map<string, 
  * @param entries - The entries, in line order
  * @param budget - The most characters
  * @param total - How many lines the transcript has
+ * @param unit - How an entry's number is marked and named, a transcript line by default
  * @returns The digest
  */
-function fit(header: string, entries: readonly Entry[], budget: number, total: number): string {
-  const render = (kept: readonly Entry[], note: string) => [header, ...kept.map(entry => `L${entry.n} ${entry.text}`), note].filter(Boolean).join('\n')
+function fit(header: string, entries: readonly Entry[], budget: number, total: number, unit: Unit = LINE): string {
+  const render = (kept: readonly Entry[], note: string) =>
+    [header, ...kept.map(entry => `${unit.mark}${entry.n} ${entry.text}`), note].filter(Boolean).join('\n')
   let kept = [...entries]
-  const cut = { call: 0, text: 0 }
+  const cut = { call: 0, text: 0, repeat: 0 }
   const note = () => {
-    const parts = [cut.call > 0 ? `${cut.call} plain tool calls` : '', cut.text > 0 ? `${cut.text} agent messages` : ''].filter(Boolean)
+    const parts = [
+      cut.call > 0 ? `${cut.call} plain tool calls` : '',
+      cut.text > 0 ? `${cut.text} agent messages` : '',
+      cut.repeat > 0 ? `${cut.repeat} repeated calls` : '',
+    ].filter(Boolean)
     return parts.length === 0 ? '' : `(cut to fit: ${parts.join(' and ')})`
   }
-  for (const tier of ['call', 'text'] as const) {
+  for (const tier of ['call', 'text', 'repeat'] as const) {
     if (render(kept, note()).length <= budget) return render(kept, note())
     cut[tier] = kept.filter(entry => entry.tier === tier).length
     kept = kept.filter(entry => entry.tier !== tier)
@@ -179,12 +190,12 @@ function fit(header: string, entries: readonly Entry[], budget: number, total: n
   let size = header.length + note().length + 60
   let end = 0
   for (const entry of kept) {
-    size += `L${entry.n} ${entry.text}`.length + 1
+    size += `${unit.mark}${entry.n} ${entry.text}`.length + 1
     if (size > budget) break
     end += 1
   }
   const stop = kept[end - 1]?.n ?? 0
-  return render(kept.slice(0, end), `${note()} (digest stops at line ${stop} of ${total})`.trim())
+  return render(kept.slice(0, end), `${note()} (digest stops at ${unit.name} ${stop} of ${total})`.trim())
 }
 
 // Shortens what RemoteTrigger returns while /quotient:setup reads cloud
@@ -199,8 +210,11 @@ const LIST_PROMPT = 600
 const GET_PROMPT = 20_000
 // How long each run-log event's text may be, by its kind.
 const EVENT_CHARS = { error: 400, user: 600, result: 400, assistant: 200, toolUse: 160, toolResult: 100, other: 200 }
+// How many lines above a log's first event it keeps, such as the line that says how many events it shows.
+const MAX_PREAMBLE = 2
 const LIST_NOTE = 'quotient shortened this reply for setup: each routine keeps the fields setup reads'
-const LOG_NOTE = "(quotient shortened this log for setup: each event is cut to one line, longest for errors and the operator's prompts)"
+const LOG_NOTE =
+  "(quotient digested this log for setup: when it runs long, plain tool events go first, then the agent's text, then repeated calls; errors and the operator's prompts are kept longest, and the run's result always)"
 
 type Routine = Record<string, unknown>
 
@@ -277,17 +291,55 @@ function eventChars(kind: string): number {
 }
 
 /**
- * Shortens a `get_run_log` reply's event lines, `[time] kind: text`, keeping every event.
+ * Tells how a run-log event is kept when its digest runs over budget:
+ * errors, the operator's prompts and the run's result always stay.
+ *
+ * @param kind - The event's kind, such as `tool_result ERROR` or `tool_use Bash`
+ * @returns Its tier
+ */
+function eventTier(kind: string): Tier {
+  if (/ERROR/.test(kind) || kind === 'user' || kind === 'result') return 'keep'
+  return kind.startsWith('tool_use') || kind.startsWith('tool_result') ? 'call' : 'text'
+}
+
+/**
+ * Builds a digest of a `get_run_log` reply's event lines, `[time] kind: text`,
+ * numbering each event from 1, as a session's digest numbers its lines. Lines
+ * before the first event stay as they are; a line that isn't an event joins
+ * the event above it.
  *
  * @param summary - The reply's `summary`
- * @returns The shorter log, with a first line saying it was shortened
+ * @param budget - The most characters the digest may hold
+ * @returns The digest, with a first line saying it was digested
  */
-export function compactRunLog(summary: string): string {
-  const lines = summary.split('\n').map(line => {
-    const event = /^\[\d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d)[^\]]*\] ([^:]{1,60}): ?(.*)$/s.exec(line)
-    if (event === null) return clip(line, EVENT_CHARS.other)
-    const [, time, kind, text] = event as unknown as [string, string, string, string]
-    return `[${time}] ${kind}: ${clip(text, eventChars(kind))}`
+export function runLogDigest(summary: string, budget = DIGEST_BUDGET): string {
+  const preamble: string[] = []
+  const events: { time: string; kind: string; text: string }[] = []
+  for (const line of summary.split('\n')) {
+    const event = /^\[\d{4}-\d\d-\d\dT(\d\d:\d\d:\d\d)[^\]]*\] ([^:]{1,60}): ?(.*)$/.exec(line)
+    const last = events.at(-1)
+    if (event !== null) events.push({ time: event[1] as string, kind: event[2] as string, text: event[3] as string })
+    else if (last !== undefined) last.text += `\n${line}`
+    else if (line.trim() !== '' && preamble.length < MAX_PREAMBLE) preamble.push(clip(line, EVENT_CHARS.other))
+  }
+  const seen = new Map<string, number>()
+  const entries: Entry[] = events.map(({ time, kind, text }, i) => {
+    const n = i + 1
+    // A repeat is the same call in full; only what's shown is clipped.
+    const key = `${kind}: ${text}`
+    const earlier = kind.startsWith('tool_use') ? seen.get(key) : undefined
+    if (kind.startsWith('tool_use') && earlier === undefined) seen.set(key, n)
+    const tier: Tier = earlier === undefined ? eventTier(kind) : 'repeat'
+    const shown = `${kind}: ${clip(text, eventChars(kind))}`
+    return { n, tier, text: `[${time}] ${shown}${earlier === undefined ? '' : ` (repeats E${earlier})`}` }
   })
-  return [LOG_NOTE, ...lines].join('\n')
+  const header = [LOG_NOTE, ...preamble].join('\n')
+  const digested = fit(header, entries, budget, events.length, EVENT)
+  // When even what must stay runs over budget, the cut keeps the earliest
+  // events; the run's final result is kept apart so it's never the one cut.
+  const final = entries.findLast(entry => events[entry.n - 1]?.kind === 'result')
+  const finalLine = final === undefined ? '' : `${EVENT.mark}${final.n} ${clip(final.text, CUT_CHARS)}`
+  if (final === undefined || digested.includes(`\n${EVENT.mark}${final.n} `)) return digested
+  const rest = entries.filter(entry => entry !== final)
+  return `${fit(header, rest, budget - finalLine.length - 1, events.length, EVENT)}\n${finalLine}`
 }
