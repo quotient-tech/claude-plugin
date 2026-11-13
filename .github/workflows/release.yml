@@ -131,9 +131,9 @@ jobs:
       - name: "Tests: manifests, skills, scripts and setup fixture"
         run: npm test
 
-      # main's ruleset requires a pull request, and this App is the only actor
-      # it lets push directly. The App's key is a secret on the release
-      # environment, so only an approved run from main can create the token.
+      # main's ruleset requires a pull request, and this App is on its bypass
+      # list. The App's key is a secret on the release environment, so only an
+      # approved run from main can create the token.
       - name: Create a token that can push to main
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
