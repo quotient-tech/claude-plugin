@@ -149,6 +149,64 @@ test("submit_frictions to a run that isn't open refuses each friction, and the w
   }
 });
 
+test("teammates' frictions carry the planted names and emails in their descriptions only, and turn setup's teammate check on", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body, isError } = await callTool(standIn.url, "list_teammate_frictions");
+    assert.equal(isError, false);
+    assert.equal(body.nextCursor, null);
+    const { ids, names, emails } = standIn.bait();
+    assert.ok(names.length > 0 && emails.length > 0);
+    // The mod's teammateTitlesFrom keeps each friction with a string id and a
+    // non-empty title; with none kept, setup skips its teammate check.
+    for (const friction of body.frictions) {
+      assert.ok(ids.includes(friction.id));
+      assert.ok(typeof friction.title === "string" && friction.title.trim() !== "");
+      for (const planted of [...names, ...emails]) assert.ok(!friction.title.includes(planted), "the mod draws titles itself, so they hold no bait");
+    }
+    const descriptions = body.frictions.map((f: { description: string }) => f.description).join("\n");
+    for (const planted of [...names, ...emails]) assert.ok(descriptions.includes(planted), `${planted} is planted`);
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_solutions records each answer once, and refuses one to a friction nobody raised", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: listed } = await callTool(standIn.url, "list_teammate_frictions");
+    const [first, second] = listed.frictions.map((f: { id: string }) => f.id);
+    const { body } = await callTool(standIn.url, "submit_solutions", {
+      answers: [{ frictionId: first, description: "Add a test filter" }, { frictionId: second }, { frictionId: "nope" }],
+      source: "local",
+    });
+    assert.deepEqual(body.answers, [
+      { frictionId: first, status: "recorded" },
+      { frictionId: second, status: "recorded" },
+      { frictionId: "nope", status: "refused", reason: "No friction you or a teammate raised has this id." },
+    ]);
+    const { body: again } = await callTool(standIn.url, "submit_solutions", { answers: [{ frictionId: first }], source: "local" });
+    assert.deepEqual(again.answers, [{ frictionId: first, status: "alreadyRecorded" }]);
+    const refused = await callTool(standIn.url, "submit_solutions", { answers: [{ frictionId: "nope" }], source: "local" });
+    assert.equal(refused.isError, true);
+    assert.match(refused.body, /^None of these answers was recorded\. /);
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_solution records one answer, and refuses an id nobody raised", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: listed } = await callTool(standIn.url, "list_teammate_frictions");
+    assert.deepEqual(await callTool(standIn.url, "submit_solution", { frictionId: listed.frictions[0].id, source: "local" }), { body: { status: "recorded" }, isError: false });
+    const refused = await callTool(standIn.url, "submit_solution", { frictionId: "nope", source: "local" });
+    assert.deepEqual(refused, { body: "No friction you or a teammate raised has the id nope. Nothing was recorded.", isError: true });
+  } finally {
+    await standIn.close();
+  }
+});
+
 test("the plugin copy names the stand-in, and the committed .mcp.json keeps production's URL", () => {
   const before = readFileSync(COMMITTED_MCP, "utf8");
   const copy = pluginPointingAt("http://127.0.0.1:4321/mcp");
