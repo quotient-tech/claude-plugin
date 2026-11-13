@@ -28,6 +28,7 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment: release
     env:
       # Keep in step with CLAUDE_CODE_VERSION in ci.yml.
       CLAUDE_CODE_VERSION: 2.1.307
