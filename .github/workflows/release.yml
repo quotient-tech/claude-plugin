@@ -2,7 +2,7 @@
 # the marketplace serves the plugin at the tag its entry names, so users get
 # exactly what a release tagged. Pull requests leave the version alone; this
 # workflow sets it, points the marketplace at the new tag, and runs the checks
-# CI would, because a push made with GITHUB_TOKEN doesn't start ci.yml.
+# CI would before anything is pushed.
 #
 # The commit and tag are pushed together, so main never names a tag that
 # doesn't exist, and nothing is pushed if any step before that fails.
@@ -131,9 +131,19 @@ jobs:
       - name: "Tests: manifests, skills, scripts and setup fixture"
         run: npm test
 
+      # main's ruleset requires a pull request, and this App is the only actor
+      # it lets push directly. The App's key is a secret on the release
+      # environment, so only an approved run from main can create the token.
+      - name: Create a token that can push to main
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Commit, tag and push
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
