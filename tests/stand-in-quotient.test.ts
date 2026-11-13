@@ -78,7 +78,7 @@ async function callTool(url: string, name: string, args: Record<string, unknown>
   return { body, isError: result.isError === true };
 }
 
-const SETUP_FRICTION = { description: "Tests ran twice", frequency: "3 of 14 sessions", impact: "time", severity: "low", tags: [], origin: "setup" };
+const SETUP_FRICTION = { description: "Tests ran twice", frequency: "3 of 14 sessions", impact: "TIME", severity: "low", tags: [], origin: "setup" };
 
 test("a second start_setup_run resumes the open run with the sources and frictions it recorded", async () => {
   const standIn = await startStandIn();
@@ -202,6 +202,84 @@ test("submit_solution records one answer, and refuses an id nobody raised", asyn
     assert.deepEqual(await callTool(standIn.url, "submit_solution", { frictionId: listed.frictions[0].id, source: "local" }), { body: { status: "recorded" }, isError: false });
     const refused = await callTool(standIn.url, "submit_solution", { frictionId: "nope", source: "local" });
     assert.deepEqual(refused, { body: "No friction you or a teammate raised has the id nope. Nothing was recorded.", isError: true });
+  } finally {
+    await standIn.close();
+  }
+});
+
+const REVIEW_FRICTION = { ...SETUP_FRICTION, description: "The agent retried a failing build five times", origin: "review", sessionId: "s1" };
+
+test("list_my_frictions lists the operator's frictions as json, with a setup run's, and the ones submit_friction adds", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: before } = await callTool(standIn.url, "list_my_frictions", { format: "json", status: "open" });
+    assert.equal(before.nextCursor, null);
+    assert.ok(before.frictions.length > 0, "the operator has frictions for review-frictions to review");
+    for (const friction of before.frictions) {
+      assert.ok(standIn.bait().ids.includes(friction.id));
+      assert.deepEqual(friction.solutions, []);
+      assert.equal(friction.lastReviewedAt, null);
+    }
+    const { body: run } = await callTool(standIn.url, "start_setup_run");
+    const { body: inRun } = await callTool(standIn.url, "submit_frictions", { frictions: [{ ...SETUP_FRICTION, runId: run.runId }] });
+    const { body: submitted } = await callTool(standIn.url, "submit_friction", REVIEW_FRICTION);
+    assert.equal(submitted.status, "new");
+    const { body: after } = await callTool(standIn.url, "list_my_frictions", { format: "json" });
+    const ids = after.frictions.map((f: { id: string }) => f.id);
+    assert.ok(ids.includes(inRun.frictions[0].frictionId) && ids.includes(submitted.frictionId));
+    const { body: resumed } = await callTool(standIn.url, "start_setup_run");
+    assert.ok(!resumed.reportedFrictions.some((f: { id: string }) => f.id === inRun.frictions[0].frictionId), "a run's own frictions aren't reported outside it");
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("list_my_frictions as rows has no teammate fixes for the mod to show", async () => {
+  const standIn = await startStandIn();
+  try {
+    assert.deepEqual(await callTool(standIn.url, "list_my_frictions", { format: "rows" }), { body: { frictions: [], nextCursor: null }, isError: false });
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_friction updates a friction sent with its id, and finds one already reported by its description", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: first } = await callTool(standIn.url, "submit_friction", REVIEW_FRICTION);
+    assert.deepEqual((await callTool(standIn.url, "submit_friction", { ...REVIEW_FRICTION, frictionId: first.frictionId })).body, { status: "updated", frictionId: first.frictionId });
+    assert.deepEqual((await callTool(standIn.url, "submit_friction", { ...REVIEW_FRICTION, sessionId: "s2" })).body, { status: "alreadyReported", frictionId: first.frictionId });
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_review records a review of the operator's own friction, which leaves it out of notReviewedToday", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: listed } = await callTool(standIn.url, "list_my_frictions", { format: "json" });
+    const frictionId = listed.frictions[0].id;
+    assert.deepEqual((await callTool(standIn.url, "submit_review", { frictionId, outcome: "open", source: "local" })).body, { status: "recorded", outcome: "open" });
+    const { body: notToday } = await callTool(standIn.url, "list_my_frictions", { format: "json", notReviewedToday: true, source: "local" });
+    assert.ok(!notToday.frictions.some((f: { id: string }) => f.id === frictionId));
+    const { body: reviewed } = await callTool(standIn.url, "list_my_frictions", { format: "json" });
+    assert.equal(typeof reviewed.frictions.find((f: { id: string }) => f.id === frictionId).lastReviewedAt, "string");
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_review refuses an unknown friction, and a fix with no description, as Quotient does", async () => {
+  const standIn = await startStandIn();
+  try {
+    assert.deepEqual(await callTool(standIn.url, "submit_review", { frictionId: "nope", outcome: "open", source: "local" }), {
+      body: "None of your frictions has the id nope. Nothing was recorded.",
+      isError: true,
+    });
+    const { body: listed } = await callTool(standIn.url, "list_my_frictions", { format: "json" });
+    const fixed = await callTool(standIn.url, "submit_review", { frictionId: listed.frictions[0].id, outcome: "fixed", source: "local" });
+    assert.equal(fixed.isError, true);
+    assert.match(fixed.body, /needs a description/);
   } finally {
     await standIn.close();
   }

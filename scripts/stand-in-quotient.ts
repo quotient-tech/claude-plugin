@@ -36,15 +36,36 @@ export type StandIn = {
 type Severity = "high" | "medium" | "low";
 
 /** A setup run, while it's open. */
-type SetupRun = { runId: string; startedAt: string; reviewedSources: string[]; frictions: { id: string; description: string; severity: Severity }[] };
+type SetupRun = { runId: string; startedAt: string; reviewedSources: string[]; alreadyReported: Set<string> };
+
+/**
+ * One of the operator's own frictions, as list_my_frictions gives it, and
+ * where it was found, which the stand-in keeps to itself.
+ */
+type OwnFriction = {
+  id: string;
+  title: string | null;
+  description: string;
+  frequency: string;
+  impact: string;
+  severity: Severity;
+  tags: string[];
+  discoveredAt: string;
+  affectedSessionCount: number | null;
+  reviewedSessionCount: number | null;
+  solutions: never[];
+  lastReviewedAt: string | null;
+  lastCloudReviewedAt: string | null;
+  foundIn: { runId: string } | { sessionId: string } | null;
+};
 
 /** Everything one stand-in remembers, for as long as it runs. */
 type State = {
   calls: Call[];
   ids: string[];
   run: SetupRun | undefined;
-  /** The frictions the operator reported before, outside any setup run. */
-  reported: { id: string; description: string }[];
+  /** The operator's own frictions, oldest first. */
+  own: OwnFriction[];
   /** Teammates' frictions the operator hasn't answered, as list_teammate_frictions gives them. */
   teammates: Record<string, unknown>[];
   /** The ids of the frictions the operator has answered. */
@@ -120,9 +141,76 @@ const openRun = (state: State, runId: unknown): SetupRun | undefined => (state.r
  * @returns Whether Quotient knows it.
  */
 function isKnownFriction(state: State, frictionId: unknown): boolean {
-  const own = [...state.reported, ...(state.run?.frictions ?? [])].map((friction) => friction.id);
-  return [...state.teammates.map((friction) => friction.id), ...own].includes(frictionId as string);
+  return [...state.teammates, ...state.own].some((friction) => friction.id === frictionId);
 }
+
+/**
+ * Makes one of the operator's frictions from what submit_friction takes.
+ * @param id - Its id.
+ * @param sent - What the call sent.
+ * @param foundIn - The run or session it was found in.
+ * @returns The friction.
+ */
+function ownFriction(id: string, sent: Record<string, unknown>, foundIn: OwnFriction["foundIn"]): OwnFriction {
+  return {
+    id,
+    title: typeof sent.title === "string" ? sent.title : null,
+    description: String(sent.description),
+    frequency: String(sent.frequency),
+    impact: String(sent.impact),
+    severity: sent.severity as Severity,
+    tags: Array.isArray(sent.tags) ? (sent.tags as string[]) : [],
+    discoveredAt: new Date().toISOString(),
+    affectedSessionCount: typeof sent.affectedSessionCount === "number" ? sent.affectedSessionCount : null,
+    reviewedSessionCount: typeof sent.reviewedSessionCount === "number" ? sent.reviewedSessionCount : null,
+    solutions: [],
+    lastReviewedAt: null,
+    lastCloudReviewedAt: null,
+    foundIn,
+  };
+}
+
+/**
+ * Stores a friction the way Quotient does: one sent with its id, or with a
+ * description already found in the same run or session, updates that
+ * friction; one the operator reported elsewhere is already reported and
+ * isn't stored again; any other is new.
+ * @param state - The stand-in's state.
+ * @param sent - What the call sent.
+ * @param foundIn - The run or session it was found in.
+ * @returns What was done, and the friction's id.
+ */
+function storeFriction(state: State, sent: Record<string, unknown>, foundIn: { runId: string } | { sessionId: string }): { status: "new" | "updated" | "alreadyReported"; frictionId: string } {
+  const sameFinding = (friction: OwnFriction) => JSON.stringify(friction.foundIn) === JSON.stringify(foundIn);
+  const known = state.own.find((friction) => sameFinding(friction) && (friction.id === sent.frictionId || friction.description === sent.description));
+  if (known !== undefined) {
+    Object.assign(known, ownFriction(known.id, sent, foundIn));
+    return { status: "updated", frictionId: known.id };
+  }
+  const elsewhere = state.own.find((friction) => friction.description === sent.description);
+  if (elsewhere !== undefined) return { status: "alreadyReported", frictionId: elsewhere.id };
+  const friction = ownFriction(newId(state), sent, foundIn);
+  state.own.push(friction);
+  return { status: "new", frictionId: friction.id };
+}
+
+/**
+ * Lists the operator's frictions as list_my_frictions shows them, without
+ * where each was found.
+ * @param frictions - The frictions.
+ * @returns Their views.
+ */
+const views = (frictions: OwnFriction[]): Omit<OwnFriction, "foundIn">[] => frictions.map(({ foundIn: _, ...view }) => view);
+
+/**
+ * Tells whether a time falls on today, in UTC, as Quotient's
+ * `notReviewedToday` reads it.
+ * @param time - The time, or null.
+ * @returns Whether it's today.
+ */
+const isToday = (time: string | null): boolean => time !== null && time.slice(0, 10) === new Date().toISOString().slice(0, 10);
+
+const CLOUD_OUTCOMES = ["fixed", "no-longer-applies"];
 
 /**
  * Records an answer to a friction, as Quotient does: the first answer counts.
@@ -148,7 +236,7 @@ const FRICTION = {
     title: { type: "string" },
     description: { type: "string" },
     frequency: { type: "string" },
-    impact: { type: "string" },
+    impact: { type: "string", enum: ["SAFETY", "QUALITY", "BLOCKED", "OPERATOR_ATTENTION", "COST", "TIME"] },
     severity: { type: "string", enum: ["high", "medium", "low"] },
     tags: { type: "array", items: { type: "string" } },
     affectedSessionCount: { type: "number" },
@@ -191,15 +279,17 @@ const TOOLS: Record<string, Tool> = {
     description: "Start the signed-in user's setup run, or resume their unfinished one. Replies with the run's id, the sources it already reviewed, the frictions it already submitted, and the frictions the user reported outside it.",
     inputSchema: { type: "object", properties: { cursor: { type: "string" } } },
     answer(state) {
-      state.run ??= { runId: newId(state), startedAt: new Date().toISOString(), reviewedSources: [], frictions: [] };
-      const { runId, startedAt, reviewedSources, frictions } = state.run;
+      state.run ??= { runId: newId(state), startedAt: new Date().toISOString(), reviewedSources: [], alreadyReported: new Set() };
+      const { runId, startedAt, reviewedSources } = state.run;
+      const inRun = (friction: OwnFriction) => friction.foundIn !== null && "runId" in friction.foundIn && friction.foundIn.runId === runId;
+      const brief = ({ id, description }: OwnFriction) => ({ id, description });
       return ok({
         runId,
         startedAt,
         reviewedSources,
-        frictionsInRun: frictions.map(({ id, description }) => ({ id, description })),
+        frictionsInRun: state.own.filter(inRun).map(brief),
         joinedCompany: null,
-        reportedFrictions: state.reported,
+        reportedFrictions: state.own.filter((friction) => !inRun(friction)).map(brief),
         nextCursor: null,
       });
     },
@@ -225,14 +315,9 @@ const TOOLS: Record<string, Tool> = {
       const outcomes = ((args.frictions as Record<string, unknown>[] | undefined) ?? []).map((friction) => {
         const run = openRun(state, friction.runId);
         if (run === undefined) return { status: "refused", reason: unknownRun(friction.runId) };
-        const known = run.frictions.find((one) => one.id === friction.frictionId);
-        if (known !== undefined) {
-          Object.assign(known, { description: String(friction.description), severity: friction.severity as Severity });
-          return { status: "updated", frictionId: known.id };
-        }
-        const id = newId(state);
-        run.frictions.push({ id, description: String(friction.description), severity: friction.severity as Severity });
-        return { status: "new", frictionId: id };
+        const stored = storeFriction(state, friction, { runId: run.runId });
+        if (stored.status === "alreadyReported") run.alreadyReported.add(stored.frictionId);
+        return stored;
       });
       const reply = JSON.stringify({ frictions: outcomes });
       return outcomes.every((outcome) => outcome.status === "refused") ? refuse(`None of these frictions was recorded. ${reply}`) : ok({ frictions: outcomes });
@@ -245,8 +330,67 @@ const TOOLS: Record<string, Tool> = {
       const run = openRun(state, args.runId);
       if (run === undefined) return refuse(unknownRun(args.runId));
       state.run = undefined;
-      const count = (severity: Severity) => run.frictions.filter((one) => one.severity === severity).length;
-      return ok({ counts: { high: count("high"), medium: count("medium"), low: count("low"), other: 0 }, newCount: run.frictions.length, alreadyReportedCount: 0 });
+      const frictions = state.own.filter((friction) => friction.foundIn !== null && "runId" in friction.foundIn && friction.foundIn.runId === run.runId);
+      const count = (severity: Severity) => frictions.filter((one) => one.severity === severity).length;
+      return ok({ counts: { high: count("high"), medium: count("medium"), low: count("low"), other: 0 }, newCount: frictions.length, alreadyReportedCount: run.alreadyReported.size });
+    },
+  },
+  list_my_frictions: {
+    description: "List the signed-in user's own frictions from the last 30 days with the fixes found for them. Status `open` returns the frictions with no implemented fix, `withTeammateFix` the ones a teammate found a fix for, and `all` every one. Format `json` returns the frictions with their fixes, `rows` one row per friction with a teammate's fix. When `nextCursor` isn't null, call again with it for the next page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ["open", "withTeammateFix", "all"] },
+        format: { type: "string", enum: ["json", "rows", "table"] },
+        notReviewedToday: { type: "boolean" },
+        source: SOURCE,
+        cursor: { type: "string" },
+      },
+    },
+    answer(state, args) {
+      // No teammate has a fix for the operator's frictions here, so there are
+      // no rows, and withTeammateFix finds none.
+      if (args.format === "rows") return ok({ frictions: [], nextCursor: null });
+      if (args.format === "table") return refuse("The stand-in serves list_my_frictions only as json or rows.");
+      const reviewedAt = (friction: OwnFriction) => (args.source === "cloud" ? friction.lastCloudReviewedAt : friction.lastReviewedAt);
+      const listed = state.own.filter((friction) => args.status !== "withTeammateFix" && !(args.notReviewedToday === true && isToday(reviewedAt(friction))));
+      return ok({ frictions: views(listed), nextCursor: null });
+    },
+  },
+  submit_friction: {
+    description: "Submit one friction as the signed-in user's: from a setup run, with its `runId`, or found reviewing a session, with its `sessionId`. To update one already submitted in the same run or session, send its `frictionId`. Replies with `status` (`new`, `updated` or `alreadyReported`) and the friction's id.",
+    inputSchema: { type: "object", properties: { ...FRICTION.properties, sessionId: { type: "string" } }, required: FRICTION.required },
+    answer(state, args) {
+      if (typeof args.sessionId === "string") return ok(storeFriction(state, args, { sessionId: args.sessionId }));
+      const run = openRun(state, args.runId);
+      return run === undefined ? refuse(unknownRun(args.runId)) : ok(storeFriction(state, args, { runId: run.runId }));
+    },
+  },
+  submit_review: {
+    description: "Record a review of one of the signed-in user's own frictions. Outcome `fixed` or `no-longer-applies` needs a description. `teammate-fix` needs its solutionId. `open` records only that the friction was reviewed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        frictionId: { type: "string" },
+        outcome: { type: "string", enum: ["fixed", "no-longer-applies", "teammate-fix", "open"] },
+        description: { type: "string" },
+        solutionId: { type: "string" },
+        source: SOURCE,
+      },
+      required: ["frictionId", "outcome", "source"],
+    },
+    answer(state, args) {
+      const { frictionId, outcome, source } = args;
+      if (source === "cloud" && !CLOUD_OUTCOMES.includes(String(outcome))) return refuse("A cloud run records only frictions it fixed or that no longer apply. Leave this friction for a local run.");
+      if (CLOUD_OUTCOMES.includes(String(outcome)) && String(args.description ?? "").trim() === "") {
+        return refuse("A fixed or no-longer-applies review needs a description of what was fixed or why it no longer applies. Nothing was recorded.");
+      }
+      if (outcome === "teammate-fix" && args.solutionId === undefined) return refuse("A teammate-fix review needs the solutionId of the teammate's fix that was implemented. Nothing was recorded.");
+      const friction = state.own.find((one) => one.id === frictionId);
+      if (friction === undefined) return refuse(`None of your frictions has the id ${String(frictionId)}. Nothing was recorded.`);
+      if (outcome === "teammate-fix") return refuse(`Friction ${String(frictionId)} has no teammate's fix with the id ${String(args.solutionId)}. Nothing was recorded.`);
+      friction[source === "cloud" ? "lastCloudReviewedAt" : "lastReviewedAt"] = new Date().toISOString();
+      return ok({ status: "recorded", outcome });
     },
   },
 };
@@ -317,30 +461,30 @@ async function serve(state: State, request: IncomingMessage, response: ServerRes
  * @returns The running stand-in.
  */
 export async function startStandIn(): Promise<StandIn> {
-  const state: State = { calls: [], ids: [], run: undefined, reported: [], teammates: [], answered: new Set() };
-  state.reported = [
-    { id: newId(state), description: "The agent re-ran the whole test suite after every one-line change" },
-    { id: newId(state), description: "The agent asked for permission to read files it had already read" },
-  ];
+  const state: State = { calls: [], ids: [], run: undefined, own: [], teammates: [], answered: new Set() };
+  state.own = [
+    { description: "The agent re-ran the whole test suite after every one-line change", severity: "medium", impact: "TIME" },
+    { description: "The agent asked for permission to read files it had already read", severity: "low", impact: "OPERATOR_ATTENTION" },
+  ].map((sent) => ownFriction(newId(state), { ...sent, frequency: "5 of 30 sessions", tags: [], affectedSessionCount: 5, reviewedSessionCount: 30 }, null));
   const [priya, tomas, wen] = TEAMMATES as [(typeof TEAMMATES)[number], (typeof TEAMMATES)[number], (typeof TEAMMATES)[number]];
   state.teammates = [
     {
       title: "Lint ran only in CI",
       description: `${priya.name} (${priya.email}) saw the agent push code that failed lint, because no hook ran the linter before a commit.`,
       severity: "medium",
-      impact: "rework",
+      impact: "QUALITY",
     },
     {
       title: "Permission prompts for read-only git commands",
       description: `The agent stopped to ask before every git status and git diff. Reported by ${tomas.name}; contact ${tomas.email}.`,
       severity: "low",
-      impact: "time",
+      impact: "TIME",
     },
     {
       title: "Tests ran without the project's filter",
       description: `Per ${wen.name} <${wen.email}>, the agent ran the whole test suite when the change touched one package.`,
       severity: "medium",
-      impact: "time",
+      impact: "TIME",
     },
   ].map((friction) => ({
     id: newId(state),
