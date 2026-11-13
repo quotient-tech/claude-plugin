@@ -1,7 +1,28 @@
 // A stand-in for Quotient that the behavior checks run quotient's skills
 // against, so a check sends nothing to dev or production.
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 type Line = Record<string, unknown>;
+
+/**
+ * The environment a check runs `claude` in. A new config folder loads none of
+ * the operator's plugins, so no installed quotient plugin reaches production
+ * beside the copy under test, and no claude.ai server. Because the folder
+ * holds no sign-in, the run signs in with a token from `claude setup-token`.
+ * The env var turns claude.ai's servers off as well, in case the token's
+ * account would otherwise bring them.
+ * @param base - The environment to start from, usually `process.env`.
+ * @returns The run's environment, and its config folder, which the caller removes.
+ * @throws When `CLAUDE_CODE_OAUTH_TOKEN` is unset.
+ */
+export function runEnv(base: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; configDir: string } {
+  if (!base.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` first: see CONTRIBUTING.md");
+  // realpath: on macOS mkdtemp gives /var/..., but Claude Code reports /private/var/...
+  const configDir = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-config-")));
+  return { env: { ...base, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir };
+}
 
 // The claude.ai Quotient connector always reaches production, whichever
 // Quotient the plugin's own server names.
