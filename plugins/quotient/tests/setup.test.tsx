@@ -46,6 +46,7 @@ const SAVED = {
  *
  * @param on - The test's hooks, which stand for the engine
  * @param opts.reviewed - The `reviewedSources` in `start_setup_run`'s reply
+ * @param opts.joinedCompany - The `joinedCompany` in `start_setup_run`'s reply, left out when absent
  * @param opts.failing - A Quotient tool whose call reports an error
  * @param opts.runFails - Whether running a process rejects
  * @param opts.newFixes - How many frictions the fix-status part's read finds
@@ -57,6 +58,7 @@ function engine(
   on: On,
   opts: {
     reviewed?: string[]
+    joinedCompany?: unknown
     failing?: string
     runFails?: boolean
     transcripts?: string[]
@@ -140,7 +142,12 @@ function engine(
       return { result: 'ran', text: JSON.stringify({ answers }) }
     }
     if (tool.endsWith('__start_setup_run')) {
-      const reply = { runId: 'run-1', startedAt: '2026-10-29T12:00:00Z', reviewedSources: opts.reviewed ?? [] }
+      const reply = {
+        runId: 'run-1',
+        startedAt: '2026-10-29T12:00:00Z',
+        reviewedSources: opts.reviewed ?? [],
+        ...(opts.joinedCompany === undefined ? {} : { joinedCompany: opts.joinedCompany }),
+      }
       return { result: 'ran', text: JSON.stringify(reply) }
     }
     return { result: 'ran' }
@@ -1743,6 +1750,35 @@ test('counts of one in the start message are singular', async ($, on) => {
   expect(shown).toContain('Reviewing 1 session and 1 automated run from Oct 15 to Oct 29')
   expect(shown).not.toContain('Dry run')
 })
+
+test('an operator on their first setup since joining sees the company they joined above the start lines', async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind Robotics' } })
+  await $.command.run(TYPED_SETUP)
+  await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  const { texts, shown } = await drawStart($, START)
+
+  expectInOrder(shown, ['Joined Northwind Robotics', 'Reviewing 64 sessions'])
+  expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+})
+
+for (const [why, joinedCompany] of [
+  ['null', null],
+  ['left out', undefined],
+  ['a name that is not text', { name: 3 }],
+  ['an empty name', { name: '' }],
+  ['not an object', 'Northwind Robotics'],
+] as const) {
+  test(`a start_setup_run reply whose joinedCompany is ${why} shows no joined line`, async ($, on) => {
+    engine(on, { joinedCompany })
+    await $.command.run(TYPED_SETUP)
+    await callQuotient($, 'start_setup_run', 'toolu_run')
+
+    const { shown } = await drawStart($, START)
+
+    expect(shown).not.toContain('Joined')
+  })
+}
 
 test('the start line leaves out the counts that are 0', async ($, on) => {
   engine(on)

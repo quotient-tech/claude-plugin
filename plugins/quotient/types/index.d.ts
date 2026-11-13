@@ -118,7 +118,10 @@ export type SetupStart = {
 }
 
 /** What a setup tool's result row draws, by the call's tool_use_id. */
-export type SetupDrawn = Record<string, { kind: 'start'; start: SetupStart } | { kind: 'summary'; summary: SetupSummary }>
+export type SetupDrawn = Record<
+  string,
+  { kind: 'start'; start: SetupStart; joinedCompany: string | null } | { kind: 'summary'; summary: SetupSummary }
+>
 
 /**
  * Where a sandboxed agent may read, every folder as its real path: the
@@ -148,6 +151,8 @@ export type SetupRun = {
   teammateTitles: Record<string, string>
   /** Each answer the teammate check sent with `submit_solutions` or `submit_solution`: its fix, cleaned, or null for none. */
   teammateAnswers: SetupAnswer[]
+  /** The company the operator joined, when `start_setup_run` says this is their first setup since joining it. */
+  joinedCompany: string | null
 }
 
 /** The review-frictions run in progress, if any, and the sessions it may read. */

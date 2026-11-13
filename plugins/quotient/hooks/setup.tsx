@@ -164,9 +164,10 @@ const NO_RUN: SetupRun = {
   listed: {},
   teammateTitles: {},
   teammateAnswers: [],
+  joinedCompany: null,
 }
 // The guard reads the run's state by its key, so it checks this tag itself.
-export const RUN_SHAPE = 'run-8'
+export const RUN_SHAPE = 'run-9'
 const run = atom({ plugin: 'quotient', key: 'setupRun' } as const, NO_RUN, { shape: RUN_SHAPE })
 // Shared with fix.tsx, which declares it with the same key.
 const statusParts = atom(
@@ -450,17 +451,21 @@ export function checkSummary(
  * @returns The list
  */
 function listed(items: readonly string[]): string {
-  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+  const rest = items.slice(0, -1)
+  const last = items.at(-1) ?? ''
+  return rest.length === 0 ? last : `${rest.join(', ')} and ${last}`
 }
 
 /**
- * Draws setup's two start lines.
+ * Draws setup's two start lines, under the company the operator joined when
+ * this is their first setup since joining it.
  *
  * @param els - The surface's elements
  * @param start - The checked start values
+ * @param joinedCompany - The company's name, or null
  * @returns The start message
  */
-function startTree({ Box, Text }: Els, start: SetupStart) {
+function startTree({ Box, Text }: Els, start: SetupStart, joinedCompany: string | null) {
   const { sessions, automatedRuns, cloudRuns, firstDay, lastDay, checksTeammates } = start
   const teammates = checksTeammates ? TEAMMATES_CLAUSE : ''
   const counts = [
@@ -472,6 +477,11 @@ function startTree({ Box, Text }: Els, start: SetupStart) {
   const reviewed = clauses.length === 0 ? 'no sessions' : listed(clauses)
   return (
     <Box flexDirection="column">
+      {joinedCompany !== null && (
+        <Text>
+          <Text color="success">✓</Text> {`Joined ${joinedCompany}`}
+        </Text>
+      )}
       <Text>{`Reviewing ${reviewed} from ${firstDay} to ${lastDay}${teammates}`}</Text>
       <Text dimColor>This can take some time. You can keep working in another session while it runs.</Text>
     </Box>
@@ -885,6 +895,24 @@ async function addReviewed($: Api, sources: readonly string[]): Promise<void> {
 }
 
 /**
+ * Reads the company the operator joined from a `start_setup_run` reply.
+ *
+ * @param text - The reply's text
+ * @returns The company's name, or null when the reply names none or can't be read
+ */
+function joinedCompanyFrom(text: string | undefined): string | null {
+  let reply: unknown
+  try {
+    reply = JSON.parse(text ?? '')
+  } catch {
+    return null
+  }
+  const joined = (reply as { joinedCompany?: unknown } | null)?.joinedCompany
+  const name = (joined as { name?: unknown } | null | undefined)?.name
+  return typeof name === 'string' && name !== '' ? name : null
+}
+
+/**
  * Answers a `setup_start` call: refuses input that breaks a rule, or keeps
  * the start values for its row, the band and the status line.
  *
@@ -905,7 +933,8 @@ async function answerStart(
   if (checked.error !== undefined) return { deny: checked.error }
   const start = window === undefined ? checked.value : { ...checked.value, firstDay: window.firstDay, lastDay: window.lastDay }
   if (toolUseId !== undefined) {
-    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'start', start } }))
+    const { joinedCompany } = await read($, run)
+    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'start', start, joinedCompany } }))
   }
   await update($, run, current => (current.isRunning ? { ...current, start } : current))
   if ((await read($, run)).isRunning) await showStatus($)
@@ -1413,6 +1442,8 @@ export const registerSetup: Register = on => {
     if (called.deny !== undefined || called.isError === true || !(await read($, run)).isRunning) return called
     if (e.tool === 'RemoteTrigger') return compactRemote(called, (e as unknown as Record<string, unknown>).action)
     if (name === 'start_setup_run') {
+      const joinedCompany = joinedCompanyFrom(called.text)
+      await update($, run, latest => ({ ...latest, joinedCompany }))
       const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
       const routineIds = await routineIdsInSessions($, (await read($, run)).dirs, window).catch(() => undefined)
       const added = withStartAdditions(called.text, window, routineIds)
@@ -1427,7 +1458,7 @@ export const registerSetup: Register = on => {
     if (e.props.isExpanded) return next(e)
     const shown = (await read($, drawn))[e.props.tool_use_id]
     if (shown?.kind === 'summary') return summaryTree($.ui.resolve(e), shown.summary)
-    if (shown?.kind === 'start') return startTree($.ui.resolve(e), shown.start)
+    if (shown?.kind === 'start') return startTree($.ui.resolve(e), shown.start, shown.joinedCompany)
     // Until the call is checked, its row would show the raw input.
     const isUnchecked = [START_TOOL, SUMMARY_TOOL].includes(e.props.tool as string) && e.props.isRunning
     if (!isUnchecked && !(await read($, run)).toolUseIds.includes(e.props.tool_use_id)) return next(e)
