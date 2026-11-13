@@ -630,11 +630,27 @@ function inviteFrom(text: string | undefined): SetupInvite | null {
   }
   if (typeof reply !== 'object' || reply === null) return null
   const { companyName, inviteUrl, emailDomain, memberCount, maxSeats } = reply as Record<string, unknown>
-  const isText = (value: unknown): value is string => typeof value === 'string' && value !== ''
-  if (!isText(companyName) || !isText(inviteUrl) || !isText(emailDomain)) return null
+  const name = typeof companyName === 'string' ? cleanText(companyName) : null
+  if (name === null || !isWebLink(inviteUrl) || typeof emailDomain !== 'string' || emailDomain === '') return null
   if (!isCount(memberCount, 1) || !(maxSeats === null || isCount(maxSeats, 0))) return null
   if (maxSeats !== null && memberCount >= maxSeats) return null
-  return { companyName, inviteUrl, memberCount }
+  return { companyName: name, inviteUrl, memberCount }
+}
+
+/**
+ * Tells whether a value is a web address that can be drawn and pasted as it
+ * is: http or https, with nothing a terminal would act on.
+ *
+ * @param value - The value
+ * @returns Whether it's a safe web address
+ */
+function isWebLink(value: unknown): value is string {
+  if (typeof value !== 'string' || cleanText(value) !== value) return false
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -992,7 +1008,7 @@ function joinedCompanyFrom(text: string | undefined): string | null {
   }
   const joined = (reply as { joinedCompany?: unknown } | null)?.joinedCompany
   const name = (joined as { name?: unknown } | null | undefined)?.name
-  return typeof name === 'string' && name !== '' ? name : null
+  return typeof name === 'string' ? cleanText(name) : null
 }
 
 /**

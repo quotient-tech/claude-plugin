@@ -1226,6 +1226,9 @@ for (const [why, opts] of [
   ['a fractional member count', { invite: inviteReply({ memberCount: 1.5 }) }],
   ['a seat limit that is not a number', { invite: inviteReply({ maxSeats: 'twenty' }) }],
   ['a full trial', { invite: inviteReply({ memberCount: 20, maxSeats: 20 }) }],
+  ['a link that is not a web address', { invite: inviteReply({ inviteUrl: 'javascript:alert(1)' }) }],
+  ['a link with a control character', { invite: inviteReply({ inviteUrl: `${INVITE_URL}\x1b[2J` }) }],
+  ['a company name with nothing printable', { invite: inviteReply({ companyName: '\x1b[31m\x07' }) }],
   ['a call that fails', { invite: 'throw' }],
   ['an operator who is not signed in', { invite: inviteReply(), connected: { isConnected: false, reason: 'failed' } }],
   ['a server without the tool', {}],
@@ -1242,6 +1245,15 @@ for (const [why, opts] of [
     expect(shown).not.toContain('sharing the link')
   })
 }
+
+test("escape sequences in the company's name are drawn as plain text", async ($, on) => {
+  engine(on, { invite: inviteReply({ companyName: 'Northwind\x1b[31m Robotics\x07' }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain("They'll join Northwind Robotics. They won't see your sessions.")
+  expect(shown).not.toContain('\x1b')
+})
 
 test('a summary with no seat limit still shows the invite', async ($, on) => {
   engine(on, { invite: inviteReply({ memberCount: 40, maxSeats: null }) })
@@ -1899,6 +1911,17 @@ test('an operator on their first setup since joining sees the company they joine
 
   expectInOrder(shown, ['Joined Northwind Robotics', 'Reviewing 64 sessions'])
   expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+})
+
+test("escape sequences in the joined company's name are drawn as plain text", async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind\x1b[31m Robotics' } })
+  await $.command.run(TYPED_SETUP)
+  await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  const { shown } = await drawStart($, START)
+
+  expect(shown).toContain('Joined Northwind Robotics')
+  expect(shown).not.toContain('\x1b')
 })
 
 for (const [why, joinedCompany] of [
