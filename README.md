@@ -179,7 +179,7 @@ In local sessions the plugin runs once a day in the background scanning for new 
 - **Your permission settings come first.** quotient never approves a call. Its calls to Quotient go through your permission settings like any tool call, and it never overrides a rule you or your organization set.
 - **Token usage is counts only.** To turn it off, set `"QUOTIENT_USAGE": "off"` in the `env` block of `~/.claude/settings.json`.
 
-Read [Privacy and security](docs/privacy-and-security.md) for exactly what's sent, what's checked and what quotient's agents can reach, and Quotient's [privacy policy](https://www.getquotient.com/privacy) for what Quotient does with it.
+Read [SECURITY.md](SECURITY.md) for exactly what's sent, what's checked and what quotient's agents can reach, and Quotient's [privacy policy](https://www.getquotient.com/privacy) for what Quotient does with it.
 
 ## Troubleshooting
 
