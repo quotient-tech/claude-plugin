@@ -60,6 +60,95 @@ test("a call to a tool the stand-in doesn't serve gets an error naming it, and i
   }
 });
 
+/**
+ * Calls one of the stand-in's tools.
+ * @param url - The stand-in's MCP URL.
+ * @param name - The tool.
+ * @param args - Its arguments.
+ * @returns The reply's text, parsed when it's JSON, and whether it's an error.
+ */
+async function callTool(url: string, name: string, args: Record<string, unknown> = {}): Promise<{ body: any; isError: boolean }> {
+  const { reply } = await post(url, { id: 9, method: "tools/call", params: { name, arguments: args } });
+  const result = reply?.result as { content: { text: string }[]; isError?: boolean };
+  const text = result.content[0]!.text;
+  let body: unknown = text;
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  return { body, isError: result.isError === true };
+}
+
+const SETUP_FRICTION = { description: "Tests ran twice", frequency: "3 of 14 sessions", impact: "time", severity: "low", tags: [], origin: "setup" };
+
+test("a second start_setup_run resumes the open run with the sources and frictions it recorded", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: first } = await callTool(standIn.url, "start_setup_run");
+    assert.deepEqual(first.reviewedSources, []);
+    assert.deepEqual(first.frictionsInRun, []);
+    assert.equal(first.nextCursor, null);
+    assert.equal(first.joinedCompany, null);
+    assert.equal(typeof first.startedAt, "string");
+    const { body: submitted } = await callTool(standIn.url, "submit_frictions", { frictions: [{ ...SETUP_FRICTION, runId: first.runId }] });
+    const recorded = await callTool(standIn.url, "record_setup_progress", { runId: first.runId, sources: ["a", "b", "a"] });
+    assert.deepEqual(recorded, { body: { reviewedSourceCount: 2 }, isError: false });
+    const { body: resumed } = await callTool(standIn.url, "start_setup_run");
+    assert.equal(resumed.runId, first.runId);
+    assert.deepEqual(resumed.reviewedSources, ["a", "b"]);
+    assert.deepEqual(resumed.frictionsInRun, [{ id: submitted.frictions[0].frictionId, description: "Tests ran twice" }]);
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_frictions gives each friction a new id in order, updates one sent with its id, and every id is bait", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: run } = await callTool(standIn.url, "start_setup_run");
+    const { body } = await callTool(standIn.url, "submit_frictions", {
+      frictions: [{ ...SETUP_FRICTION, runId: run.runId }, { ...SETUP_FRICTION, description: "Lint was skipped", runId: run.runId }],
+    });
+    assert.deepEqual(body.frictions.map((f: { status: string }) => f.status), ["new", "new"]);
+    const [first, second] = body.frictions.map((f: { frictionId: string }) => f.frictionId);
+    assert.notEqual(first, second);
+    const { body: again } = await callTool(standIn.url, "submit_frictions", { frictions: [{ ...SETUP_FRICTION, frictionId: first, runId: run.runId }] });
+    assert.deepEqual(again.frictions, [{ status: "updated", frictionId: first }]);
+    const ids = standIn.bait().ids;
+    for (const id of [run.runId, first, second, ...run.reportedFrictions.map((f: { id: string }) => f.id)]) assert.ok(ids.includes(id), `${id} is bait`);
+    assert.ok(run.reportedFrictions.length > 0, "the operator has earlier frictions for setup to leave out");
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("finish_setup_run counts the run's frictions, and a finished run takes no more progress", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body: run } = await callTool(standIn.url, "start_setup_run");
+    await callTool(standIn.url, "submit_frictions", { frictions: [{ ...SETUP_FRICTION, severity: "high", runId: run.runId }, { ...SETUP_FRICTION, description: "x", runId: run.runId }] });
+    const finished = await callTool(standIn.url, "finish_setup_run", { runId: run.runId });
+    assert.deepEqual(finished, { body: { counts: { high: 1, medium: 0, low: 1, other: 0 }, newCount: 2, alreadyReportedCount: 0 }, isError: false });
+    const refused = await callTool(standIn.url, "record_setup_progress", { runId: run.runId, sources: ["c"] });
+    assert.equal(refused.isError, true);
+    assert.match(refused.body, new RegExp(`no unfinished setup run with the id ${run.runId}`));
+    const { body: next } = await callTool(standIn.url, "start_setup_run");
+    assert.notEqual(next.runId, run.runId);
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("submit_frictions to a run that isn't open refuses each friction, and the whole call when all are refused", async () => {
+  const standIn = await startStandIn();
+  try {
+    const { body, isError } = await callTool(standIn.url, "submit_frictions", { frictions: [{ ...SETUP_FRICTION, runId: "nope" }] });
+    assert.equal(isError, true);
+    assert.match(body, /^None of these frictions was recorded\. \{"frictions":\[\{"status":"refused","reason":"You have no unfinished setup run/);
+  } finally {
+    await standIn.close();
+  }
+});
+
 test("the plugin copy names the stand-in, and the committed .mcp.json keeps production's URL", () => {
   const before = readFileSync(COMMITTED_MCP, "utf8");
   const copy = pluginPointingAt("http://127.0.0.1:4321/mcp");

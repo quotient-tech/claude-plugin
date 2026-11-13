@@ -1,5 +1,11 @@
 // A stand-in for Quotient that the behavior checks run quotient's skills
 // against, so a check sends nothing to dev or production.
+//
+// Its replies follow Quotient's tools in apps/nextjs/src/lib/mcp/mcpServer.ts
+// and the lib/agex code it calls, as of Quotient commit 483c280d4. Keep them
+// in step: the mod shows nothing on a reply it can't read, so a drifted shape
+// fails the checks for the wrong reason.
+import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,21 +24,161 @@ export type StandIn = {
   url: string;
   /** Every tools/call the stand-in received, in order. */
   calls(): readonly Call[];
+  /** Every id the stand-in issued: none may ever be shown to the operator. */
+  bait(): { ids: readonly string[] };
   /** Stops the server. */
   close(): Promise<void>;
 };
 
+type Severity = "high" | "medium" | "low";
+
+/** A setup run, while it's open. */
+type SetupRun = { runId: string; startedAt: string; reviewedSources: string[]; frictions: { id: string; description: string; severity: Severity }[] };
+
 /** Everything one stand-in remembers, for as long as it runs. */
-type State = { calls: Call[] };
+type State = {
+  calls: Call[];
+  ids: string[];
+  run: SetupRun | undefined;
+  /** The frictions the operator reported before, outside any setup run. */
+  reported: { id: string; description: string }[];
+};
+
+type Reply = { content: { type: "text"; text: string }[]; isError?: boolean };
 
 /** A tool the stand-in serves, and how it answers. */
 type Tool = {
   description: string;
   inputSchema: Record<string, unknown>;
-  answer(state: State, args: Record<string, unknown>): { content: { type: "text"; text: string }[]; isError?: boolean };
+  answer(state: State, args: Record<string, unknown>): Reply;
 };
 
-const TOOLS: Record<string, Tool> = {};
+/**
+ * A successful reply, as Quotient's tools give one: their JSON as text.
+ * @param value - The reply's JSON.
+ * @returns The tool result.
+ */
+const ok = (value: unknown): Reply => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
+
+/**
+ * A refusal, as Quotient's tools give one: the reason as text, marked as an error.
+ * @param reason - Why nothing was done.
+ * @returns The tool result.
+ */
+const refuse = (reason: string): Reply => ({ content: [{ type: "text", text: reason }], isError: true });
+
+/**
+ * Issues a new id, shaped like Quotient's cuids so skills and the mod treat it
+ * as real, and the same on every run so checks are repeatable.
+ * @param state - The stand-in's state, which records the id as bait.
+ * @returns The id.
+ */
+function newId(state: State): string {
+  const id = `c${createHash("sha256").update(`quotient-stand-in-${state.ids.length}`).digest("hex").slice(0, 24)}`;
+  state.ids.push(id);
+  return id;
+}
+
+/**
+ * Quotient's refusal for a run that is missing or finished.
+ * @param runId - The run the call named.
+ * @returns The refusal's text.
+ */
+const unknownRun = (runId: unknown): string =>
+  `You have no unfinished setup run with the id ${String(runId)}. Call start_setup_run for the run to resume. Nothing was recorded.`;
+
+/**
+ * Finds the open setup run a call names.
+ * @param state - The stand-in's state.
+ * @param runId - The run the call named.
+ * @returns The run, or undefined when it isn't open.
+ */
+const openRun = (state: State, runId: unknown): SetupRun | undefined => (state.run?.runId === runId ? state.run : undefined);
+
+const RUN_ID = { type: "string", description: "The `runId` start_setup_run gave." };
+const FRICTION = {
+  type: "object",
+  properties: {
+    runId: RUN_ID,
+    frictionId: { type: "string" },
+    title: { type: "string" },
+    description: { type: "string" },
+    frequency: { type: "string" },
+    impact: { type: "string" },
+    severity: { type: "string", enum: ["high", "medium", "low"] },
+    tags: { type: "array", items: { type: "string" } },
+    affectedSessionCount: { type: "number" },
+    reviewedSessionCount: { type: "number" },
+    repository: { type: "string" },
+    origin: { type: "string", enum: ["setup", "review", "live"] },
+  },
+  required: ["description", "frequency", "impact", "severity", "tags", "origin"],
+};
+
+const TOOLS: Record<string, Tool> = {
+  start_setup_run: {
+    description: "Start the signed-in user's setup run, or resume their unfinished one. Replies with the run's id, the sources it already reviewed, the frictions it already submitted, and the frictions the user reported outside it.",
+    inputSchema: { type: "object", properties: { cursor: { type: "string" } } },
+    answer(state) {
+      state.run ??= { runId: newId(state), startedAt: new Date().toISOString(), reviewedSources: [], frictions: [] };
+      const { runId, startedAt, reviewedSources, frictions } = state.run;
+      return ok({
+        runId,
+        startedAt,
+        reviewedSources,
+        frictionsInRun: frictions.map(({ id, description }) => ({ id, description })),
+        joinedCompany: null,
+        reportedFrictions: state.reported,
+        nextCursor: null,
+      });
+    },
+  },
+  record_setup_progress: {
+    description: "Record the sessions and routine runs a batch reviewed, and the ids of earlier frictions it found again. Replies with how many sources the run has reviewed.",
+    inputSchema: {
+      type: "object",
+      properties: { runId: RUN_ID, sources: { type: "array", items: { type: "string" } }, skippedFrictionIds: { type: "array", items: { type: "string" } } },
+      required: ["runId"],
+    },
+    answer(state, args) {
+      const run = openRun(state, args.runId);
+      if (run === undefined) return refuse(unknownRun(args.runId));
+      for (const source of (args.sources as string[] | undefined) ?? []) if (!run.reviewedSources.includes(source)) run.reviewedSources.push(source);
+      return ok({ reviewedSourceCount: run.reviewedSources.length });
+    },
+  },
+  submit_frictions: {
+    description: "Submit up to 100 frictions in one call. Replies with `frictions`, one per friction in the order given, each with a `status` and the friction's id, or a refused friction's `reason`. When every friction is refused, the reply is an error that lists them.",
+    inputSchema: { type: "object", properties: { frictions: { type: "array", items: FRICTION } }, required: ["frictions"] },
+    answer(state, args) {
+      const outcomes = ((args.frictions as Record<string, unknown>[] | undefined) ?? []).map((friction) => {
+        const run = openRun(state, friction.runId);
+        if (run === undefined) return { status: "refused", reason: unknownRun(friction.runId) };
+        const known = run.frictions.find((one) => one.id === friction.frictionId);
+        if (known !== undefined) {
+          Object.assign(known, { description: String(friction.description), severity: friction.severity as Severity });
+          return { status: "updated", frictionId: known.id };
+        }
+        const id = newId(state);
+        run.frictions.push({ id, description: String(friction.description), severity: friction.severity as Severity });
+        return { status: "new", frictionId: id };
+      });
+      const reply = JSON.stringify({ frictions: outcomes });
+      return outcomes.every((outcome) => outcome.status === "refused") ? refuse(`None of these frictions was recorded. ${reply}`) : ok({ frictions: outcomes });
+    },
+  },
+  finish_setup_run: {
+    description: "Finish the signed-in user's setup run once every source is recorded and every friction submitted. Replies with `counts` of the run's frictions by severity, `newCount` and `alreadyReportedCount`.",
+    inputSchema: { type: "object", properties: { runId: RUN_ID }, required: ["runId"] },
+    answer(state, args) {
+      const run = openRun(state, args.runId);
+      if (run === undefined) return refuse(unknownRun(args.runId));
+      state.run = undefined;
+      const count = (severity: Severity) => run.frictions.filter((one) => one.severity === severity).length;
+      return ok({ counts: { high: count("high"), medium: count("medium"), low: count("low"), other: 0 }, newCount: run.frictions.length, alreadyReportedCount: 0 });
+    },
+  },
+};
 
 // JSON-RPC's codes for an unknown method and for bad params, which MCP uses
 // for an unknown tool.
@@ -100,7 +246,11 @@ async function serve(state: State, request: IncomingMessage, response: ServerRes
  * @returns The running stand-in.
  */
 export async function startStandIn(): Promise<StandIn> {
-  const state: State = { calls: [] };
+  const state: State = { calls: [], ids: [], run: undefined, reported: [] };
+  state.reported = [
+    { id: newId(state), description: "The agent re-ran the whole test suite after every one-line change" },
+    { id: newId(state), description: "The agent asked for permission to read files it had already read" },
+  ];
   const server = createServer((request, response) => {
     serve(state, request, response).catch(() => response.writeHead(400).end());
   });
@@ -109,6 +259,7 @@ export async function startStandIn(): Promise<StandIn> {
   return {
     url: `http://127.0.0.1:${port}/mcp`,
     calls: () => [...state.calls],
+    bait: () => ({ ids: [...state.ids] }),
     close: () => new Promise((closed) => server.close(() => closed())),
   };
 }
