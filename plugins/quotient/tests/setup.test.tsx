@@ -2204,10 +2204,38 @@ const TYPED_SETUP = {
 } as const
 
 /**
- * Draws the band above the prompt and returns its text.
+ * Joins the text of every Text element in a drawn tree, one line each.
+ *
+ * @param node - A drawn element, or one of its string children
+ * @returns The joined text
+ */
+function textOf(node: unknown): string {
+  if (typeof node !== 'object' || node === null) return ''
+  const { type, children = [] } = node as { type: string; children?: unknown[] }
+  if (type === 'Text') return children.filter(child => typeof child === 'string').join('')
+  return children.map(textOf).filter(text => text !== '').join('\n')
+}
+
+/**
+ * Collects the rows quotient drew in a drawn tree. The band shows one row for
+ * each plugin that draws one, stacked or alone depending on Claude Code's
+ * version, and each row carries the plugin that drew it.
+ *
+ * @param node - A drawn element, or one of its string children
+ * @returns Quotient's rows
+ */
+function quotientRows(node: unknown): unknown[] {
+  if (typeof node !== 'object' || node === null) return []
+  const { part, children = [] } = node as { part?: { plugin?: string }; children?: unknown[] }
+  if (part?.plugin === 'quotient') return [node]
+  return children.flatMap(quotientRows)
+}
+
+/**
+ * Draws the band above the prompt and returns quotient's row in it.
  *
  * @param $ - The engine
- * @returns The band's joined text, or the engine's row when the mod passes
+ * @returns The joined text of quotient's row, or '' when quotient passes
  */
 async function band($: Parameters<TestBody>[0]) {
   const ui = await $.ui.mount({
@@ -2223,9 +2251,9 @@ async function band($: Parameters<TestBody>[0]) {
       view: {},
     },
   } as Parameters<typeof $.ui.mount>[0])
-  const texts = await ui.findAll({ type: 'Text' })
+  const drawn = await ui.drawn()
   await ui.unmount()
-  return texts.map(text => text.text).join('\n')
+  return quotientRows(drawn).map(textOf).join('\n')
 }
 
 /**
@@ -2278,11 +2306,11 @@ test('a resumed run counts the sources Quotient already recorded', async ($, on)
   expect(await band($)).toBe('3 of 77 sources reviewed')
 })
 
-test('the band is left to the engine when no setup is running', async ($, on) => {
+test('quotient draws no row in the band when no setup is running', async ($, on) => {
   engine(on)
   engineRows(on)
 
-  expect(await band($)).toBe("the engine's row")
+  expect(await band($)).toBe('')
 })
 
 test('a failed record_setup_progress leaves the last count in place', async ($, on) => {
@@ -2339,7 +2367,7 @@ for (const [why, end] of [
     await end($)
 
     expect(before).toBe('0 of 77 sources reviewed')
-    expect(await band($)).toBe("the engine's row")
+    expect(await band($)).toBe('')
     expect(seen.status.at(-1)).toBeUndefined()
   })
 }
