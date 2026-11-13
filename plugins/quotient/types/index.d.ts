@@ -106,6 +106,8 @@ export type SetupSummary = {
   reviewedCount?: number
   /** The company's invite link, when it can invite and its trial has a seat left. */
   invite?: SetupInvite
+  /** How "Copy to share" was answered, once it has been: what was copied, if anything, and whether it reached the clipboard. */
+  shared?: { copy: 'message' | 'link' | null; isCopied: boolean }
 }
 
 /** A company's invite link, from a `get_invite_link` reply that passed its checks. */

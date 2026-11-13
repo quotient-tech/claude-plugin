@@ -54,6 +54,9 @@ const SAVED = {
  * @param opts.findExit - The exit code of the `find` that lists the transcripts, 0 when absent
  * @param opts.invite - What `get_invite_link` replies, or 'throw' for a call that fails; `{}` when absent
  * @param opts.connected - What connecting to the plugin's server resolves to, when it isn't connected
+ * @param opts.share - The answer to "Copy to share", or null when it's dismissed
+ * @param opts.isAway - Whether that answer came while the operator was away
+ * @param opts.isCopied - Whether the copy reaches the clipboard, true when absent
  * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
@@ -81,10 +84,15 @@ function engine(
     findExit?: number
     invite?: { text: string; isError?: boolean } | 'throw'
     connected?: { isConnected: false; reason: string }
+    share?: string | null
+    isAway?: boolean
+    isCopied?: boolean
   } = {},
 ) {
   const seen = {
     mcpCalls: [] as { server: string; tool: string }[],
+    questions: [] as unknown[],
+    copied: [] as string[],
     tools: [] as { name: string; isDeferred?: unknown }[],
     argv: [] as (readonly string[])[],
     status: [] as (string | undefined)[],
@@ -134,6 +142,18 @@ function engine(
     const frictions = Array.from({ length: opts.newFixes ?? 0 }, () => ({ solutions: [fix] }))
     const text = e.tool === 'list_my_frictions' ? JSON.stringify({ frictions, nextCursor: null }) : '{}'
     return { value: { content: [{ type: 'text', text }], isError: false } }
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    seen.questions.push((e as unknown as { questions: unknown }).questions)
+    const answer = opts.share ?? null
+    if (answer === null) return { deny: 'dismissed' }
+    const away = opts.isAway === true ? { afkTimeoutMs: 60_000 } : {}
+    return { result: { questions: [], answers: { 'Copy to share': answer }, ...away } } as never
+  })
+  on('ui.copy', (_, e) => {
+    seen.copied.push(e.text)
+    const isCopied = opts.isCopied ?? true
+    return { value: isCopied ? { isCopied: true } : { isCopied: false, reason: 'no-clipboard' } } as never
   })
   on('tool.call', (_, e) => {
     const tool = e.tool as string
@@ -428,6 +448,24 @@ async function drawSummary(
 ) {
   const called = await callSummary($, input)
   expect(called.deny).toBeUndefined()
+  return mountSummary($, input, surface, isExpanded)
+}
+
+/**
+ * Draws the summary call's row as it stands, without calling it again.
+ *
+ * @param $ - The engine
+ * @param input - The call's input
+ * @param surface - Where it's drawn
+ * @param isExpanded - Whether the row is drawn in full, as in ctrl+o
+ * @returns The Text elements drawn, in order, and their joined text
+ */
+async function mountSummary(
+  $: Parameters<TestBody>[0],
+  input: Record<string, unknown>,
+  surface: 'terminal' | 'desktop' = 'terminal',
+  isExpanded = false,
+) {
   const ui = await $.ui.mount({
     plugin: 'quotient',
     surface,
@@ -1261,6 +1299,136 @@ test('a summary with no seat limit still shows the invite', async ($, on) => {
   const { shown } = await drawSummary($, SAVED)
 
   expect(shown).toContain('You have 39 teammates on Quotient so far.')
+})
+
+const WHAT_HAPPENS_NEXT = [
+  'What happens next',
+  '1. Your teammate joins.',
+  '2. Quotient finds solutions in their setup.',
+  '3. You get suggestions next session.',
+]
+
+/**
+ * Shows the summary with an invite, ends the turn as the model does, and
+ * draws the summary's row once the question is answered.
+ *
+ * @param $ - The engine
+ * @param input - The summary call's input
+ * @returns The Text elements drawn, in order, and their joined text
+ */
+async function shareInvite($: Parameters<TestBody>[0], input: Record<string, unknown> = SAVED) {
+  await callSummary($, input)
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  return mountSummary($, input)
+}
+
+test('once the turn ends, quotient asks "Copy to share" with the two copies', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy message' })
+
+  await shareInvite($)
+
+  expect(seen.questions).toEqual([
+    [
+      {
+        question: 'Copy to share',
+        header: 'Invite',
+        options: [
+          { label: 'Copy message', description: '' },
+          { label: 'Copy link', description: '' },
+        ],
+        multiSelect: false,
+      },
+    ],
+  ])
+})
+
+test('Copy message copies the message and the link, then says what happens next', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy message' })
+
+  const { texts, shown } = await shareInvite($)
+
+  expect(seen.copied).toEqual([`${FIRST_MESSAGE}\n\nsignup + install here:\n${INVITE_URL}`])
+  expectInOrder(shown, [
+    INVITE_URL,
+    'Copy to share → Copy message',
+    'Message copied. Paste it to your teammates in Slack.',
+    ...WHAT_HAPPENS_NEXT,
+    'Your frictions stay saved. Run /list-fixes to see the full list.',
+  ])
+  expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+  expect(texts.find(one => one.text === 'What happens next')?.props.bold).toBe(true)
+})
+
+test('Copy link copies only the link', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply({ memberCount: 4 }), share: 'Copy link' })
+
+  const { shown } = await shareInvite($)
+
+  expect(seen.copied).toEqual([INVITE_URL])
+  expectInOrder(shown, ['Copy to share → Copy link', 'Link copied. Paste it to your teammates in Slack.', 'What happens next'])
+})
+
+test("a teammate's copied message asks if they are using it yet", async ($, on) => {
+  const seen = engine(on, { invite: inviteReply({ memberCount: 4 }), share: 'Copy message' })
+
+  await shareInvite($)
+
+  expect(seen.copied).toEqual([`${MORE_MESSAGE}\n\nsignup + install here:\n${INVITE_URL}`])
+})
+
+for (const [why, opts] of [
+  ['a dismissed question', { share: null }],
+  ['an answer typed under Other', { share: 'send it to the team' }],
+  ['an answer given while the operator was away', { share: 'Copy message', isAway: true }],
+] as const) {
+  test(`${why} copies nothing, and still says what happens next`, async ($, on) => {
+    const seen = engine(on, { invite: inviteReply(), ...opts })
+
+    const { shown } = await shareInvite($)
+
+    expect(seen.copied).toEqual([])
+    expect(shown).not.toContain('copied')
+    expect(shown).not.toContain('Copy to share →')
+    expectInOrder(shown, WHAT_HAPPENS_NEXT)
+  })
+}
+
+test("a copy the clipboard doesn't take says to select the text instead", async ($, on) => {
+  engine(on, { invite: inviteReply(), share: 'Copy message', isCopied: false })
+
+  const { texts, shown } = await shareInvite($)
+
+  expect(shown).toContain("Couldn't reach the clipboard here. Select the message above to copy it.")
+  expect(shown).not.toContain('Message copied')
+  expect(texts.find(one => one.text === '!')?.props.color).toBe('warning')
+  expectInOrder(shown, WHAT_HAPPENS_NEXT)
+})
+
+test('with no new frictions, what happens next leaves out the saved frictions line', async ($, on) => {
+  engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+  const { shown } = await shareInvite($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, WHAT_HAPPENS_NEXT)
+  expect(shown).not.toContain('Your frictions stay saved')
+})
+
+test('a summary with no invite asks nothing when the turn ends', async ($, on) => {
+  const seen = engine(on, { share: 'Copy message' })
+
+  const { shown } = await shareInvite($)
+
+  expect(seen.questions).toEqual([])
+  expect(shown).not.toContain('What happens next')
+})
+
+test('the question is asked once, not again on a later turn', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+  await shareInvite($)
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+
+  expect(seen.questions).toHaveLength(1)
 })
 
 test('the desktop app draws the summary too', async ($, on) => {

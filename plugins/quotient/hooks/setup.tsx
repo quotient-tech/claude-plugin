@@ -60,6 +60,9 @@ const DEFAULT_AGENT = 'general-purpose'
 const END_TURN = 'The summary is shown to the operator. End your turn now without writing anything else.'
 const INVITE_TOOL = 'get_invite_link'
 const SIGNUP_LINE = 'signup + install here:'
+const INVITE_QUESTION = 'Copy to share'
+const COPY_MESSAGE = 'Copy message'
+const COPY_LINK = 'Copy link'
 // The message to paste, in the operator's own voice; a team with members
 // already asks rather than announces.
 const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
@@ -156,6 +159,11 @@ const SOLVED_CARD = {
   fixTitle: 'YOUR FIX',
   anonymous: '(you both stay anonymous)',
 } as const
+
+// The summary row whose invite is asked about once the turn ends, and
+// whether that question was answered for the operator while they were away.
+let inviteRowId: string | null = null
+let answeredWhileAway = false
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -706,6 +714,94 @@ function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
 }
 
 /**
+ * Builds the invite message as it's pasted: the message, then the sign-up
+ * line and the link.
+ *
+ * @param invite - The checked invite
+ * @returns The text to copy
+ */
+function inviteText(invite: SetupInvite): string {
+  const message = invite.memberCount === 1 ? FIRST_MESSAGE : MORE_MESSAGE
+  return `${message}\n\n${SIGNUP_LINE}\n${invite.inviteUrl}`
+}
+
+/**
+ * Draws what follows the invite once "Copy to share" is answered: what was
+ * copied, or why it wasn't, then what happens next.
+ *
+ * @param els - The surface's elements
+ * @param shared - How the question was answered
+ * @param frictions - The new frictions the run stored
+ * @returns The closing sections
+ */
+function sharedTree({ Box, Text }: Els, shared: NonNullable<SetupSummary['shared']>, frictions: number) {
+  const { copy, isCopied } = shared
+  const what = copy === 'message' ? 'message' : 'link'
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {copy !== null && (
+        <Box flexDirection="column">
+          <Text dimColor>
+            {`· ${INVITE_QUESTION} → `}
+            <Text bold>{copy === 'message' ? COPY_MESSAGE : COPY_LINK}</Text>
+          </Text>
+          {isCopied ? (
+            <Text>
+              <Text color="success">✓</Text> {`${copy === 'message' ? 'Message' : 'Link'} copied. Paste it to your teammates in Slack.`}
+            </Text>
+          ) : (
+            <Text>
+              <Text color="warning">!</Text> {`Couldn't reach the clipboard here. Select the ${what} above to copy it.`}
+            </Text>
+          )}
+        </Box>
+      )}
+      <Box flexDirection="column" marginTop={copy === null ? 0 : 1}>
+        <Text bold>What happens next</Text>
+        <Text>1. Your teammate joins.</Text>
+        <Text>2. Quotient finds solutions in their setup.</Text>
+        <Text>3. You get suggestions next session.</Text>
+      </Box>
+      {frictions > 0 && (
+        <Box marginTop={1}>
+          <Text dimColor>Your frictions stay saved. Run /list-fixes to see the full list.</Text>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/**
+ * Asks "Copy to share" about a summary's invite, copies what the operator
+ * chose, and keeps the outcome on the summary, which draws it. A dismissed
+ * question, free text, or an answer given while they were away copies
+ * nothing.
+ *
+ * @param $ - The engine
+ * @param rowId - The summary call's id
+ */
+async function shareInvite($: Api, rowId: string): Promise<void> {
+  const shown = (await read($, drawn))[rowId]
+  if (shown?.kind !== 'summary' || shown.summary.invite === undefined) return
+  const { invite } = shown.summary
+  answeredWhileAway = false
+  let choice: string | null
+  try {
+    choice = await $.ui.ask(INVITE_QUESTION, { header: 'Invite', options: [COPY_MESSAGE, COPY_LINK] })
+  } catch {
+    choice = null
+  }
+  const copy = answeredWhileAway ? null : choice === COPY_MESSAGE ? 'message' : choice === COPY_LINK ? 'link' : null
+  const isCopied =
+    copy !== null && (await $.ui.copy({ text: copy === 'message' ? inviteText(invite) : invite.inviteUrl })).isCopied
+  await update($, drawn, (current): SetupDrawn => {
+    const row = current[rowId]
+    if (row?.kind !== 'summary') return current
+    return { ...current, [rowId]: { ...row, summary: { ...row.summary, shared: { copy, isCopied } } } }
+  })
+}
+
+/**
  * Says how widely a friction reached: its share of the run's sources, never
  * shown below 1%, or its session count when the run's size isn't known.
  *
@@ -728,7 +824,7 @@ function reach(sessions: number, reviewedCount: number | undefined): string {
  */
 function summaryTree(els: Els, summary: SetupSummary) {
   const { Box, Text } = els
-  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount, invite } = summary
+  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount, invite, shared } = summary
   const isInvited = teammateCheck !== undefined
   const found = `Your agents ran into ${frictions === 0 ? 'no new frictions' : plural(frictions, 'friction')} in the last two weeks.`
   const remaining = frictions - top.length
@@ -800,6 +896,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
         </Box>
       )}
       {invite !== undefined && inviteTree(els, invite)}
+      {invite !== undefined && shared !== undefined && sharedTree(els, shared, frictions)}
     </Box>
   )
 }
@@ -1383,6 +1480,7 @@ async function answerSummary(
   if (toolUseId !== undefined) {
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
   }
+  inviteRowId = invite === null || toolUseId === undefined ? null : toolUseId
   await endRun($)
   const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0 && invite === null
   return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
@@ -1602,8 +1700,22 @@ export const registerSetup: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
-    return next(e)
+    const rowId = inviteRowId
+    if (e.reason !== 'answer' || e.agentId !== undefined || rowId === null) return next(e)
+    inviteRowId = null
+    const done = await next(e)
+    await shareInvite($, rowId)
+    return done
   }).catch(($, e, next) => next(e))
+
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const asked = await next(e)
+    const reply = asked.result as { afkTimeoutMs?: number } | undefined
+    if (e.questions.some(one => one.question === INVITE_QUESTION) && reply?.afkTimeoutMs !== undefined) {
+      answeredWhileAway = true
+    }
+    return asked
+  })
 
   on('session.end', async ($, e, next) => {
     await endRun($)
