@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { runTool } from './fixtures/run-tool'
+
 type On = Parameters<TestBody>[1]
 
 const SUMMARY_TOOL = 'mcp__quotient__setup_summary'
@@ -251,7 +253,7 @@ function engine(
  * @returns What the call resolved to
  */
 function callTool($: Parameters<TestBody>[0], tool: string, toolUseId: string, input: Record<string, unknown>) {
-  return $.tool.call({ tool, tool_use_id: toolUseId, ...input } as unknown as Parameters<typeof $.tool.call>[0])
+  return runTool($, { tool, tool_use_id: toolUseId, ...input })
 }
 
 /**
@@ -724,13 +726,13 @@ const FIXES = [
 async function checkTeammates($: Parameters<TestBody>[0], answers: [string, string | null][]) {
   await startTeammateCheck($)
   for (const [frictionId, fix] of answers) {
-    await $.tool.call({
+    await runTool($, {
       tool: `${AGEX}submit_solution`,
       agentId: TEAMMATE_AGENT,
       frictionId,
       ...(fix === null ? {} : { description: fix, prompt: 'Apply it.' }),
       source: 'local',
-    } as unknown as Parameters<typeof $.tool.call>[0])
+    })
   }
 }
 
@@ -743,7 +745,7 @@ async function checkTeammates($: Parameters<TestBody>[0], answers: [string, stri
 async function startTeammateCheck($: Parameters<TestBody>[0]) {
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
-  await $.tool.call({ tool: `${AGEX}list_teammate_frictions`, agentId: TEAMMATE_AGENT } as unknown as Parameters<typeof $.tool.call>[0])
+  await runTool($, { tool: `${AGEX}list_teammate_frictions`, agentId: TEAMMATE_AGENT })
 }
 
 /**
@@ -753,12 +755,12 @@ async function startTeammateCheck($: Parameters<TestBody>[0]) {
  * @param answers - Each answer's friction id and fix, null for an answer with none
  */
 async function sendTeammateAnswers($: Parameters<TestBody>[0], answers: [string, string | null][]) {
-  await $.tool.call({
+  await runTool($, {
     tool: `${AGEX}submit_solutions`,
     agentId: TEAMMATE_AGENT,
     answers: answers.map(([frictionId, fix]) => ({ frictionId, ...(fix === null ? {} : { description: fix, prompt: 'Apply it.' }) })),
     source: 'local',
-  } as unknown as Parameters<typeof $.tool.call>[0])
+  })
 }
 
 const CHECK_PROMPT = "Check my setup for fixes to my teammates' frictions."
@@ -770,7 +772,7 @@ test("setup's teammate check is told the project folders with a session in setup
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([
     {
@@ -785,7 +787,7 @@ test("a setup pinned to a window tells its teammate check the folders from that 
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   const listings = seen.argv.filter(argv => argv[0] === 'find')
   expect(listings.at(-1)).toContain('-newermt')
@@ -797,7 +799,7 @@ test("setup's other subagents start with their prompts as written", async ($, on
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' })
+  await $.agent.spawn({ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' }])
 })
@@ -806,7 +808,7 @@ test("a teammate check whose sessions can't be listed starts with its prompt as 
   const seen = engine(on, { findExit: 1 })
   await $.command.run(TYPED_SETUP)
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
 })
@@ -1136,7 +1138,7 @@ test("setup's own session learns only whether teammates have frictions, never th
   engine(on)
   await $.command.run(TYPED_SETUP)
 
-  const called = await $.tool.call({ tool: `${AGEX}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${AGEX}list_teammate_frictions` })
 
   const read = JSON.stringify(called)
   expect(read).toContain('{\\"hasFrictions\\":true}')
@@ -1145,9 +1147,9 @@ test("setup's own session learns only whether teammates have frictions, never th
 
 test("setup the model starts with the Skill tool is held the same: its session learns only whether there are frictions", async ($, on) => {
   engine(on)
-  await $.tool.call({ tool: 'Skill', skill: 'quotient:setup' } as unknown as Parameters<typeof $.tool.call>[0])
+  await runTool($, { tool: 'Skill', skill: 'quotient:setup' })
 
-  const called = await $.tool.call({ tool: `${AGEX}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${AGEX}list_teammate_frictions` })
 
   expect(JSON.stringify(called)).toContain('{\\"hasFrictions\\":true}')
   expect(JSON.stringify(called)).not.toContain('Lint passes on commit')
@@ -1157,7 +1159,7 @@ test("setup's own session learns there are none when the list is empty", async (
   engine(on, { teammates: [] })
   await $.command.run(TYPED_SETUP)
 
-  const called = await $.tool.call({ tool: `${CONNECTOR}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${CONNECTOR}list_teammate_frictions` })
 
   expect(JSON.stringify(called)).toContain('{\\"hasFrictions\\":false}')
 })
@@ -2532,14 +2534,14 @@ test("a setup subagent's report-back and finished rows are hidden, and others' a
   engine(on)
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await $.tool.call({
+  await runTool($, {
     tool: 'Agent',
     tool_use_id: 'toolu_agent',
     description: 'Review a batch',
     prompt: 'Review these sessions',
     subagent_type: 'general-purpose',
   })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_sub', command: 'ls', agentId: 'agent-1' })
+  await runTool($, { tool: 'Bash', tool_use_id: 'toolu_sub', command: 'ls', agentId: 'agent-1' })
   const message = (extra: Record<string, unknown>) => ({ text: 'ok', isExpanded: false, ...extra })
 
   expect(await row($, 'UserMessage', message({ origin: { kind: 'peer' }, from: { name: 'general-purpose' } }))).toBe('')
@@ -2587,7 +2589,7 @@ for (const [what, call] of [
     engine(on)
     engineRows(on)
     await $.command.run(TYPED_SETUP)
-    await $.tool.call({ ...call, tool_use_id: 'toolu_x' } as unknown as Parameters<typeof $.tool.call>[0])
+    await runTool($, { ...call, tool_use_id: 'toolu_x' })
 
     expect(await row($, 'ToolUse', { ...bashRow('toolu_x'), tool: call.tool }, 'toolu_x')).toBe('')
   })
@@ -2620,7 +2622,7 @@ for (const [what, call] of [
     engine(on)
     engineRows(on)
     await $.command.run(TYPED_SETUP)
-    await $.tool.call({ ...call, tool_use_id: 'toolu_y' } as unknown as Parameters<typeof $.tool.call>[0])
+    await runTool($, { ...call, tool_use_id: 'toolu_y' })
 
     expect(await row($, 'ToolUse', { ...bashRow('toolu_y'), tool: call.tool }, 'toolu_y')).toBe("the engine's row")
   })
@@ -2630,7 +2632,7 @@ test("when the folders can't be looked up, reads during setup stay visible", asy
   engine(on, { runFails: true })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await $.tool.call({ tool: 'Read', tool_use_id: 'toolu_r', file_path: `${PROJECTS}/-repo/abc.jsonl` })
+  await runTool($, { tool: 'Read', tool_use_id: 'toolu_r', file_path: `${PROJECTS}/-repo/abc.jsonl` })
 
   expect(await row($, 'ToolUse', { ...bashRow('toolu_r'), tool: 'Read' }, 'toolu_r')).toBe("the engine's row")
 })
