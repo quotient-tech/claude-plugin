@@ -981,7 +981,8 @@ async function lookUpDirs($: Api): Promise<SetupRun['dirs']> {
  * Adds what quotient knows to a `start_setup_run` reply: a pinned window's
  * end as its `startedAt`, so the skill's "two weeks before `startedAt`" is
  * the pinned window, and the routine ids the window's sessions mention. The
- * model only reads these, and never sends them back to Quotient.
+ * model only reads these, and never sends them back to Quotient. The company
+ * the operator joined is taken out: only quotient draws it.
  *
  * @param text - The reply's text
  * @param window - The pinned window, or undefined when none is pinned
@@ -993,11 +994,13 @@ function withStartAdditions(text: string | undefined, window: PinnedWindow | und
     ...(window === undefined ? {} : { startedAt: `${window.end}T00:00:00Z` }),
     ...(routineIds === undefined || routineIds.length === 0 ? {} : { routineIdsInSessions: routineIds }),
   }
-  if (Object.keys(additions).length === 0 || text === undefined) return undefined
+  if (text === undefined) return undefined
   try {
     const reply: unknown = JSON.parse(text)
     if (typeof reply !== 'object' || reply === null || Array.isArray(reply)) return undefined
-    return JSON.stringify({ ...reply, ...additions })
+    if (Object.keys(additions).length === 0 && !('joinedCompany' in reply)) return undefined
+    const { joinedCompany: _joinedCompany, ...rest } = reply as Record<string, unknown>
+    return JSON.stringify({ ...rest, ...additions })
   } catch {
     return undefined
   }
@@ -1700,9 +1703,11 @@ export const registerSetup: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
+    if (e.agentId !== undefined) return next(e)
+    // The summary's own turn is the only one that asks; any other ending drops it.
     const rowId = inviteRowId
-    if (e.reason !== 'answer' || e.agentId !== undefined || rowId === null) return next(e)
     inviteRowId = null
+    if (e.reason !== 'answer' || rowId === null) return next(e)
     const done = await next(e)
     await shareInvite($, rowId)
     return done
@@ -1718,6 +1723,7 @@ export const registerSetup: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
+    inviteRowId = null
     await endRun($)
     return next(e)
   }).catch(($, e, next) => next(e))

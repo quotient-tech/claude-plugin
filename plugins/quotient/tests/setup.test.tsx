@@ -1422,6 +1422,18 @@ test('a summary with no invite asks nothing when the turn ends', async ($, on) =
   expect(shown).not.toContain('What happens next')
 })
 
+for (const reason of ['aborted', 'error'] as const) {
+  test(`a summary turn that ends ${reason} asks nothing then or on a later turn`, async ($, on) => {
+    const seen = engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+    await callSummary($, SAVED)
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: reason === 'aborted', turnId: 't1', reason })
+    await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+
+    expect(seen.questions).toEqual([])
+  })
+}
+
 test('the question is asked once, not again on a later turn', async ($, on) => {
   const seen = engine(on, { invite: inviteReply(), share: 'Copy link' })
 
@@ -2079,6 +2091,17 @@ test('an operator on their first setup since joining sees the company they joine
 
   expectInOrder(shown, ['Joined Northwind Robotics', 'Reviewing 64 sessions'])
   expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+})
+
+test("the model reads start_setup_run's reply without the company the operator joined", async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind Robotics' } })
+  await $.command.run(TYPED_SETUP)
+
+  const called = await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  expect(JSON.stringify(called)).not.toContain('joinedCompany')
+  expect(JSON.stringify(called)).not.toContain('Northwind')
+  expect(JSON.stringify(called)).toContain('run-1')
 })
 
 test("escape sequences in the joined company's name are drawn as plain text", async ($, on) => {
