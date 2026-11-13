@@ -506,8 +506,9 @@ test("fix-friction: offers a thank-you only after the fix is recorded, through f
   assert.match(body, /Never offer it after Skip, after a record that may have failed, or for a fix only partly implemented\./);
   assert.match(body, /If the `fix_thanks` tool is available, call it with the solution's `id` as `solutionId`, and write nothing before it\./);
   assert.match(body, /If it answers that the thanks couldn't be sent, tell the operator, and offer to retry; on yes, call `fix_thanks` again the same way\./);
-  assert.match(body, /If the call returns an error instead of an answer, follow the steps for when the tool isn't available\./);
-  assert.match(body, /If the tool isn't available, or its call returned an error instead of an answer:/);
+  assert.match(body, /If it refuses with a reason that starts with `solutionId:`, offer no thank-you, and end your turn without writing anything else\./);
+  assert.match(body, /If the call returns any other error instead of an answer, follow the steps for when the tool isn't available\./);
+  assert.match(body, /If the tool isn't available, or its call returned an error other than that refusal:/);
 });
 
 // In a cloud session the skill asks and sends the thank-you itself, with the
