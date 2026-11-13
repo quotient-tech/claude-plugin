@@ -444,6 +444,16 @@ export function checkSummary(
 }
 
 /**
+ * Joins items into an English list: "a", "a and b", "a, b and c".
+ *
+ * @param items - At least one item
+ * @returns The list
+ */
+function listed(items: readonly string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
+
+/**
  * Draws setup's two start lines.
  *
  * @param els - The surface's elements
@@ -453,11 +463,16 @@ export function checkSummary(
 function startTree({ Box, Text }: Els, start: SetupStart) {
   const { sessions, automatedRuns, cloudRuns, firstDay, lastDay, checksTeammates } = start
   const teammates = checksTeammates ? TEAMMATES_CLAUSE : ''
+  const counts = [
+    [sessions, 'session'],
+    [automatedRuns, 'automated run'],
+    [cloudRuns, 'cloud routine run'],
+  ] as const
+  const clauses = counts.filter(([count]) => count > 0).map(([count, noun]) => plural(count, noun))
+  const reviewed = clauses.length === 0 ? 'no sessions' : listed(clauses)
   return (
     <Box flexDirection="column">
-      <Text>
-        {`Reviewing ${plural(sessions, 'session')}, ${plural(automatedRuns, 'automated run')} and ${plural(cloudRuns, 'cloud routine run')} from ${firstDay} to ${lastDay}${teammates}`}
-      </Text>
+      <Text>{`Reviewing ${reviewed} from ${firstDay} to ${lastDay}${teammates}`}</Text>
       <Text dimColor>This can take some time. You can keep working in another session while it runs.</Text>
     </Box>
   )
@@ -538,11 +553,14 @@ function solvedCardTree({ Box, Text }: Els, solved: SetupSolved) {
 function solvedTree(els: Els, check: SetupTeammateCheck) {
   const { Box, Text } = els
   const example = check.solved[0]
-  const count = check.solvedCount === 1 ? 'one' : String(check.solvedCount)
-  const intro = example === undefined ? '.' : check.solvedCount === 1 ? ':' : ". Here's an example:"
+  const delivery =
+    check.solvedCount === 1
+      ? "They'll get it as an anonymous suggestion in their next session."
+      : "They'll get these as anonymous suggestions in their next session."
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text bold>{`Your setup already solves ${count} of your teammates' frictions${intro}`}</Text>
+      <Text bold>{`Your setup solves ${check.solvedCount} of your teammates' frictions.`}</Text>
+      <Text>{delivery}</Text>
       {example !== undefined && solvedCardTree(els, example)}
     </Box>
   )

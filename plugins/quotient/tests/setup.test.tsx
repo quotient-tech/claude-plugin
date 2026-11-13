@@ -793,7 +793,7 @@ test("an invited operator sees their own frictions before the teammates' frictio
 
   const { shown } = await drawSummary($, INVITED)
 
-  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup already solves'])
+  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup solves'])
 })
 
 test("an invited operator's summary answers with only the instruction to end the turn, since it doesn't end with the hint", async ($, on) => {
@@ -835,7 +835,7 @@ test("an invited operator sees one example of the teammates' frictions their set
   const { texts, shown } = await drawSummary($, INVITED)
 
   expectInOrder(shown, [
-    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    "Your setup solves 3 of your teammates' frictions.",
     "A TEAMMATE'S FRICTION",
     'Lint passes on commit but fails in CI',
     'YOUR FIX',
@@ -874,7 +874,7 @@ test("an invited operator's summary ends with what's next and what they can do n
 
   expectInOrder(shown, [
     'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
-    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    "Your setup solves 3 of your teammates' frictions.",
     FIXES[0],
     "What's next",
     '1. Quotient will suggest all 3 to your teammates in their next session',
@@ -933,7 +933,10 @@ test('the solved headline counts every answer with a fix, beyond the one card sh
 
   const { texts, shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 5 of your teammates' frictions. Here's an example:")
+  expectInOrder(shown, [
+    "Your setup solves 5 of your teammates' frictions.",
+    "They'll get these as anonymous suggestions in their next session.",
+  ])
   expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(1)
 })
 
@@ -943,7 +946,12 @@ test("one fix found reads as one of your teammates' frictions, with its card", a
 
   const { shown } = await drawSummary($, INVITED)
 
-  expectInOrder(shown, ["Your setup already solves one of your teammates' frictions:", "A TEAMMATE'S FRICTION", FIXES[0]])
+  expectInOrder(shown, [
+    "Your setup solves 1 of your teammates' frictions.",
+    "They'll get it as an anonymous suggestion in their next session.",
+    "A TEAMMATE'S FRICTION",
+    FIXES[0],
+  ])
   expect(shown).not.toContain("Here's an example")
 })
 
@@ -961,7 +969,7 @@ test("fixes whose cards can't be shown keep the count but drop the example", asy
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions.")
+  expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
   for (const absent of ["Here's an example", "A TEAMMATE'S FRICTION", 'YOUR FIX']) {
     expect(shown).not.toContain(absent)
   }
@@ -973,7 +981,7 @@ test("one fix whose card can't be shown reads as one of your teammates' friction
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions.")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain("A TEAMMATE'S FRICTION")
 })
 
@@ -983,7 +991,7 @@ test('no fix found leaves out the solved block', async ($, on) => {
 
   const { shown } = await drawSummary($, INVITED)
 
-  for (const absent of ['already solves', "A TEAMMATE'S FRICTION", 'Quotient will suggest']) {
+  for (const absent of ['Your setup solves', "A TEAMMATE'S FRICTION", 'Quotient will suggest']) {
     expect(shown).not.toContain(absent)
   }
 })
@@ -994,7 +1002,7 @@ test('the desktop app draws the solved block too', async ($, on) => {
 
   const { shown } = await drawSummary($, INVITED, 'desktop')
 
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).toContain('YOUR FIX')
 })
 
@@ -1014,7 +1022,7 @@ test("a card whose text holds an id or an email is left out but still counted, a
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 3 of your teammates' frictions. Here's an example:")
+  expect(shown).toContain("Your setup solves 3 of your teammates' frictions.")
   expect(shown).not.toContain('fr-20261029-4')
   expect(shown).not.toContain('ron@example.com')
   expect(shown).toContain('Builds are slow')
@@ -1052,7 +1060,7 @@ test('each answer in a batch the teammate check sends gets a row of its own, and
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain(FIXES[2])
 })
 
@@ -1064,7 +1072,7 @@ test('a batch whose reply cannot be read still counts every answer it sent', asy
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
-  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions. Here's an example:")
+  expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
 })
 
 test("setup's own session learns only whether teammates have frictions, never their text", async ($, on) => {
@@ -1374,7 +1382,7 @@ test('setup_start lists the latest three runs of a small recurring automated job
     'quotient counted 1 session and 4 automated runs from the last two weeks, leaving out every session setup skips and 2 older runs of recurring automated jobs: it lists the latest runs of each job, about the square root of its run count, from 3 to 15.',
   )
   expect(result).toContain(`Batch 1, in ${PROJECTS}/-jobs: r1, r2, r3, r6; in ${PROJECTS}/-repo: s1\n`)
-  expect(shown).toContain('Reviewing 1 session, 4 automated runs and 0 cloud routine runs')
+  expect(shown).toContain('Reviewing 1 session and 4 automated runs from')
 })
 
 test('a busy automated job gets about the square root of its run count, at most 15', async ($, on) => {
@@ -1732,8 +1740,34 @@ test('counts of one in the start message are singular', async ($, on) => {
 
   const { shown } = await drawStart($, { ...START, sessions: 1, automatedRuns: 1, cloudRuns: 0 }, 'desktop')
 
-  expect(shown).toContain('Reviewing 1 session, 1 automated run and 0 cloud routine runs from Oct 15 to Oct 29')
+  expect(shown).toContain('Reviewing 1 session and 1 automated run from Oct 15 to Oct 29')
   expect(shown).not.toContain('Dry run')
+})
+
+test('the start line leaves out the counts that are 0', async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, automatedRuns: 0 })
+
+  expect(shown).toContain('Reviewing 64 sessions and 10 cloud routine runs from Oct 15 to Oct 29')
+})
+
+test("a start line with only sessions still says setup checks teammates' fixes", async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, sessions: 58, automatedRuns: 0, cloudRuns: 0, checksTeammates: true })
+
+  expect(shown).toContain(
+    "Reviewing 58 sessions from Oct 15 to Oct 29, and checking your setup for fixes to your teammates' frictions",
+  )
+})
+
+test('a start line with nothing to review says so', async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, sessions: 0, automatedRuns: 0, cloudRuns: 0 })
+
+  expect(shown).toContain('Reviewing no sessions from Oct 15 to Oct 29')
 })
 
 for (const [why, change, message] of [
