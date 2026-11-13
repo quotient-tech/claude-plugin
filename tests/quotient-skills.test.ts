@@ -506,6 +506,8 @@ test("fix-friction: offers a thank-you only after the fix is recorded, through f
   assert.match(body, /Never offer it after Skip, after a record that may have failed, or for a fix only partly implemented\./);
   assert.match(body, /If the `fix_thanks` tool is available, call it with the solution's `id` as `solutionId`, and write nothing before it\./);
   assert.match(body, /If it answers that the thanks couldn't be sent, tell the operator, and offer to retry; on yes, call `fix_thanks` again the same way\./);
+  assert.match(body, /If the call returns an error instead of an answer, follow the steps for when the tool isn't available\./);
+  assert.match(body, /If the tool isn't available, or its call returned an error instead of an answer:/);
 });
 
 // In a cloud session the skill asks and sends the thank-you itself, with the
@@ -514,10 +516,12 @@ test("fix-friction: without the mod, asks for the thank-you itself and sends wha
   const { body } = skill("fix-friction");
   assert.ok(body.includes("**This fix came from a teammate's setup. Want to say thanks?**"));
   assert.ok(body.includes("They'll see it at the start of their next session."));
-  assert.match(body, /Ask \*\*"Send a thank-you\?"\*\* with AskUserQuestion, with the header "Thanks" and exactly these options, in this order: \*\*Send a high-five \(Recommended\)\*\*, \*\*Write a note\*\*, \*\*Skip\*\*\./);
-  assert.match(body, /Type your note as your next message, or say skip\./);
-  assert.match(body, /If the note is over 80 characters, say "Keep it under 80 characters, or say skip\."/);
-  assert.match(body, /The reply, exactly as typed, is the note/);
+  assert.match(body, /Ask \*\*"Send a thank-you, or type a note below\?"\*\* with AskUserQuestion, with the header "Thanks" and exactly these options, in this order: \*\*Send a high-five \(Recommended\)\*\*, \*\*Skip\*\*\./);
+  assert.doesNotMatch(body, /Write a note|next message/);
+  assert.match(body, /Any other answer is a note the operator typed, and the answer, exactly as typed, is the note/);
+  assert.match(body, /If it's blank, ask the same question again with "Write a few words, or choose Skip\." before it/);
+  assert.match(body, /if it's over 80 characters, ask again with "Keep it under 80 characters, or choose Skip\." before it/);
+  assert.match(body, /If its reply's `status` is `alreadyRecorded`, Quotient already had a thank-you for this fix: write "Your thanks was already sent\." instead, and never say it wasn't sent\./);
   assert.match(body, /call `send_thank_you` with the solution's `id` as `solutionId`/);
   assert.match(body, /then write "High-five sent\." for a high-five, or "✓ Note sent\." for a note/);
   assert.match(body, /say "The thanks couldn't be sent\."/);
