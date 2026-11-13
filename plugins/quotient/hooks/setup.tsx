@@ -802,16 +802,18 @@ async function shareInvite($: Api, rowId: string): Promise<void> {
 }
 
 /**
- * Says how widely a friction reached: its share of the run's sources, never
- * shown below 1%, or its session count when the run's size isn't known.
+ * Says how widely a friction reached: its share of the sources the run
+ * recorded, from 1% to 100%, or its session count when none were recorded.
+ * A batch whose record failed still counts its sessions, which can put a
+ * friction in more sessions than were recorded.
  *
  * @param sessions - The sessions and routine runs it appeared in
- * @param reviewedCount - The sources the run reviews, when its start message was shown
+ * @param reviewedCount - The sources the run recorded as reviewed
  * @returns The text after the friction's impact
  */
 function reach(sessions: number, reviewedCount: number | undefined): string {
   if (reviewedCount === undefined || reviewedCount === 0) return plural(sessions, 'session')
-  return `${Math.max(1, Math.round((100 * sessions) / reviewedCount))}% of sessions`
+  return `${Math.min(100, Math.max(1, Math.round((100 * sessions) / reviewedCount)))}% of sessions`
 }
 
 /**
@@ -1473,15 +1475,15 @@ async function answerSummary(
     : undefined
   const checked = checkSummary(input, current.reviewedIds, teammates)
   if (checked.error !== undefined) return { deny: checked.error }
-  const { start } = current
-  const invite = await fetchInvite($)
-  const summary = {
-    ...checked.value,
-    ...(start === null ? {} : { reviewedCount: start.sessions + start.automatedRuns + start.cloudRuns }),
-    ...(invite === null ? {} : { invite }),
-  }
+  const reviewedCount = current.reviewedIds.length
+  const summary: SetupSummary = { ...checked.value, ...(reviewedCount === 0 ? {} : { reviewedCount }) }
   if (toolUseId !== undefined) {
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
+  }
+  // Fetched once the summary shows, since Claude Code may ask before the call runs.
+  const invite = await fetchInvite($)
+  if (invite !== null && toolUseId !== undefined) {
+    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary: { ...summary, invite } } }))
   }
   inviteRowId = invite === null || toolUseId === undefined ? null : toolUseId
   await endRun($)

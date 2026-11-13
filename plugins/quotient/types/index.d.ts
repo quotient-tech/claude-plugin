@@ -102,7 +102,7 @@ export type SetupSummary = {
   inCommon?: string
   /** Present when setup checked the operator's setup for teammates' fixes. */
   teammateCheck?: SetupTeammateCheck
-  /** How many sources the run reviews, from its start message; absent when it wasn't shown. */
+  /** How many sources the run recorded as reviewed; absent when it recorded none. */
   reviewedCount?: number
   /** The company's invite link, when it can invite and its trial has a seat left. */
   invite?: SetupInvite

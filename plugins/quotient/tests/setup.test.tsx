@@ -55,6 +55,7 @@ const SAVED = {
  * @param opts.teammates - The teammate frictions `list_teammate_frictions` lists
  * @param opts.findExit - The exit code of the `find` that lists the transcripts, 0 when absent
  * @param opts.invite - What `get_invite_link` replies, or 'throw' for a call that fails; `{}` when absent
+ * @param opts.onInvite - Runs while `get_invite_link` is being answered, as a permission prompt would
  * @param opts.connected - What connecting to the plugin's server resolves to, when it isn't connected
  * @param opts.share - The answer to "Copy to share", or null when it's dismissed
  * @param opts.isAway - Whether that answer came while the operator was away
@@ -85,6 +86,7 @@ function engine(
     refused?: string[]
     findExit?: number
     invite?: { text: string; isError?: boolean } | 'throw'
+    onInvite?: () => Promise<void>
     connected?: { isConnected: false; reason: string }
     share?: string | null
     isAway?: boolean
@@ -134,8 +136,9 @@ function engine(
     seen.spawned.push({ subagentType: e.subagentType, prompt: e.prompt })
     return { model: 'claude-test' }
   })
-  on('mcp.call', (_, e) => {
+  on('mcp.call', async (_, e) => {
     seen.mcpCalls.push({ server: e.server, tool: e.tool })
+    if (e.tool === 'get_invite_link') await opts.onInvite?.()
     if (e.tool === 'get_invite_link' && opts.invite !== undefined) {
       if (opts.invite === 'throw') throw new Error('socket hang up')
       return { value: { content: [{ type: 'text', text: opts.invite.text }], isError: opts.invite.isError ?? false } }
@@ -529,9 +532,20 @@ async function startSetup($: Parameters<TestBody>[0], start: Record<string, unkn
   await callTool($, START_TOOL, 'toolu_start', start)
 }
 
+/**
+ * Names as many sources as a batch records.
+ *
+ * @param count - How many
+ * @returns The sources' names
+ */
+function sourceNames(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `session-${i}`)
+}
+
 test('a saved summary draws every section in order', async ($, on) => {
   engine(on)
   await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(77))
 
   const { shown } = await drawSummary($, SAVED)
 
@@ -652,6 +666,7 @@ test('one friction and one session read in the singular', async ($, on) => {
 test("a friction in fewer than 1% of the run's sources reads as 1%", async ($, on) => {
   engine(on)
   await startSetup($, { ...START, sessions: 300 })
+  await recordReviewed($, 'toolu_add', sourceNames(300))
 
   const { shown } = await drawSummary($, { ...SAVED, frictions: 1, top: [{ ...SAVED.top[0], sessions: 1 }], remainingHigh: 0 })
 
@@ -666,7 +681,27 @@ test("the sample card's friction line names its impact in the accent color", asy
   expect(texts.find(one => one.text === 'Blocked')?.props.color).toBe('suggestion')
 })
 
-test("without the start message's counts, each row shows its session count", async ($, on) => {
+test("a friction's share counts only the sources setup reviewed, not the transcripts it skipped", async ($, on) => {
+  engine(on)
+  await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(18))
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 50% of sessions')
+})
+
+test('a friction seen in more sessions than were recorded reads as 100%', async ($, on) => {
+  engine(on)
+  await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(5))
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 100% of sessions')
+})
+
+test('with no sources recorded, each row shows its session count', async ($, on) => {
   engine(on)
 
   const { shown } = await drawSummary($, SAVED)
@@ -1195,6 +1230,20 @@ test("the first on their team sees the invite after the sample card, in place of
   expect(shown).not.toContain(LIST_FIXES_HINT)
   expect(texts.find(one => one.text.startsWith("You're the first"))?.props.bold).toBe(true)
   expect(texts.find(one => one.text.startsWith("They'll join"))?.props.dimColor).toBe(true)
+})
+
+test('the summary is drawn before quotient asks for the invite link, which may wait on a permission prompt', async ($, on) => {
+  let shownWhileAsking: string | undefined
+  const onInvite = async () => {
+    shownWhileAsking = (await mountSummary($, SAVED)).shown
+  }
+  engine(on, { invite: inviteReply(), onInvite })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shownWhileAsking).toContain('Your top frictions')
+  expect(shownWhileAsking).not.toContain(INVITE_URL)
+  expect(shown).toContain(INVITE_URL)
 })
 
 test('a summary with the invite tells the model only to end the turn, without the link', async ($, on) => {
