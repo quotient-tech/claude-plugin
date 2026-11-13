@@ -44,18 +44,18 @@ const SKIPPED_SHOWN = 'The operator sees that the fix was skipped. End your turn
 const RECORDED_SHOWN =
   'The operator sees "Fix implemented" under your "✓ Applied." line. Now call fix_thanks with the same solutionId, and write nothing before it.'
 const THANKS_OVER = 'The operator has answered. End your turn now: write nothing else.'
-const THANKS_QUESTION = 'Send a thank-you?'
+// A note is typed as the question's free-text answer, which the dialog
+// offers below the options.
+const THANKS_QUESTION = 'Send a thank-you, or type a note below?'
 const HIGH_FIVE = 'Send a high-five (Recommended)'
-const WRITE_NOTE = 'Write a note'
 const SKIP = 'Skip'
-const NOTE_PANE = 'thanks-note'
 // The most a thank-you toast shows after its "Note from a teammate:" prefix,
 // less room for the toast's word wrap, so the teammate sees the whole note.
 // Counted as JavaScript counts them, which counts an emoji as the two
 // columns it takes.
 const NOTE_LIMIT = 80
-const EMPTY_NOTE = 'Write a few words, or press Esc to skip.'
-const LONG_NOTE = 'Keep it under 80 characters, or press Esc to skip.'
+const EMPTY_NOTE = 'Write a few words, or choose Skip.'
+const LONG_NOTE = 'Keep it under 80 characters, or choose Skip.'
 // The /quotient:list-fixes pane's id, which list-fixes.tsx opens it with.
 const LIST_PANE = 'frictions'
 const CLOSING_IN_PANE = 'Your other fixes are still in the side pane. Run /list-fixes to open it again anytime.'
@@ -105,12 +105,7 @@ const implemented = atom({ plugin: 'quotient', key: 'fixesImplemented' } as cons
 // Set only when a fix is recorded, and cleared once the operator answers, so
 // a thank-you is offered once and only for a fix Quotient has recorded.
 const thanksDue = atom({ plugin: 'quotient', key: 'thanksDue' } as const, null as ThanksDue, { shape: 'thanks-due-1' })
-const noteError = atom({ plugin: 'quotient', key: 'noteError' } as const, null as string | null)
 
-// Settles the fix_thanks call waiting on the note pane: with the note, or
-// null when the operator leaves it. A function can't be kept in state, so it
-// lives here, in the plugin's own environment.
-let settleNote: ((note: string | null) => void) | null = null
 // Whether the dialog answered the thank-you question itself while the
 // operator was away. `$.ui.ask` returns only the label, so a hook on the
 // question's own call reads it.
@@ -396,20 +391,29 @@ async function answerOutcome(
 }
 
 /**
- * Asks which thank-you to send. A dismissed question counts as Skip, and so
- * does one answered for the operator while they were away: a thank-you goes
- * out only when they choose it.
+ * Asks which thank-you to send, asking again with the reason while a typed
+ * note can't be sent. A dismissed question counts as Skip, and so does one
+ * answered for the operator while they were away: a thank-you goes out only
+ * when they choose it.
  *
  * @param $ - The engine
- * @returns The option's label
+ * @returns null for a high-five, the note as typed, or undefined for Skip
  */
-async function askThanks($: EngineInterface): Promise<string> {
-  answeredWhileAway = false
-  try {
-    const choice = await $.ui.ask(THANKS_QUESTION, { header: 'Thanks', options: [HIGH_FIVE, WRITE_NOTE, SKIP] })
-    return answeredWhileAway ? SKIP : choice
-  } catch {
-    return SKIP
+async function askThanks($: EngineInterface): Promise<string | null | undefined> {
+  let problem: string | null = null
+  for (;;) {
+    answeredWhileAway = false
+    let choice: string
+    try {
+      const question = problem === null ? THANKS_QUESTION : `${problem} ${THANKS_QUESTION}`
+      choice = await $.ui.ask(question, { header: 'Thanks', options: [HIGH_FIVE, SKIP] })
+    } catch {
+      return undefined
+    }
+    if (answeredWhileAway || choice === SKIP) return undefined
+    if (choice === HIGH_FIVE) return null
+    problem = checkNote(choice)
+    if (problem === null) return choice
   }
 }
 
@@ -423,34 +427,6 @@ export function checkNote(note: string): string | null {
   if (note.trim() === '') return EMPTY_NOTE
   if (note.length > NOTE_LIMIT) return LONG_NOTE
   return null
-}
-
-/**
- * Opens the note pane with the keyboard and waits for the operator to send
- * a note or leave the pane.
- *
- * @param $ - The engine
- * @returns The note as typed, or null when they left it
- */
-async function askNote($: EngineInterface): Promise<string | null> {
-  await update($, noteError, () => null)
-  const note = new Promise<string | null>(resolve => {
-    settleNote = resolve
-  })
-  const opened = await $.ui.open({ id: NOTE_PANE, title: 'Your note', focus: true, closeOnEscape: true, rows: 3 })
-  if (!opened.isPlaced) settleNote?.(null)
-  return note
-}
-
-/**
- * Settles the call waiting on the note pane, once.
- *
- * @param note - The note, or null when the operator left the pane
- */
-function endNote(note: string | null): void {
-  const settle = settleNote
-  settleNote = null
-  settle?.(note)
 }
 
 /**
@@ -516,9 +492,8 @@ async function answerThanks(
 
   let message = due.message
   if (message === undefined) {
-    const choice = await askThanks($)
-    message = choice === HIGH_FIVE ? null : choice === WRITE_NOTE ? await askNote($) : undefined
-    if (message === undefined || (choice === WRITE_NOTE && message === null)) {
+    message = await askThanks($)
+    if (message === undefined) {
       await update($, thanksDue, () => null)
       await show({ closing: await closingLine($) })
       return { result: THANKS_OVER }
@@ -568,38 +543,6 @@ function thanksTree({ Box, Text }: Els, shown: Extract<FixDrawn[string], { kind:
           <Text dimColor>{`  ${shown.closing}`}</Text>
         </Box>
       )}
-    </Box>
-  )
-}
-
-/**
- * Draws the note pane: the field, and why the last note wasn't sent.
- *
- * @param $ - The engine
- * @param els - The pane's elements
- * @returns The pane's body
- */
-async function noteTree($: EngineInterface, { Box, Text, Input }: Pick<Elements['terminal'], 'Box' | 'Text' | 'Input'>) {
-  const error = await read($, noteError)
-  return (
-    <Box flexDirection="column">
-      <Input
-        key="note"
-        label="Your note:"
-        placeholder="Thanks, this fixed my CI failures!"
-        submitLabel="send"
-        autoFocus
-        onSubmit={value => {
-          const problem = checkNote(value)
-          if (problem !== null) {
-            void update($, noteError, () => problem)
-            return
-          }
-          endNote(value)
-          void $.ui.close({ id: NOTE_PANE })
-        }}
-      />
-      {error !== null && <Text color="error">{error}</Text>}
     </Box>
   )
 }
@@ -740,25 +683,11 @@ export const registerFix: Register = on => {
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     const asked = await next(e)
-    const isThanks = e.questions.some(one => one.question === THANKS_QUESTION)
+    const isThanks = e.questions.some(one => one.question.endsWith(THANKS_QUESTION))
     const reply = asked.result as { afkTimeoutMs?: number } | undefined
     if (isThanks && reply?.afkTimeoutMs !== undefined) answeredWhileAway = true
     return asked
   })
-
-  on('ui.render', { component: 'Pane', requestId: NOTE_PANE }, async ($, e) => {
-    const els = $.ui.resolve(e)
-    const { Box } = els
-    // A surface with no text field can't take a note; Esc still leaves it.
-    if (!('Input' in els)) return <Box />
-    return noteTree($, els)
-  }).catch(($, e, next) => next(e))
-
-  // Esc, the close mark, or the pane going away leaves the note unsent.
-  on('ui.close', { id: NOTE_PANE }, async ($, e, next) => {
-    if (e.origin.kind !== 'plugin') endNote(null)
-    return next(e)
-  }).catch(($, e, next) => next(e))
 
   // A fix tool's own row draws what the call came to, and its result row,
   // which would only repeat the instruction to the model, is hidden.

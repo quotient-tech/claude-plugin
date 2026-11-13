@@ -11,7 +11,7 @@ type On = Parameters<TestBody>[1]
 const CARD_TOOL = 'mcp__quotient__fix_card'
 const OUTCOME_TOOL = 'mcp__quotient__fix_outcome'
 const THANKS_TOOL = 'mcp__quotient__fix_thanks'
-const THANKS_QUESTION = 'Send a thank-you?'
+const THANKS_QUESTION = 'Send a thank-you, or type a note below?'
 const RECORDED_SHOWN =
   'The operator sees "Fix implemented" under your "✓ Applied." line. Now call fix_thanks with the same solutionId, and write nothing before it.'
 const THANKS_OVER = 'The operator has answered. End your turn now: write nothing else.'
@@ -81,10 +81,10 @@ function engine(
     recorded?: { text: string; isError: boolean }[]
     markRejects?: 'denied' | 'failed'
     rowsDenied?: boolean
-    thanks?: string | null
+    // One answer per time the thanks question is asked; null dismisses it.
+    thanks?: string | null | (string | null)[]
     isAway?: boolean
     sent?: ({ text: string; isError: boolean } | 'throw')[]
-    isNoteUnplaced?: boolean
     openPanes?: string[]
     isNoneLeft?: boolean
     isAllDoneAfter?: boolean
@@ -105,6 +105,7 @@ function engine(
   }
   const sends = [...(opts.sent ?? [])]
   const records = [...(opts.recorded ?? [])]
+  const answers = Array.isArray(opts.thanks) ? [...opts.thanks] : [opts.thanks ?? null]
   on('ui.panes', () => ({
     value: (opts.openPanes ?? []).map(id => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })),
   }))
@@ -114,10 +115,11 @@ function engine(
   })
   on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
     seen.questions.push((e as unknown as { questions: unknown }).questions)
-    const answer = opts.thanks ?? null
+    const asked = (e as unknown as { questions: { question: string }[] }).questions[0]?.question ?? ''
+    const answer = answers.length > 1 ? (answers.shift() ?? null) : (answers[0] ?? null)
     if (answer === null) return { deny: 'dismissed' }
     const away = opts.isAway === true ? { afkTimeoutMs: 60_000 } : {}
-    return { result: { questions: [], answers: { [THANKS_QUESTION]: answer }, ...away } } as never
+    return { result: { questions: [], answers: { [asked]: answer }, ...away } } as never
   })
   let rowReads = 0
   on('tool.register', (_, e) => {
@@ -131,9 +133,6 @@ function engine(
   })
   on('ui.open', (_, e) => {
     seen.opened.push(e as unknown as Record<string, unknown>)
-    if (opts.isNoteUnplaced === true && e.id === NOTE_PANE) {
-      return { value: { isPlaced: false, reason: 'no-surface: a test' } } as never
-    }
     return { value: { isPlaced: true } }
   })
   on('ui.close', (_, e) => {
@@ -715,7 +714,6 @@ test('after a recorded fix, fix_thanks says where the fix came from and asks the
         header: 'Thanks',
         options: [
           { label: 'Send a high-five (Recommended)', description: '' },
-          { label: 'Write a note', description: '' },
           { label: 'Skip', description: '' },
         ],
         multiSelect: false,
@@ -894,174 +892,95 @@ test('a retry after a failed send sends the same choice again without asking twi
   expect(retryRow).not.toContain(LEAD)
 })
 
-const NOTE_PANE = 'thanks-note'
-const EMPTY_NOTE = 'Write a few words, or press Esc to skip.'
-const LONG_NOTE = 'Keep it under 80 characters, or press Esc to skip.'
+const EMPTY_NOTE = 'Write a few words, or choose Skip.'
+const LONG_NOTE = 'Keep it under 80 characters, or choose Skip.'
 
 /**
- * Waits until a condition holds, while a pending tool call runs.
+ * The questions the engine was asked, by their text.
  *
- * @param check - The condition
- */
-async function until(check: () => boolean) {
-  // The test kit's types carry no timers; Node's are there at run time.
-  const { setTimeout } = globalThis as unknown as { setTimeout: (run: () => void, ms: number) => void }
-  for (let i = 0; i < 200 && !check(); i++) await new Promise<void>(resolve => setTimeout(resolve, 5))
-  expect(check()).toBe(true)
-}
-
-/**
- * Mounts the note pane as the engine would draw it.
- *
- * @param $ - The engine
- * @returns The mounted pane
- */
-function mountNote($: Api) {
-  return $.ui.mount({
-    plugin: 'quotient',
-    component: 'Pane',
-    requestId: NOTE_PANE,
-    surface: 'terminal',
-    props: {
-      title: 'Your note',
-      isFocused: true,
-      bodyColumns: 80,
-      placement: 'inline',
-      scroll: { offset: 0, bodyRows: 4 },
-      view: {},
-    },
-  } as Parameters<typeof $.ui.mount>[0])
-}
-
-/**
- * Chooses "Write a note" on a recorded fix and waits for the note pane.
- *
- * @param $ - The engine
  * @param seen - What the engine recorded
- * @returns The pending call and the mounted note pane
+ * @returns Each question's text, in order
  */
-async function startNote($: Api, seen: ReturnType<typeof engine>) {
+function questionTexts(seen: ReturnType<typeof engine>) {
+  return (seen.questions as { question: string }[][]).map(([one]) => one?.question)
+}
+
+test('a note typed as the answer is sent exactly as typed, with no pane opened, and the row says it was sent', async ($, on) => {
+  const seen = engine(on, { thanks: '  Thanks, this fixed my CI failures!\n' })
   await recordFix($)
-  let settled = false
-  const call = callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' }).then(result => {
-    settled = true
-    return result
-  })
-  await until(() => seen.opened.some(pane => pane.id === NOTE_PANE))
-  const pane = await mountNote($)
-  return { call, pane, isSettled: () => settled }
-}
 
-/**
- * Types a note into the pane's field and presses Enter, as the operator would.
- *
- * @param $ - The engine
- * @param text - The field's whole text
- */
-async function typeNote($: Api, text: string) {
-  await $.ui.input({ plugin: 'quotient', key: 'note', text, requestId: NOTE_PANE })
-}
-
-/**
- * Joins a mounted drawing's texts.
- *
- * @param ui - The mounted drawing
- * @returns Its texts, one per line
- */
-async function textOf(ui: Awaited<ReturnType<typeof mountNote>>) {
-  return (await ui.findAll({ type: 'Text' })).map(text => text.text).join('\n')
-}
-
-test('writing a note opens a focused pane with the field, and sends the note exactly as typed', async ($, on) => {
-  const seen = engine(on, { thanks: 'Write a note' })
-  const { call, pane } = await startNote($, seen)
-  const field = await pane.find({ type: 'Input', key: 'note' })
-
-  await typeNote($, '  Thanks, this fixed my CI failures!\n')
-  const called = await call
-  await pane.unmount()
+  const called = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
   const shown = await drawRow($, 'ToolUse', THANKS_TOOL, 'toolu_thanks')
 
-  expect(seen.opened.find(one => one.id === NOTE_PANE)).toMatchObject({ focus: true, closeOnEscape: true })
-  expect(field?.props).toMatchObject({ label: 'Your note:', placeholder: 'Thanks, this fixed my CI failures!' })
   expect(called.result).toBe(THANKS_OVER)
   expect(seen.thanks).toEqual([{ solutionId: 's-1', message: '  Thanks, this fixed my CI failures!\n' }])
-  expect(seen.closed).toContain(NOTE_PANE)
+  expect(seen.opened).toEqual([])
   expect(seen.toasts).toEqual([])
   expect(shown).toContain('✓ Note sent.')
   expect(shown.indexOf(LEAD)).toBeLessThan(shown.indexOf('✓ Note sent.'))
 })
 
 for (const [name, text, error] of [
-  ['an empty note', '', EMPTY_NOTE],
   ['a note of only spaces', ' \n  ', EMPTY_NOTE],
   ['a note over 80 characters', 'a'.repeat(81), LONG_NOTE],
 ] as const) {
-  test(`${name} shows an error, keeps the field open, and sends nothing`, async ($, on) => {
-    const seen = engine(on, { thanks: 'Write a note' })
-    const { call, pane, isSettled } = await startNote($, seen)
+  test(`${name} asks again saying why, and sends only the note answered next`, async ($, on) => {
+    const seen = engine(on, { thanks: [text, 'Thanks!'] })
+    await recordFix($)
 
-    await typeNote($, text)
-    const shown = await textOf(pane)
+    const called = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
 
-    expect(shown).toContain(error)
-    expect(seen.thanks).toEqual([])
-    expect(isSettled()).toBe(false)
-    expect(seen.closed).not.toContain(NOTE_PANE)
-
-    await typeNote($, 'Thanks!')
-    await call
-    await pane.unmount()
+    expect(called.result).toBe(THANKS_OVER)
+    expect(questionTexts(seen)).toEqual([THANKS_QUESTION, `${error} ${THANKS_QUESTION}`])
     expect(seen.thanks).toEqual([{ solutionId: 's-1', message: 'Thanks!' }])
   })
 }
 
-test('a note of exactly 80 characters is sent', async ($, on) => {
-  const seen = engine(on, { thanks: 'Write a note' })
-  const { call, pane } = await startNote($, seen)
-
-  await typeNote($, 'a'.repeat(80))
-  await call
-  await pane.unmount()
-
-  expect(seen.thanks).toHaveLength(1)
-})
-
-// The test kit can't raise the person's Esc on a pane, so this leaves the
-// pane the other way it can be left, unplaced, which settles the same way.
-// Esc itself is checked by hand.
-test('a note pane the operator leaves counts as Skip: nothing is sent or shown', async ($, on) => {
-  const seen = engine(on, { thanks: 'Write a note', isNoteUnplaced: true })
+test('a note that is asked again can still be skipped', async ($, on) => {
+  const seen = engine(on, { thanks: ['a'.repeat(81), 'Skip'] })
   await recordFix($)
 
   const called = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
-  const shown = await drawRow($, 'ToolUse', THANKS_TOOL, 'toolu_thanks')
-  const again = await callTool($, THANKS_TOOL, 'toolu_again', { solutionId: 's-1' })
+
+  expect(called.result).toBe(THANKS_OVER)
+  expect(seen.questions).toHaveLength(2)
+  expect(seen.thanks).toEqual([])
+})
+
+test('a note of exactly 80 characters is sent', async ($, on) => {
+  const seen = engine(on, { thanks: 'a'.repeat(80) })
+  await recordFix($)
+
+  await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
+
+  expect(seen.thanks).toEqual([{ solutionId: 's-1', message: 'a'.repeat(80) }])
+})
+
+test('a note answered for the operator while they were away counts as Skip, so nothing is sent', async ($, on) => {
+  const seen = engine(on, { thanks: 'Thanks!', isAway: true })
+  await recordFix($)
+
+  const called = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
 
   expect(called.result).toBe(THANKS_OVER)
   expect(seen.thanks).toEqual([])
-  expect(shown).not.toContain('✓')
-  expect(again.deny).toMatch(/^solutionId:/)
 })
 
-test('a retry after a failed note resends the same note without opening the pane again', async ($, on) => {
-  const seen = engine(on, { thanks: 'Write a note', sent: ['throw'] })
-  const { call, pane } = await startNote($, seen)
-  await typeNote($, 'Thanks!')
-  const failed = await call
-  await pane.unmount()
-  const opens = seen.opened.filter(one => one.id === NOTE_PANE).length
+test('a retry after a failed note resends the same note without asking again', async ($, on) => {
+  const seen = engine(on, { thanks: 'Thanks!', sent: ['throw'] })
+  await recordFix($)
+  const failed = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
 
   const retried = await callTool($, THANKS_TOOL, 'toolu_retry', { solutionId: 's-1' })
   const retryRow = await drawRow($, 'ToolUse', THANKS_TOOL, 'toolu_retry')
 
   expect(failed.result).toMatch(/^The thanks couldn't be sent: /)
   expect(retried.result).toBe(THANKS_OVER)
+  expect(seen.questions).toHaveLength(1)
   expect(seen.thanks).toEqual([
     { solutionId: 's-1', message: 'Thanks!' },
     { solutionId: 's-1', message: 'Thanks!' },
   ])
-  expect(seen.opened.filter(one => one.id === NOTE_PANE)).toHaveLength(opens)
   expect(retryRow).toContain('✓ Note sent.')
 })
 
@@ -1091,11 +1010,9 @@ test('with other fixes left and the list pane open, the row says they are still 
 })
 
 test('with no other fixes left, the flow ends with no closing line', async ($, on) => {
-  const seen = engine(on, { thanks: 'Write a note', isNoneLeft: true })
-  const { call, pane } = await startNote($, seen)
-  await typeNote($, 'Thanks!')
-  await call
-  await pane.unmount()
+  engine(on, { thanks: 'Thanks!', isNoneLeft: true })
+  await recordFix($)
+  await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
 
   const shown = await drawRow($, 'ToolUse', THANKS_TOOL, 'toolu_thanks')
 
