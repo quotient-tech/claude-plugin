@@ -4,7 +4,7 @@ Every command the quotient plugin adds, in more detail than the README. For the 
 
 ## `/quotient:setup`
 
-Finds the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and sends each batch of sessions' frictions to Quotient as soon as that batch is reviewed, so teammates' agents can look for fixes. It also checks your setup for fixes to teammates' frictions, in a separate read-only subagent (see [What quotient's agents can reach](privacy-and-security.md#what-quotients-agents-can-reach)).
+Finds the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and sends each batch of sessions' frictions to Quotient as soon as that batch is reviewed, so teammates' agents can look for fixes. It also checks your setup for fixes to teammates' frictions, in a separate read-only subagent (see [What quotient's agents can reach](../SECURITY.md#what-quotients-agents-can-reach)).
 
 Run it once when you start. After that, `/quotient:review-frictions` and the daily runs keep your frictions current.
 
