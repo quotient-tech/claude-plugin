@@ -102,6 +102,8 @@ export type SetupSummary = {
   inCommon?: string
   /** Present when setup checked the operator's setup for teammates' fixes. */
   teammateCheck?: SetupTeammateCheck
+  /** How many sources the run reviews, from its start message; absent when it wasn't shown. */
+  reviewedCount?: number
 }
 
 /** The fields of a `setup_start` call that passed its checks. */

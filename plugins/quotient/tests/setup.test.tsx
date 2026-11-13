@@ -458,8 +458,21 @@ function expectInOrder(shown: string, parts: readonly string[]) {
   }
 }
 
+/**
+ * Runs /quotient:setup and shows its start message, so the summary knows how
+ * many sources the run reviews.
+ *
+ * @param $ - The engine
+ * @param start - The start message's fields
+ */
+async function startSetup($: Parameters<TestBody>[0], start: Record<string, unknown> = START) {
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', start)
+}
+
 test('a saved summary draws every section in order', async ($, on) => {
   engine(on)
+  await startSetup($)
 
   const { shown } = await drawSummary($, SAVED)
 
@@ -468,13 +481,13 @@ test('a saved summary draws every section in order', async ($, on) => {
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
-    'Where your agents lost the most time',
-    'HIGH',
+    'Your top frictions',
+    '▲ high',
     'Lint passes on commit but fails in CI',
-    'Quality · 9 sessions',
-    'MED',
+    'Quality · 12% of sessions',
+    '◆ medium',
     'zsh quoting breaks shell commands',
-    'Time lost · 4 sessions',
+    'Time lost · 5% of sessions',
     '+ 2 more, 1 of them high severity',
     'Your teammates have probably already fixed some of these.',
     'Two of your top three involve your CI and local setup.',
@@ -500,10 +513,11 @@ test('the summary colors severities, checks and the remaining line as the mockup
   })
   const find = (text: string) => texts.find(one => one.text === text)?.props
 
-  expect(find('HIGH')?.color).toBe('error')
-  expect(find('MED')?.color).toBe('warning')
-  expect(find('LOW')?.dimColor).toBe(true)
+  expect(find('▲ high')?.color).toBe('error')
+  expect(find('◆ medium')?.color).toBe('warning')
+  expect(find('▼ low')?.dimColor).toBe(true)
   expect(find('✓')?.color).toBe('success')
+  expect(find('Quality')?.color).toBe('suggestion')
   expect(find('Quality · 9 sessions')?.dimColor).toBe(true)
   expect(find('+ 2 more, 2 of them high severity')?.dimColor).toBe(true)
 })
@@ -520,7 +534,7 @@ test('the sample card is fixed text, whatever the top frictions are', async ($, 
     'SAMPLE',
     '· not a real fix',
     'Lint passes on commit but fails in CI',
-    '9 of your sessions · about 3.5 hours lost',
+    'Blocked · in 14% of your sessions',
     '· Ron Burgundy',
     'Run ESLint from the repo root in the pre-commit hook, so commits use the same rules as CI.',
     '+ cd "$(git rev-parse --show-toplevel)" && npx eslint --cache $FILES',
@@ -546,7 +560,7 @@ test('with no new frictions only the headline and what is working show', async (
     "What's working",
     'The pre-commit typecheck stopped type errors before they reached CI',
   ])
-  for (const absent of ["They're saved", 'Where your agents', 'more,', 'Your teammates', 'SAMPLE', '/list-fixes']) {
+  for (const absent of ["They're saved", 'Your top frictions', 'more,', 'Your teammates', 'SAMPLE', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
 })
@@ -574,6 +588,32 @@ test('one friction and one session read in the singular', async ($, on) => {
   expect(shown).toContain('Your agents ran into 1 friction in the last two weeks.')
   expect(shown).toContain('Quality · 1 session')
   expect(shown).not.toContain('1 sessions')
+})
+
+test("a friction in fewer than 1% of the run's sources reads as 1%", async ($, on) => {
+  engine(on)
+  await startSetup($, { ...START, sessions: 300 })
+
+  const { shown } = await drawSummary($, { ...SAVED, frictions: 1, top: [{ ...SAVED.top[0], sessions: 1 }], remainingHigh: 0 })
+
+  expect(shown).toContain('Quality · 1% of sessions')
+})
+
+test("the sample card's friction line names its impact in the accent color", async ($, on) => {
+  engine(on)
+
+  const { texts } = await drawSummary($, SAVED)
+
+  expect(texts.find(one => one.text === 'Blocked')?.props.color).toBe('suggestion')
+})
+
+test("without the start message's counts, each row shows its session count", async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 9 sessions')
+  expect(shown).not.toContain('% of sessions')
 })
 
 test('each impact category draws as its label beside the session count', async ($, on) => {
@@ -725,7 +765,7 @@ test("an invited operator's summary opens with setup being done and leaves out t
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
-    'Where your agents lost the most time',
+    'Your top frictions',
     'Lint passes on commit but fails in CI',
     '+ 2 more, 1 of them high severity',
   ])

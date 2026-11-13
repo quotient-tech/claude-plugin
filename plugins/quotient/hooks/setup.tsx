@@ -64,7 +64,7 @@ const END_TURN_WITH_HINT = `The summary is shown to the operator. Its last line 
 const MAX_ITEMS = 3
 // textError counts JavaScript string length, where an emoji takes 2 or more.
 const TEXT_LIMIT = `At most ${MAX_TEXT} characters, counting an emoji as 2 or more`
-const SEVERITY_WIDTH = 6
+const SEVERITY_WIDTH = 10
 // The card's inner width: the skill's text sample is 72 columns inside its box.
 const CARD_WIDTH = 72
 const SEVERITIES = ['high', 'medium', 'low'] as const
@@ -119,9 +119,9 @@ const SUMMARY_SCHEMA = {
 }
 
 const SEVERITY_LABELS = {
-  high: { label: 'HIGH', color: 'error' },
-  medium: { label: 'MED', color: 'warning' },
-  low: { label: 'LOW', color: undefined },
+  high: { label: '▲ high', color: 'error' },
+  medium: { label: '◆ medium', color: 'warning' },
+  low: { label: '▼ low', color: undefined },
 } as const
 
 // The sample fix card. It's fixed text, and its teammate is made up: no tool
@@ -131,7 +131,8 @@ const CARD = {
   notReal: '· not a real fix',
   frictionTitle: 'YOUR FRICTION',
   friction: 'Lint passes on commit but fails in CI',
-  frictionSeen: '9 of your sessions · about 3.5 hours lost',
+  frictionImpact: 'Blocked',
+  frictionSeen: ' · in 14% of your sessions',
   solutionTitle: 'SOLUTION FROM A TEAMMATE',
   teammate: '· Ron Burgundy',
   solution: 'Run ESLint from the repo root in the pre-commit hook, so commits use the same rules as CI.',
@@ -151,7 +152,7 @@ const SOLVED_CARD = {
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const drawn = atom({ plugin: 'quotient', key: 'setupDrawn' } as const, {} as SetupDrawn, { shape: 'drawn-3' })
+const drawn = atom({ plugin: 'quotient', key: 'setupDrawn' } as const, {} as SetupDrawn, { shape: 'drawn-4' })
 const NO_RUN: SetupRun = {
   isRunning: false,
   toolUseIds: [],
@@ -479,7 +480,10 @@ function cardTree({ Box, Text }: Els) {
           {CARD.frictionTitle}
         </Text>
         <Text bold>{CARD.friction}</Text>
-        <Text dimColor>{CARD.frictionSeen}</Text>
+        <Text dimColor>
+          <Text color="suggestion">{CARD.frictionImpact}</Text>
+          {CARD.frictionSeen}
+        </Text>
       </Box>
       <Text dimColor>{'╌'.repeat(CARD_WIDTH)}</Text>
       <Text>
@@ -576,6 +580,19 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
 }
 
 /**
+ * Says how widely a friction reached: its share of the run's sources, never
+ * shown below 1%, or its session count when the run's size isn't known.
+ *
+ * @param sessions - The sessions and routine runs it appeared in
+ * @param reviewedCount - The sources the run reviews, when its start message was shown
+ * @returns The text after the friction's impact
+ */
+function reach(sessions: number, reviewedCount: number | undefined): string {
+  if (reviewedCount === undefined || reviewedCount === 0) return plural(sessions, 'session')
+  return `${Math.max(1, Math.round((100 * sessions) / reviewedCount))}% of sessions`
+}
+
+/**
  * Draws setup's final summary: only its designed sections, from the checked
  * fields, in the order the mockups show them.
  *
@@ -585,7 +602,7 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
  */
 function summaryTree(els: Els, summary: SetupSummary) {
   const { Box, Text } = els
-  const { frictions, working, top, remainingHigh, inCommon, teammateCheck } = summary
+  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount } = summary
   const isInvited = teammateCheck !== undefined
   const found = `Your agents ran into ${frictions === 0 ? 'no new frictions' : plural(frictions, 'friction')} in the last two weeks.`
   const remaining = frictions - top.length
@@ -605,7 +622,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
       )}
       {top.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>Where your agents lost the most time</Text>
+          <Text bold>Your top frictions</Text>
           {top.map(friction => {
             const { label, color } = SEVERITY_LABELS[friction.severity]
             return (
@@ -619,7 +636,10 @@ function summaryTree(els: Els, summary: SetupSummary) {
                   <Text>{friction.description}</Text>
                 </Box>
                 <Box flexShrink={0} marginLeft={2}>
-                  <Text dimColor>{`${impactLabel(friction.impact)} · ${plural(friction.sessions, 'session')}`}</Text>
+                  <Text dimColor>
+                    <Text color="suggestion">{impactLabel(friction.impact)}</Text>
+                    {` · ${reach(friction.sessions, reviewedCount)}`}
+                  </Text>
                 </Box>
               </Box>
             )
@@ -1207,7 +1227,9 @@ async function answerSummary(
     : undefined
   const checked = checkSummary(input, current.reviewedIds, teammates)
   if (checked.error !== undefined) return { deny: checked.error }
-  const summary = checked.value
+  const { start } = current
+  const summary =
+    start === null ? checked.value : { ...checked.value, reviewedCount: start.sessions + start.automatedRuns + start.cloudRuns }
   if (toolUseId !== undefined) {
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
   }
