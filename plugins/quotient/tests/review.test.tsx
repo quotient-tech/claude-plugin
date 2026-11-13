@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { runTool } from './fixtures/run-tool'
+
 type On = Parameters<TestBody>[1]
 type Engine = Parameters<TestBody>[0]
 
@@ -106,7 +108,7 @@ function engine(
  * @returns What the call resolved to
  */
 function callTool($: Engine, tool: string, input: Record<string, unknown>) {
-  return $.tool.call({ tool, tool_use_id: 'toolu_1', ...input } as unknown as Parameters<typeof $.tool.call>[0])
+  return runTool($, { tool, tool_use_id: 'toolu_1', ...input })
 }
 
 test('the session registers review_sessions in the tool list', async ($, on) => {

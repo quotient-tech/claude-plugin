@@ -102,6 +102,20 @@ export type SetupSummary = {
   inCommon?: string
   /** Present when setup checked the operator's setup for teammates' fixes. */
   teammateCheck?: SetupTeammateCheck
+  /** How many sources the run recorded as reviewed; absent when it recorded none. */
+  reviewedCount?: number
+  /** The company's invite link, when it can invite and its trial has a seat left. */
+  invite?: SetupInvite
+  /** How "Copy to share" was answered, once it has been: what was copied, if anything, and whether it reached the clipboard. */
+  shared?: { copy: 'message' | 'link' | null; isCopied: boolean }
+}
+
+/** A company's invite link, from a `get_invite_link` reply that passed its checks. */
+export type SetupInvite = {
+  companyName: string
+  inviteUrl: string
+  /** The company's members, the operator included. */
+  memberCount: number
 }
 
 /** The fields of a `setup_start` call that passed its checks. */
@@ -116,7 +130,10 @@ export type SetupStart = {
 }
 
 /** What a setup tool's result row draws, by the call's tool_use_id. */
-export type SetupDrawn = Record<string, { kind: 'start'; start: SetupStart } | { kind: 'summary'; summary: SetupSummary }>
+export type SetupDrawn = Record<
+  string,
+  { kind: 'start'; start: SetupStart; joinedCompany: string | null } | { kind: 'summary'; summary: SetupSummary }
+>
 
 /**
  * Where a sandboxed agent may read, every folder as its real path: the
@@ -146,6 +163,8 @@ export type SetupRun = {
   teammateTitles: Record<string, string>
   /** Each answer the teammate check sent with `submit_solutions` or `submit_solution`: its fix, cleaned, or null for none. */
   teammateAnswers: SetupAnswer[]
+  /** The company the operator joined, when `start_setup_run` says this is their first setup since joining it. */
+  joinedCompany: string | null
 }
 
 /** The review-frictions run in progress, if any, and the sessions it may read. */

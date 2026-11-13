@@ -193,7 +193,7 @@ If Claude already read a teammate's fix in this session, further scanning waits 
 
 ### If Claude Code denies quotient's calls
 
-Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, and, in the background, the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
+Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, the invite link after `/quotient:setup`'s summary, and, in the background, the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
 
 ```json
 {
@@ -204,7 +204,9 @@ Some of quotient's calls to Quotient happen outside any skill: the `/quotient:li
       "mcp__plugin_quotient_agex__record_usage",
       "mcp__claude_ai_Quotient__record_usage",
       "mcp__plugin_quotient_agex__claim_daily_run",
-      "mcp__plugin_quotient_agex__complete_daily_run"
+      "mcp__plugin_quotient_agex__complete_daily_run",
+      "mcp__plugin_quotient_agex__get_invite_link",
+      "mcp__claude_ai_Quotient__get_invite_link"
     ]
   }
 }

@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { runTool } from './fixtures/run-tool'
+
 type On = Parameters<TestBody>[1]
 
 const SUMMARY_TOOL = 'mcp__quotient__setup_summary'
@@ -46,17 +48,25 @@ const SAVED = {
  *
  * @param on - The test's hooks, which stand for the engine
  * @param opts.reviewed - The `reviewedSources` in `start_setup_run`'s reply
+ * @param opts.joinedCompany - The `joinedCompany` in `start_setup_run`'s reply, left out when absent
  * @param opts.failing - A Quotient tool whose call reports an error
  * @param opts.runFails - Whether running a process rejects
  * @param opts.newFixes - How many frictions the fix-status part's read finds
  * @param opts.teammates - The teammate frictions `list_teammate_frictions` lists
  * @param opts.findExit - The exit code of the `find` that lists the transcripts, 0 when absent
+ * @param opts.invite - What `get_invite_link` replies, or 'throw' for a call that fails; `{}` when absent
+ * @param opts.onInvite - Runs while `get_invite_link` is being answered, as a permission prompt would
+ * @param opts.connected - What connecting to the plugin's server resolves to, when it isn't connected
+ * @param opts.share - The answer to "Copy to share", or null when it's dismissed
+ * @param opts.isAway - Whether that answer came while the operator was away
+ * @param opts.isCopied - Whether the copy reaches the clipboard, true when absent
  * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
   on: On,
   opts: {
     reviewed?: string[]
+    joinedCompany?: unknown
     failing?: string
     runFails?: boolean
     transcripts?: string[]
@@ -75,13 +85,23 @@ function engine(
     agents?: { id: string; type: string; status: 'running' | 'completed' }[]
     refused?: string[]
     findExit?: number
+    invite?: { text: string; isError?: boolean } | 'throw'
+    onInvite?: () => Promise<void>
+    connected?: { isConnected: false; reason: string }
+    share?: string | null
+    isAway?: boolean
+    isCopied?: boolean
   } = {},
 ) {
   const seen = {
+    mcpCalls: [] as { server: string; tool: string }[],
+    questions: [] as unknown[],
+    copied: [] as string[],
     tools: [] as { name: string; isDeferred?: unknown }[],
     argv: [] as (readonly string[])[],
     status: [] as (string | undefined)[],
     logs: [] as string[],
+    debug: [] as string[],
     spawned: [] as { subagentType: string; prompt: string }[],
   }
   // An operator's session: not a daily run, so quotient's sandbox doesn't hold.
@@ -100,7 +120,8 @@ function engine(
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('ui.log', (_, e) => {
-    seen.logs.push(e.text)
+    if (e.to === 'debug') seen.debug.push(e.text)
+    else seen.logs.push(e.text)
     return { value: undefined }
   })
   // The subagent setup starts for its teammate check.
@@ -110,16 +131,34 @@ function engine(
       description: 'check',
     })),
   }))
-  on('mcp.connect', () => ({ value: { isConnected: true, server: 'plugin:quotient:agex' } }))
+  on('mcp.connect', () => ({ value: opts.connected ?? { isConnected: true, server: 'plugin:quotient:agex' } }) as never)
   on('agent.spawn', (_, e) => {
     seen.spawned.push({ subagentType: e.subagentType, prompt: e.prompt })
     return { model: 'claude-test' }
   })
-  on('mcp.call', (_, e) => {
+  on('mcp.call', async (_, e) => {
+    seen.mcpCalls.push({ server: e.server, tool: e.tool })
+    if (e.tool === 'get_invite_link') await opts.onInvite?.()
+    if (e.tool === 'get_invite_link' && opts.invite !== undefined) {
+      if (opts.invite === 'throw') throw new Error('socket hang up')
+      return { value: { content: [{ type: 'text', text: opts.invite.text }], isError: opts.invite.isError ?? false } }
+    }
     const fix = { isOwn: false, implementedAt: null, viewedAt: null }
     const frictions = Array.from({ length: opts.newFixes ?? 0 }, () => ({ solutions: [fix] }))
     const text = e.tool === 'list_my_frictions' ? JSON.stringify({ frictions, nextCursor: null }) : '{}'
     return { value: { content: [{ type: 'text', text }], isError: false } }
+  })
+  on('tool.call', { tool: 'AskUserQuestion' }, (_, e) => {
+    seen.questions.push((e as unknown as { questions: unknown }).questions)
+    const answer = opts.share ?? null
+    if (answer === null) return { deny: 'dismissed' }
+    const away = opts.isAway === true ? { afkTimeoutMs: 60_000 } : {}
+    return { result: { questions: [], answers: { 'Copy to share': answer }, ...away } } as never
+  })
+  on('ui.copy', (_, e) => {
+    seen.copied.push(e.text)
+    const isCopied = opts.isCopied ?? true
+    return { value: isCopied ? { isCopied: true } : { isCopied: false, reason: 'no-clipboard' } } as never
   })
   on('tool.call', (_, e) => {
     const tool = e.tool as string
@@ -140,7 +179,12 @@ function engine(
       return { result: 'ran', text: JSON.stringify({ answers }) }
     }
     if (tool.endsWith('__start_setup_run')) {
-      const reply = { runId: 'run-1', startedAt: '2026-10-29T12:00:00Z', reviewedSources: opts.reviewed ?? [] }
+      const reply = {
+        runId: 'run-1',
+        startedAt: '2026-10-29T12:00:00Z',
+        reviewedSources: opts.reviewed ?? [],
+        ...(opts.joinedCompany === undefined ? {} : { joinedCompany: opts.joinedCompany }),
+      }
       return { result: 'ran', text: JSON.stringify(reply) }
     }
     return { result: 'ran' }
@@ -212,7 +256,7 @@ function engine(
  * @returns What the call resolved to
  */
 function callTool($: Parameters<TestBody>[0], tool: string, toolUseId: string, input: Record<string, unknown>) {
-  return $.tool.call({ tool, tool_use_id: toolUseId, ...input } as unknown as Parameters<typeof $.tool.call>[0])
+  return runTool($, { tool, tool_use_id: toolUseId, ...input })
 }
 
 /**
@@ -409,6 +453,24 @@ async function drawSummary(
 ) {
   const called = await callSummary($, input)
   expect(called.deny).toBeUndefined()
+  return mountSummary($, input, surface, isExpanded)
+}
+
+/**
+ * Draws the summary call's row as it stands, without calling it again.
+ *
+ * @param $ - The engine
+ * @param input - The call's input
+ * @param surface - Where it's drawn
+ * @param isExpanded - Whether the row is drawn in full, as in ctrl+o
+ * @returns The Text elements drawn, in order, and their joined text
+ */
+async function mountSummary(
+  $: Parameters<TestBody>[0],
+  input: Record<string, unknown>,
+  surface: 'terminal' | 'desktop' = 'terminal',
+  isExpanded = false,
+) {
   const ui = await $.ui.mount({
     plugin: 'quotient',
     surface,
@@ -458,8 +520,32 @@ function expectInOrder(shown: string, parts: readonly string[]) {
   }
 }
 
+/**
+ * Runs /quotient:setup and shows its start message, so the summary knows how
+ * many sources the run reviews.
+ *
+ * @param $ - The engine
+ * @param start - The start message's fields
+ */
+async function startSetup($: Parameters<TestBody>[0], start: Record<string, unknown> = START) {
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', start)
+}
+
+/**
+ * Names as many sources as a batch records.
+ *
+ * @param count - How many
+ * @returns The sources' names
+ */
+function sourceNames(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `session-${i}`)
+}
+
 test('a saved summary draws every section in order', async ($, on) => {
   engine(on)
+  await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(77))
 
   const { shown } = await drawSummary($, SAVED)
 
@@ -468,13 +554,13 @@ test('a saved summary draws every section in order', async ($, on) => {
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
-    'Where your agents lost the most time',
-    'HIGH',
+    'Your top frictions',
+    '▲ high',
     'Lint passes on commit but fails in CI',
-    'Quality · 9 sessions',
-    'MED',
+    'Quality · 12% of sessions',
+    '◆ medium',
     'zsh quoting breaks shell commands',
-    'Time lost · 4 sessions',
+    'Time lost · 5% of sessions',
     '+ 2 more, 1 of them high severity',
     'Your teammates have probably already fixed some of these.',
     'Two of your top three involve your CI and local setup.',
@@ -500,10 +586,11 @@ test('the summary colors severities, checks and the remaining line as the mockup
   })
   const find = (text: string) => texts.find(one => one.text === text)?.props
 
-  expect(find('HIGH')?.color).toBe('error')
-  expect(find('MED')?.color).toBe('warning')
-  expect(find('LOW')?.dimColor).toBe(true)
+  expect(find('▲ high')?.color).toBe('error')
+  expect(find('◆ medium')?.color).toBe('warning')
+  expect(find('▼ low')?.dimColor).toBe(true)
   expect(find('✓')?.color).toBe('success')
+  expect(find('Quality')?.color).toBe('suggestion')
   expect(find('Quality · 9 sessions')?.dimColor).toBe(true)
   expect(find('+ 2 more, 2 of them high severity')?.dimColor).toBe(true)
 })
@@ -520,7 +607,7 @@ test('the sample card is fixed text, whatever the top frictions are', async ($, 
     'SAMPLE',
     '· not a real fix',
     'Lint passes on commit but fails in CI',
-    '9 of your sessions · about 3.5 hours lost',
+    'Blocked · in 14% of your sessions',
     '· Ron Burgundy',
     'Run ESLint from the repo root in the pre-commit hook, so commits use the same rules as CI.',
     '+ cd "$(git rev-parse --show-toplevel)" && npx eslint --cache $FILES',
@@ -546,7 +633,7 @@ test('with no new frictions only the headline and what is working show', async (
     "What's working",
     'The pre-commit typecheck stopped type errors before they reached CI',
   ])
-  for (const absent of ["They're saved", 'Where your agents', 'more,', 'Your teammates', 'SAMPLE', '/list-fixes']) {
+  for (const absent of ["They're saved", 'Your top frictions', 'more,', 'Your teammates', 'SAMPLE', '/list-fixes']) {
     expect(shown).not.toContain(absent)
   }
 })
@@ -574,6 +661,53 @@ test('one friction and one session read in the singular', async ($, on) => {
   expect(shown).toContain('Your agents ran into 1 friction in the last two weeks.')
   expect(shown).toContain('Quality · 1 session')
   expect(shown).not.toContain('1 sessions')
+})
+
+test("a friction in fewer than 1% of the run's sources reads as 1%", async ($, on) => {
+  engine(on)
+  await startSetup($, { ...START, sessions: 300 })
+  await recordReviewed($, 'toolu_add', sourceNames(300))
+
+  const { shown } = await drawSummary($, { ...SAVED, frictions: 1, top: [{ ...SAVED.top[0], sessions: 1 }], remainingHigh: 0 })
+
+  expect(shown).toContain('Quality · 1% of sessions')
+})
+
+test("the sample card's friction line names its impact in the accent color", async ($, on) => {
+  engine(on)
+
+  const { texts } = await drawSummary($, SAVED)
+
+  expect(texts.find(one => one.text === 'Blocked')?.props.color).toBe('suggestion')
+})
+
+test("a friction's share counts only the sources setup reviewed, not the transcripts it skipped", async ($, on) => {
+  engine(on)
+  await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(18))
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 50% of sessions')
+})
+
+test('a friction seen in more sessions than were recorded reads as 100%', async ($, on) => {
+  engine(on)
+  await startSetup($)
+  await recordReviewed($, 'toolu_add', sourceNames(5))
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 100% of sessions')
+})
+
+test('with no sources recorded, each row shows its session count', async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('Quality · 9 sessions')
+  expect(shown).not.toContain('% of sessions')
 })
 
 test('each impact category draws as its label beside the session count', async ($, on) => {
@@ -627,13 +761,13 @@ const FIXES = [
 async function checkTeammates($: Parameters<TestBody>[0], answers: [string, string | null][]) {
   await startTeammateCheck($)
   for (const [frictionId, fix] of answers) {
-    await $.tool.call({
+    await runTool($, {
       tool: `${AGEX}submit_solution`,
       agentId: TEAMMATE_AGENT,
       frictionId,
       ...(fix === null ? {} : { description: fix, prompt: 'Apply it.' }),
       source: 'local',
-    } as unknown as Parameters<typeof $.tool.call>[0])
+    })
   }
 }
 
@@ -646,7 +780,7 @@ async function checkTeammates($: Parameters<TestBody>[0], answers: [string, stri
 async function startTeammateCheck($: Parameters<TestBody>[0]) {
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
-  await $.tool.call({ tool: `${AGEX}list_teammate_frictions`, agentId: TEAMMATE_AGENT } as unknown as Parameters<typeof $.tool.call>[0])
+  await runTool($, { tool: `${AGEX}list_teammate_frictions`, agentId: TEAMMATE_AGENT })
 }
 
 /**
@@ -656,12 +790,12 @@ async function startTeammateCheck($: Parameters<TestBody>[0]) {
  * @param answers - Each answer's friction id and fix, null for an answer with none
  */
 async function sendTeammateAnswers($: Parameters<TestBody>[0], answers: [string, string | null][]) {
-  await $.tool.call({
+  await runTool($, {
     tool: `${AGEX}submit_solutions`,
     agentId: TEAMMATE_AGENT,
     answers: answers.map(([frictionId, fix]) => ({ frictionId, ...(fix === null ? {} : { description: fix, prompt: 'Apply it.' }) })),
     source: 'local',
-  } as unknown as Parameters<typeof $.tool.call>[0])
+  })
 }
 
 const CHECK_PROMPT = "Check my setup for fixes to my teammates' frictions."
@@ -673,7 +807,7 @@ test("setup's teammate check is told the project folders with a session in setup
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([
     {
@@ -688,7 +822,7 @@ test("a setup pinned to a window tells its teammate check the folders from that 
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   const listings = seen.argv.filter(argv => argv[0] === 'find')
   expect(listings.at(-1)).toContain('-newermt')
@@ -700,7 +834,7 @@ test("setup's other subagents start with their prompts as written", async ($, on
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
 
-  await $.agent.spawn({ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' })
+  await $.agent.spawn({ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' }])
 })
@@ -709,7 +843,7 @@ test("a teammate check whose sessions can't be listed starts with its prompt as 
   const seen = engine(on, { findExit: 1 })
   await $.command.run(TYPED_SETUP)
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT })
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
 })
@@ -725,7 +859,7 @@ test("an invited operator's summary opens with setup being done and leaves out t
     "They're saved to Quotient, where your teammates' agents can look for fixes.",
     "What's working",
     'Agents found the right file on the first try in 41 of 64 sessions',
-    'Where your agents lost the most time',
+    'Your top frictions',
     'Lint passes on commit but fails in CI',
     '+ 2 more, 1 of them high severity',
   ])
@@ -753,7 +887,7 @@ test("an invited operator sees their own frictions before the teammates' frictio
 
   const { shown } = await drawSummary($, INVITED)
 
-  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup already solves'])
+  expectInOrder(shown, ['Setup is done. Your agents ran into 5 frictions', '+ 2 more, 1 of them high severity', 'Your setup solves'])
 })
 
 test("an invited operator's summary answers with only the instruction to end the turn, since it doesn't end with the hint", async ($, on) => {
@@ -795,7 +929,7 @@ test("an invited operator sees one example of the teammates' frictions their set
   const { texts, shown } = await drawSummary($, INVITED)
 
   expectInOrder(shown, [
-    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    "Your setup solves 3 of your teammates' frictions.",
     "A TEAMMATE'S FRICTION",
     'Lint passes on commit but fails in CI',
     'YOUR FIX',
@@ -834,7 +968,7 @@ test("an invited operator's summary ends with what's next and what they can do n
 
   expectInOrder(shown, [
     'Setup is done. Your agents ran into 5 frictions in the last two weeks.',
-    "Your setup already solves 3 of your teammates' frictions. Here's an example:",
+    "Your setup solves 3 of your teammates' frictions.",
     FIXES[0],
     "What's next",
     '1. Quotient will suggest all 3 to your teammates in their next session',
@@ -893,7 +1027,10 @@ test('the solved headline counts every answer with a fix, beyond the one card sh
 
   const { texts, shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 5 of your teammates' frictions. Here's an example:")
+  expectInOrder(shown, [
+    "Your setup solves 5 of your teammates' frictions.",
+    "They'll get these as anonymous suggestions in their next session.",
+  ])
   expect(texts.filter(one => one.text === 'YOUR FIX')).toHaveLength(1)
 })
 
@@ -903,7 +1040,12 @@ test("one fix found reads as one of your teammates' frictions, with its card", a
 
   const { shown } = await drawSummary($, INVITED)
 
-  expectInOrder(shown, ["Your setup already solves one of your teammates' frictions:", "A TEAMMATE'S FRICTION", FIXES[0]])
+  expectInOrder(shown, [
+    "Your setup solves 1 of your teammates' frictions.",
+    "They'll get it as an anonymous suggestion in their next session.",
+    "A TEAMMATE'S FRICTION",
+    FIXES[0],
+  ])
   expect(shown).not.toContain("Here's an example")
 })
 
@@ -921,7 +1063,7 @@ test("fixes whose cards can't be shown keep the count but drop the example", asy
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions.")
+  expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
   for (const absent of ["Here's an example", "A TEAMMATE'S FRICTION", 'YOUR FIX']) {
     expect(shown).not.toContain(absent)
   }
@@ -933,7 +1075,7 @@ test("one fix whose card can't be shown reads as one of your teammates' friction
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions.")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain("A TEAMMATE'S FRICTION")
 })
 
@@ -943,7 +1085,7 @@ test('no fix found leaves out the solved block', async ($, on) => {
 
   const { shown } = await drawSummary($, INVITED)
 
-  for (const absent of ['already solves', "A TEAMMATE'S FRICTION", 'Quotient will suggest']) {
+  for (const absent of ['Your setup solves', "A TEAMMATE'S FRICTION", 'Quotient will suggest']) {
     expect(shown).not.toContain(absent)
   }
 })
@@ -954,7 +1096,7 @@ test('the desktop app draws the solved block too', async ($, on) => {
 
   const { shown } = await drawSummary($, INVITED, 'desktop')
 
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).toContain('YOUR FIX')
 })
 
@@ -974,7 +1116,7 @@ test("a card whose text holds an id or an email is left out but still counted, a
 
   const { shown } = await drawSummary($, INVITED)
 
-  expect(shown).toContain("Your setup already solves 3 of your teammates' frictions. Here's an example:")
+  expect(shown).toContain("Your setup solves 3 of your teammates' frictions.")
   expect(shown).not.toContain('fr-20261029-4')
   expect(shown).not.toContain('ron@example.com')
   expect(shown).toContain('Builds are slow')
@@ -1012,7 +1154,7 @@ test('each answer in a batch the teammate check sends gets a row of its own, and
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
-  expect(shown).toContain("Your setup already solves one of your teammates' frictions:")
+  expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain(FIXES[2])
 })
 
@@ -1024,14 +1166,14 @@ test('a batch whose reply cannot be read still counts every answer it sent', asy
   const { shown } = await drawSummary($, INVITED)
 
   expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
-  expect(shown).toContain("Your setup already solves 2 of your teammates' frictions. Here's an example:")
+  expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
 })
 
 test("setup's own session learns only whether teammates have frictions, never their text", async ($, on) => {
   engine(on)
   await $.command.run(TYPED_SETUP)
 
-  const called = await $.tool.call({ tool: `${AGEX}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${AGEX}list_teammate_frictions` })
 
   const read = JSON.stringify(called)
   expect(read).toContain('{\\"hasFrictions\\":true}')
@@ -1040,9 +1182,9 @@ test("setup's own session learns only whether teammates have frictions, never th
 
 test("setup the model starts with the Skill tool is held the same: its session learns only whether there are frictions", async ($, on) => {
   engine(on)
-  await $.tool.call({ tool: 'Skill', skill: 'quotient:setup' } as unknown as Parameters<typeof $.tool.call>[0])
+  await runTool($, { tool: 'Skill', skill: 'quotient:setup' })
 
-  const called = await $.tool.call({ tool: `${AGEX}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${AGEX}list_teammate_frictions` })
 
   expect(JSON.stringify(called)).toContain('{\\"hasFrictions\\":true}')
   expect(JSON.stringify(called)).not.toContain('Lint passes on commit')
@@ -1052,9 +1194,304 @@ test("setup's own session learns there are none when the list is empty", async (
   engine(on, { teammates: [] })
   await $.command.run(TYPED_SETUP)
 
-  const called = await $.tool.call({ tool: `${CONNECTOR}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
+  const called = await runTool($, { tool: `${CONNECTOR}list_teammate_frictions` })
 
   expect(JSON.stringify(called)).toContain('{\\"hasFrictions\\":false}')
+})
+
+const INVITE_URL = 'https://dev.getquotient.com/join/ABCD1234'
+const INVITE = { companyName: 'Northwind Robotics', inviteUrl: INVITE_URL, emailDomain: 'acme.com', memberCount: 1, maxSeats: 20 }
+const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
+const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
+
+/**
+ * The `get_invite_link` reply for an invite, with any fields changed.
+ *
+ * @param change - The fields to change
+ * @returns The reply as `engine` takes it
+ */
+function inviteReply(change: Record<string, unknown> = {}) {
+  return { text: JSON.stringify({ ...INVITE, ...change }) }
+}
+
+test("the first on their team sees the invite after the sample card, in place of the /list-fixes hint", async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const { texts, shown } = await drawSummary($, SAVED)
+
+  expectInOrder(shown, [
+    'Apply it · Ask Ron · Not now',
+    "You're the first on your team. Invite teammates by sharing the link.",
+    "They'll join Northwind Robotics. They won't see your sessions.",
+    FIRST_MESSAGE,
+    'signup + install here:',
+    INVITE_URL,
+  ])
+  expect(shown).not.toContain(LIST_FIXES_HINT)
+  expect(texts.find(one => one.text.startsWith("You're the first"))?.props.bold).toBe(true)
+  expect(texts.find(one => one.text.startsWith("They'll join"))?.props.dimColor).toBe(true)
+})
+
+test('the summary is drawn before quotient asks for the invite link, which may wait on a permission prompt', async ($, on) => {
+  let shownWhileAsking: string | undefined
+  const onInvite = async () => {
+    shownWhileAsking = (await mountSummary($, SAVED)).shown
+  }
+  engine(on, { invite: inviteReply(), onInvite })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shownWhileAsking).toContain('Your top frictions')
+  expect(shownWhileAsking).not.toContain(INVITE_URL)
+  expect(shown).toContain(INVITE_URL)
+})
+
+test('a summary with the invite tells the model only to end the turn, without the link', async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const called = await callSummary($, SAVED)
+
+  expect(called.result).toBe(END_TURN)
+  expect(JSON.stringify(called)).not.toContain('ABCD1234')
+})
+
+test('an operator with one teammate is asked if they are using it yet', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 2 }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expectInOrder(shown, [
+    'You have 1 teammate on Quotient so far. Invite more by sharing the link.',
+    "They'll join Northwind Robotics. They won't see your sessions.",
+    MORE_MESSAGE,
+    INVITE_URL,
+  ])
+  expect(shown).not.toContain(FIRST_MESSAGE)
+})
+
+test('an operator with several teammates counts the others', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 15 }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('You have 14 teammates on Quotient so far. Invite more by sharing the link.')
+})
+
+test("an invited operator sees the invite after the frictions their setup solves, in place of what's next", async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 3 }) })
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ["Your setup solves 1 of your teammates' frictions.", FIXES[0], 'You have 2 teammates on Quotient so far.'])
+  for (const absent of ["What's next", 'What you can do now', 'Invite more teammates.']) {
+    expect(shown).not.toContain(absent)
+  }
+})
+
+test('an operator with no new frictions still sees the invite', async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const { shown } = await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, ['Setup is done. Your agents ran into no new frictions', "You're the first on your team."])
+})
+
+test('quotient asks the Quotient connector for the invite when the session runs the plugin servers itself', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), connected: { isConnected: false, reason: 'unlisted' } })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(seen.mcpCalls).toContainEqual({ server: 'claude.ai Quotient', tool: 'get_invite_link' })
+  expect(shown).toContain(INVITE_URL)
+})
+
+for (const [why, opts] of [
+  ['a refusal', { invite: { text: "Your company doesn't have an AgEx invite link.", isError: true } }],
+  ['a reply that is not JSON', { invite: { text: 'not json' } }],
+  ['a missing company name', { invite: inviteReply({ companyName: undefined }) }],
+  ['an empty invite link', { invite: inviteReply({ inviteUrl: '' }) }],
+  ['a member count of 0', { invite: inviteReply({ memberCount: 0 }) }],
+  ['a fractional member count', { invite: inviteReply({ memberCount: 1.5 }) }],
+  ['a seat limit that is not a number', { invite: inviteReply({ maxSeats: 'twenty' }) }],
+  ['a full trial', { invite: inviteReply({ memberCount: 20, maxSeats: 20 }) }],
+  ['a link that is not a web address', { invite: inviteReply({ inviteUrl: 'javascript:alert(1)' }) }],
+  ['a link with a control character', { invite: inviteReply({ inviteUrl: `${INVITE_URL}\x1b[2J` }) }],
+  ['a company name with nothing printable', { invite: inviteReply({ companyName: '\x1b[31m\x07' }) }],
+  ['a call that fails', { invite: 'throw' }],
+  ['an operator who is not signed in', { invite: inviteReply(), connected: { isConnected: false, reason: 'failed' } }],
+  ['a server without the tool', {}],
+] as const) {
+  test(`${why} shows no invite, and the summary ends as before`, async ($, on) => {
+    const seen = engine(on, opts as Parameters<typeof engine>[1])
+
+    const called = await callSummary($, SAVED)
+    const { shown } = await drawSummary($, SAVED)
+
+    expect(called.result).toBe(END_TURN_WITH_HINT)
+    if (why !== 'an operator who is not signed in') expect(seen.debug.some(line => line.includes('get_invite_link'))).toBe(true)
+    expect(shown).toContain(LIST_FIXES_HINT)
+    expect(shown).not.toContain('sharing the link')
+  })
+}
+
+test("escape sequences in the company's name are drawn as plain text", async ($, on) => {
+  engine(on, { invite: inviteReply({ companyName: 'Northwind\x1b[31m Robotics\x07' }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain("They'll join Northwind Robotics. They won't see your sessions.")
+  expect(shown).not.toContain('\x1b')
+})
+
+test('a summary with no seat limit still shows the invite', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 40, maxSeats: null }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('You have 39 teammates on Quotient so far.')
+})
+
+const WHAT_HAPPENS_NEXT = [
+  'What happens next',
+  '1. Your teammate joins.',
+  '2. Quotient finds solutions in their setup.',
+  '3. You get suggestions next session.',
+]
+
+/**
+ * Shows the summary with an invite, ends the turn as the model does, and
+ * draws the summary's row once the question is answered.
+ *
+ * @param $ - The engine
+ * @param input - The summary call's input
+ * @returns The Text elements drawn, in order, and their joined text
+ */
+async function shareInvite($: Parameters<TestBody>[0], input: Record<string, unknown> = SAVED) {
+  await callSummary($, input)
+  await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  return mountSummary($, input)
+}
+
+test('once the turn ends, quotient asks "Copy to share" with the two copies', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy message' })
+
+  await shareInvite($)
+
+  expect(seen.questions).toEqual([
+    [
+      {
+        question: 'Copy to share',
+        header: 'Invite',
+        options: [
+          { label: 'Copy message', description: '' },
+          { label: 'Copy link', description: '' },
+        ],
+        multiSelect: false,
+      },
+    ],
+  ])
+})
+
+test('Copy message copies the message and the link, then says what happens next', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy message' })
+
+  const { texts, shown } = await shareInvite($)
+
+  expect(seen.copied).toEqual([`${FIRST_MESSAGE}\n\nsignup + install here:\n${INVITE_URL}`])
+  expectInOrder(shown, [
+    INVITE_URL,
+    'Copy to share → Copy message',
+    'Message copied. Paste it to your teammates in Slack.',
+    ...WHAT_HAPPENS_NEXT,
+    'Your frictions stay saved. Run /list-fixes to see the full list.',
+  ])
+  expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+  expect(texts.find(one => one.text === 'What happens next')?.props.bold).toBe(true)
+})
+
+test('Copy link copies only the link', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply({ memberCount: 4 }), share: 'Copy link' })
+
+  const { shown } = await shareInvite($)
+
+  expect(seen.copied).toEqual([INVITE_URL])
+  expectInOrder(shown, ['Copy to share → Copy link', 'Link copied. Paste it to your teammates in Slack.', 'What happens next'])
+})
+
+test("a teammate's copied message asks if they are using it yet", async ($, on) => {
+  const seen = engine(on, { invite: inviteReply({ memberCount: 4 }), share: 'Copy message' })
+
+  await shareInvite($)
+
+  expect(seen.copied).toEqual([`${MORE_MESSAGE}\n\nsignup + install here:\n${INVITE_URL}`])
+})
+
+for (const [why, opts] of [
+  ['a dismissed question', { share: null }],
+  ['an answer typed under Other', { share: 'send it to the team' }],
+  ['an answer given while the operator was away', { share: 'Copy message', isAway: true }],
+] as const) {
+  test(`${why} copies nothing, and still says what happens next`, async ($, on) => {
+    const seen = engine(on, { invite: inviteReply(), ...opts })
+
+    const { shown } = await shareInvite($)
+
+    expect(seen.copied).toEqual([])
+    expect(shown).not.toContain('copied')
+    expect(shown).not.toContain('Copy to share →')
+    expectInOrder(shown, WHAT_HAPPENS_NEXT)
+  })
+}
+
+test("a copy the clipboard doesn't take says to select the text instead", async ($, on) => {
+  engine(on, { invite: inviteReply(), share: 'Copy message', isCopied: false })
+
+  const { texts, shown } = await shareInvite($)
+
+  expect(shown).toContain("Couldn't reach the clipboard here. Select the message above to copy it.")
+  expect(shown).not.toContain('Message copied')
+  expect(texts.find(one => one.text === '!')?.props.color).toBe('warning')
+  expectInOrder(shown, WHAT_HAPPENS_NEXT)
+})
+
+test('with no new frictions, what happens next leaves out the saved frictions line', async ($, on) => {
+  engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+  const { shown } = await shareInvite($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, WHAT_HAPPENS_NEXT)
+  expect(shown).not.toContain('Your frictions stay saved')
+})
+
+test('a summary with no invite asks nothing when the turn ends', async ($, on) => {
+  const seen = engine(on, { share: 'Copy message' })
+
+  const { shown } = await shareInvite($)
+
+  expect(seen.questions).toEqual([])
+  expect(shown).not.toContain('What happens next')
+})
+
+for (const reason of ['aborted', 'error'] as const) {
+  test(`a summary turn that ends ${reason} asks nothing then or on a later turn`, async ($, on) => {
+    const seen = engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+    await callSummary($, SAVED)
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: reason === 'aborted', turnId: 't1', reason })
+    await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+
+    expect(seen.questions).toEqual([])
+  })
+}
+
+test('the question is asked once, not again on a later turn', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), share: 'Copy link' })
+
+  await shareInvite($)
+  await $.turn.complete({ answer: 'ok', durationMs: 1, isAborted: false, turnId: 't2', reason: 'answer' })
+
+  expect(seen.questions).toHaveLength(1)
 })
 
 test('the desktop app draws the summary too', async ($, on) => {
@@ -1334,7 +1771,7 @@ test('setup_start lists the latest three runs of a small recurring automated job
     'quotient counted 1 session and 4 automated runs from the last two weeks, leaving out every session setup skips and 2 older runs of recurring automated jobs: it lists the latest runs of each job, about the square root of its run count, from 3 to 15.',
   )
   expect(result).toContain(`Batch 1, in ${PROJECTS}/-jobs: r1, r2, r3, r6; in ${PROJECTS}/-repo: s1\n`)
-  expect(shown).toContain('Reviewing 1 session, 4 automated runs and 0 cloud routine runs')
+  expect(shown).toContain('Reviewing 1 session and 4 automated runs from')
 })
 
 test('a busy automated job gets about the square root of its run count, at most 15', async ($, on) => {
@@ -1692,8 +2129,85 @@ test('counts of one in the start message are singular', async ($, on) => {
 
   const { shown } = await drawStart($, { ...START, sessions: 1, automatedRuns: 1, cloudRuns: 0 }, 'desktop')
 
-  expect(shown).toContain('Reviewing 1 session, 1 automated run and 0 cloud routine runs from Oct 15 to Oct 29')
+  expect(shown).toContain('Reviewing 1 session and 1 automated run from Oct 15 to Oct 29')
   expect(shown).not.toContain('Dry run')
+})
+
+test('an operator on their first setup since joining sees the company they joined above the start lines', async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind Robotics' } })
+  await $.command.run(TYPED_SETUP)
+  await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  const { texts, shown } = await drawStart($, START)
+
+  expectInOrder(shown, ['Joined Northwind Robotics', 'Reviewing 64 sessions'])
+  expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
+})
+
+test("the model reads start_setup_run's reply without the company the operator joined", async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind Robotics' } })
+  await $.command.run(TYPED_SETUP)
+
+  const called = await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  expect(JSON.stringify(called)).not.toContain('joinedCompany')
+  expect(JSON.stringify(called)).not.toContain('Northwind')
+  expect(JSON.stringify(called)).toContain('run-1')
+})
+
+test("escape sequences in the joined company's name are drawn as plain text", async ($, on) => {
+  engine(on, { joinedCompany: { name: 'Northwind\x1b[31m Robotics' } })
+  await $.command.run(TYPED_SETUP)
+  await callQuotient($, 'start_setup_run', 'toolu_run')
+
+  const { shown } = await drawStart($, START)
+
+  expect(shown).toContain('Joined Northwind Robotics')
+  expect(shown).not.toContain('\x1b')
+})
+
+for (const [why, joinedCompany] of [
+  ['null', null],
+  ['left out', undefined],
+  ['a name that is not text', { name: 3 }],
+  ['an empty name', { name: '' }],
+  ['not an object', 'Northwind Robotics'],
+] as const) {
+  test(`a start_setup_run reply whose joinedCompany is ${why} shows no joined line`, async ($, on) => {
+    engine(on, { joinedCompany })
+    await $.command.run(TYPED_SETUP)
+    await callQuotient($, 'start_setup_run', 'toolu_run')
+
+    const { shown } = await drawStart($, START)
+
+    expect(shown).not.toContain('Joined')
+  })
+}
+
+test('the start line leaves out the counts that are 0', async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, automatedRuns: 0 })
+
+  expect(shown).toContain('Reviewing 64 sessions and 10 cloud routine runs from Oct 15 to Oct 29')
+})
+
+test("a start line with only sessions still says setup checks teammates' fixes", async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, sessions: 58, automatedRuns: 0, cloudRuns: 0, checksTeammates: true })
+
+  expect(shown).toContain(
+    "Reviewing 58 sessions from Oct 15 to Oct 29, and checking your setup for fixes to your teammates' frictions",
+  )
+})
+
+test('a start line with nothing to review says so', async ($, on) => {
+  engine(on)
+
+  const { shown } = await drawStart($, { ...START, sessions: 0, automatedRuns: 0, cloudRuns: 0 })
+
+  expect(shown).toContain('Reviewing no sessions from Oct 15 to Oct 29')
 })
 
 for (const [why, change, message] of [
@@ -1741,10 +2255,38 @@ const TYPED_SETUP = {
 } as const
 
 /**
- * Draws the band above the prompt and returns its text.
+ * Joins the text of every Text element in a drawn tree, one line each.
+ *
+ * @param node - A drawn element, or one of its string children
+ * @returns The joined text
+ */
+function textOf(node: unknown): string {
+  if (typeof node !== 'object' || node === null) return ''
+  const { type, children = [] } = node as { type: string; children?: unknown[] }
+  if (type === 'Text') return children.filter(child => typeof child === 'string').join('')
+  return children.map(textOf).filter(text => text !== '').join('\n')
+}
+
+/**
+ * Collects the rows quotient drew in a drawn tree. The band shows one row for
+ * each plugin that draws one, stacked or alone depending on Claude Code's
+ * version, and each row carries the plugin that drew it.
+ *
+ * @param node - A drawn element, or one of its string children
+ * @returns Quotient's rows
+ */
+function quotientRows(node: unknown): unknown[] {
+  if (typeof node !== 'object' || node === null) return []
+  const { part, children = [] } = node as { part?: { plugin?: string }; children?: unknown[] }
+  if (part?.plugin === 'quotient') return [node]
+  return children.flatMap(quotientRows)
+}
+
+/**
+ * Draws the band above the prompt and returns quotient's row in it.
  *
  * @param $ - The engine
- * @returns The band's joined text, or the engine's row when the mod passes
+ * @returns The joined text of quotient's row, or '' when quotient passes
  */
 async function band($: Parameters<TestBody>[0]) {
   const ui = await $.ui.mount({
@@ -1760,9 +2302,9 @@ async function band($: Parameters<TestBody>[0]) {
       view: {},
     },
   } as Parameters<typeof $.ui.mount>[0])
-  const texts = await ui.findAll({ type: 'Text' })
+  const drawn = await ui.drawn()
   await ui.unmount()
-  return texts.map(text => text.text).join('\n')
+  return quotientRows(drawn).map(textOf).join('\n')
 }
 
 /**
@@ -1815,11 +2357,11 @@ test('a resumed run counts the sources Quotient already recorded', async ($, on)
   expect(await band($)).toBe('3 of 77 sources reviewed')
 })
 
-test('the band is left to the engine when no setup is running', async ($, on) => {
+test('quotient draws no row in the band when no setup is running', async ($, on) => {
   engine(on)
   engineRows(on)
 
-  expect(await band($)).toBe("the engine's row")
+  expect(await band($)).toBe('')
 })
 
 test('a failed record_setup_progress leaves the last count in place', async ($, on) => {
@@ -1876,7 +2418,7 @@ for (const [why, end] of [
     await end($)
 
     expect(before).toBe('0 of 77 sources reviewed')
-    expect(await band($)).toBe("the engine's row")
+    expect(await band($)).toBe('')
     expect(seen.status.at(-1)).toBeUndefined()
   })
 }
@@ -2041,14 +2583,14 @@ test("a setup subagent's report-back and finished rows are hidden, and others' a
   engine(on)
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await $.tool.call({
+  await runTool($, {
     tool: 'Agent',
     tool_use_id: 'toolu_agent',
     description: 'Review a batch',
     prompt: 'Review these sessions',
     subagent_type: 'general-purpose',
   })
-  await $.tool.call({ tool: 'Bash', tool_use_id: 'toolu_sub', command: 'ls', agentId: 'agent-1' })
+  await runTool($, { tool: 'Bash', tool_use_id: 'toolu_sub', command: 'ls', agentId: 'agent-1' })
   const message = (extra: Record<string, unknown>) => ({ text: 'ok', isExpanded: false, ...extra })
 
   expect(await row($, 'UserMessage', message({ origin: { kind: 'peer' }, from: { name: 'general-purpose' } }))).toBe('')
@@ -2096,7 +2638,7 @@ for (const [what, call] of [
     engine(on)
     engineRows(on)
     await $.command.run(TYPED_SETUP)
-    await $.tool.call({ ...call, tool_use_id: 'toolu_x' } as unknown as Parameters<typeof $.tool.call>[0])
+    await runTool($, { ...call, tool_use_id: 'toolu_x' })
 
     expect(await row($, 'ToolUse', { ...bashRow('toolu_x'), tool: call.tool }, 'toolu_x')).toBe('')
   })
@@ -2129,7 +2671,7 @@ for (const [what, call] of [
     engine(on)
     engineRows(on)
     await $.command.run(TYPED_SETUP)
-    await $.tool.call({ ...call, tool_use_id: 'toolu_y' } as unknown as Parameters<typeof $.tool.call>[0])
+    await runTool($, { ...call, tool_use_id: 'toolu_y' })
 
     expect(await row($, 'ToolUse', { ...bashRow('toolu_y'), tool: call.tool }, 'toolu_y')).toBe("the engine's row")
   })
@@ -2139,7 +2681,7 @@ test("when the folders can't be looked up, reads during setup stay visible", asy
   engine(on, { runFails: true })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
-  await $.tool.call({ tool: 'Read', tool_use_id: 'toolu_r', file_path: `${PROJECTS}/-repo/abc.jsonl` })
+  await runTool($, { tool: 'Read', tool_use_id: 'toolu_r', file_path: `${PROJECTS}/-repo/abc.jsonl` })
 
   expect(await row($, 'ToolUse', { ...bashRow('toolu_r'), tool: 'Read' }, 'toolu_r')).toBe("the engine's row")
 })

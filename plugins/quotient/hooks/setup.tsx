@@ -6,6 +6,7 @@ import type { Elements, Hook, Register } from 'claude-code'
 import type {
   SetupAnswer,
   SetupDrawn,
+  SetupInvite,
   SetupRun,
   SetupSolved,
   SetupStart,
@@ -16,7 +17,7 @@ import type {
   StatusParts,
 } from '../types'
 import { fullPath, globRoot, isConfigPath, isQuotientSkill, isSkippedProject, QUOTIENT_PREFIXES, TEAMMATE_TOOL_USE } from './sandbox'
-import { statusLine } from './state'
+import { callFailure, errorText, SERVER_KEY, serverFor, statusLine } from './state'
 import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
@@ -57,6 +58,15 @@ const QUIET_TOOLS = [
 // The type the Agent tool starts when the model names none.
 const DEFAULT_AGENT = 'general-purpose'
 const END_TURN = 'The summary is shown to the operator. End your turn now without writing anything else.'
+const INVITE_TOOL = 'get_invite_link'
+const SIGNUP_LINE = 'signup + install here:'
+const INVITE_QUESTION = 'Copy to share'
+const COPY_MESSAGE = 'Copy message'
+const COPY_LINK = 'Copy link'
+// The message to paste, in the operator's own voice; a team with members
+// already asks rather than announces.
+const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
+const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
 const LIST_FIXES_HINT = "When your teammates' agents find fixes, run /list-fixes to see them."
 // The model never sees the drawn summary, so the result repeats its last line:
 // the conversation is what Claude Code suggests the operator's next prompt from.
@@ -64,7 +74,7 @@ const END_TURN_WITH_HINT = `The summary is shown to the operator. Its last line 
 const MAX_ITEMS = 3
 // textError counts JavaScript string length, where an emoji takes 2 or more.
 const TEXT_LIMIT = `At most ${MAX_TEXT} characters, counting an emoji as 2 or more`
-const SEVERITY_WIDTH = 6
+const SEVERITY_WIDTH = 10
 // The card's inner width: the skill's text sample is 72 columns inside its box.
 const CARD_WIDTH = 72
 const SEVERITIES = ['high', 'medium', 'low'] as const
@@ -119,9 +129,9 @@ const SUMMARY_SCHEMA = {
 }
 
 const SEVERITY_LABELS = {
-  high: { label: 'HIGH', color: 'error' },
-  medium: { label: 'MED', color: 'warning' },
-  low: { label: 'LOW', color: undefined },
+  high: { label: '▲ high', color: 'error' },
+  medium: { label: '◆ medium', color: 'warning' },
+  low: { label: '▼ low', color: undefined },
 } as const
 
 // The sample fix card. It's fixed text, and its teammate is made up: no tool
@@ -131,7 +141,8 @@ const CARD = {
   notReal: '· not a real fix',
   frictionTitle: 'YOUR FRICTION',
   friction: 'Lint passes on commit but fails in CI',
-  frictionSeen: '9 of your sessions · about 3.5 hours lost',
+  frictionImpact: 'Blocked',
+  frictionSeen: ' · in 14% of your sessions',
   solutionTitle: 'SOLUTION FROM A TEAMMATE',
   teammate: '· Ron Burgundy',
   solution: 'Run ESLint from the repo root in the pre-commit hook, so commits use the same rules as CI.',
@@ -149,9 +160,14 @@ const SOLVED_CARD = {
   anonymous: '(you both stay anonymous)',
 } as const
 
+// The summary row whose invite is asked about once the turn ends, and
+// whether that question was answered for the operator while they were away.
+let inviteRowId: string | null = null
+let answeredWhileAway = false
+
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const drawn = atom({ plugin: 'quotient', key: 'setupDrawn' } as const, {} as SetupDrawn, { shape: 'drawn-3' })
+const drawn = atom({ plugin: 'quotient', key: 'setupDrawn' } as const, {} as SetupDrawn, { shape: 'drawn-4' })
 const NO_RUN: SetupRun = {
   isRunning: false,
   toolUseIds: [],
@@ -163,9 +179,10 @@ const NO_RUN: SetupRun = {
   listed: {},
   teammateTitles: {},
   teammateAnswers: [],
+  joinedCompany: null,
 }
 // The guard reads the run's state by its key, so it checks this tag itself.
-export const RUN_SHAPE = 'run-8'
+export const RUN_SHAPE = 'run-9'
 const run = atom({ plugin: 'quotient', key: 'setupRun' } as const, NO_RUN, { shape: RUN_SHAPE })
 // Shared with fix.tsx, which declares it with the same key.
 const statusParts = atom(
@@ -443,20 +460,44 @@ export function checkSummary(
 }
 
 /**
- * Draws setup's two start lines.
+ * Joins items into an English list: "a", "a and b", "a, b and c".
+ *
+ * @param items - At least one item
+ * @returns The list
+ */
+function listed(items: readonly string[]): string {
+  const rest = items.slice(0, -1)
+  const last = items.at(-1) ?? ''
+  return rest.length === 0 ? last : `${rest.join(', ')} and ${last}`
+}
+
+/**
+ * Draws setup's two start lines, under the company the operator joined when
+ * this is their first setup since joining it.
  *
  * @param els - The surface's elements
  * @param start - The checked start values
+ * @param joinedCompany - The company's name, or null
  * @returns The start message
  */
-function startTree({ Box, Text }: Els, start: SetupStart) {
+function startTree({ Box, Text }: Els, start: SetupStart, joinedCompany: string | null) {
   const { sessions, automatedRuns, cloudRuns, firstDay, lastDay, checksTeammates } = start
   const teammates = checksTeammates ? TEAMMATES_CLAUSE : ''
+  const counts = [
+    [sessions, 'session'],
+    [automatedRuns, 'automated run'],
+    [cloudRuns, 'cloud routine run'],
+  ] as const
+  const clauses = counts.filter(([count]) => count > 0).map(([count, noun]) => plural(count, noun))
+  const reviewed = clauses.length === 0 ? 'no sessions' : listed(clauses)
   return (
     <Box flexDirection="column">
-      <Text>
-        {`Reviewing ${plural(sessions, 'session')}, ${plural(automatedRuns, 'automated run')} and ${plural(cloudRuns, 'cloud routine run')} from ${firstDay} to ${lastDay}${teammates}`}
-      </Text>
+      {joinedCompany !== null && (
+        <Text>
+          <Text color="success">✓</Text> {`Joined ${joinedCompany}`}
+        </Text>
+      )}
+      <Text>{`Reviewing ${reviewed} from ${firstDay} to ${lastDay}${teammates}`}</Text>
       <Text dimColor>This can take some time. You can keep working in another session while it runs.</Text>
     </Box>
   )
@@ -479,7 +520,10 @@ function cardTree({ Box, Text }: Els) {
           {CARD.frictionTitle}
         </Text>
         <Text bold>{CARD.friction}</Text>
-        <Text dimColor>{CARD.frictionSeen}</Text>
+        <Text dimColor>
+          <Text color="suggestion">{CARD.frictionImpact}</Text>
+          {CARD.frictionSeen}
+        </Text>
       </Box>
       <Text dimColor>{'╌'.repeat(CARD_WIDTH)}</Text>
       <Text>
@@ -534,11 +578,14 @@ function solvedCardTree({ Box, Text }: Els, solved: SetupSolved) {
 function solvedTree(els: Els, check: SetupTeammateCheck) {
   const { Box, Text } = els
   const example = check.solved[0]
-  const count = check.solvedCount === 1 ? 'one' : String(check.solvedCount)
-  const intro = example === undefined ? '.' : check.solvedCount === 1 ? ':' : ". Here's an example:"
+  const delivery =
+    check.solvedCount === 1
+      ? "They'll get it as an anonymous suggestion in their next session."
+      : "They'll get these as anonymous suggestions in their next session."
   return (
     <Box flexDirection="column" marginTop={1}>
-      <Text bold>{`Your setup already solves ${count} of your teammates' frictions${intro}`}</Text>
+      <Text bold>{`Your setup solves ${check.solvedCount} of your teammates' frictions.`}</Text>
+      <Text>{delivery}</Text>
       {example !== undefined && solvedCardTree(els, example)}
     </Box>
   )
@@ -576,6 +623,200 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
 }
 
 /**
+ * Checks a `get_invite_link` reply. Any missing or mistyped field makes the
+ * whole reply unusable, and a trial with no seat left has no one to invite.
+ *
+ * @param text - The reply's text
+ * @returns The invite, or null when it can't be used
+ */
+function inviteFrom(text: string | undefined): SetupInvite | null {
+  let reply: unknown
+  try {
+    reply = JSON.parse(text ?? '')
+  } catch {
+    return null
+  }
+  if (typeof reply !== 'object' || reply === null) return null
+  const { companyName, inviteUrl, emailDomain, memberCount, maxSeats } = reply as Record<string, unknown>
+  const name = typeof companyName === 'string' ? cleanText(companyName) : null
+  if (name === null || !isWebLink(inviteUrl) || typeof emailDomain !== 'string' || emailDomain === '') return null
+  if (!isCount(memberCount, 1) || !(maxSeats === null || isCount(maxSeats, 0))) return null
+  if (maxSeats !== null && memberCount >= maxSeats) return null
+  return { companyName: name, inviteUrl, memberCount }
+}
+
+/**
+ * Tells whether a value is a web address that can be drawn and pasted as it
+ * is: http or https, with nothing a terminal would act on.
+ *
+ * @param value - The value
+ * @returns Whether it's a safe web address
+ */
+function isWebLink(value: unknown): value is string {
+  if (typeof value !== 'string' || cleanText(value) !== value) return false
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Asks Quotient for the company's invite link. Any failure shows no invite,
+ * with a debug line saying why.
+ *
+ * @param $ - The engine
+ * @returns The invite, or null
+ */
+async function fetchInvite($: Api): Promise<SetupInvite | null> {
+  try {
+    const server = serverFor(await $.mcp.connect(SERVER_KEY))
+    if (server === null) return null
+    const result = await $.mcp.call(server, INVITE_TOOL, {})
+    const text = result.content.find(block => block.type === 'text')
+    const reply = text?.type === 'text' ? text.text : undefined
+    const invite = result.isError ? null : inviteFrom(reply)
+    if (invite === null) $.ui.log(`quotient setup: ${INVITE_TOOL} gave no invite to show`, { to: 'debug' })
+    return invite
+  } catch (error) {
+    $.ui.log(`quotient setup: ${INVITE_TOOL} ${callFailure(error)}: ${errorText(error)}`, { to: 'debug' })
+    return null
+  }
+}
+
+/**
+ * Draws the invite: a heading for the team's size, who joins, and the
+ * message to paste with the link.
+ *
+ * @param els - The surface's elements
+ * @param invite - The checked invite
+ * @returns The invite block
+ */
+function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
+  const others = invite.memberCount - 1
+  const heading =
+    others === 0
+      ? "You're the first on your team. Invite teammates by sharing the link."
+      : `You have ${plural(others, 'teammate')} on Quotient so far. Invite more by sharing the link.`
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>{heading}</Text>
+      <Text dimColor>{`They'll join ${invite.companyName}. They won't see your sessions.`}</Text>
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} width={CARD_WIDTH + 4}>
+        <Text>{others === 0 ? FIRST_MESSAGE : MORE_MESSAGE}</Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text>{SIGNUP_LINE}</Text>
+          <Text color="suggestion">{invite.inviteUrl}</Text>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * Builds the invite message as it's pasted: the message, then the sign-up
+ * line and the link.
+ *
+ * @param invite - The checked invite
+ * @returns The text to copy
+ */
+function inviteText(invite: SetupInvite): string {
+  const message = invite.memberCount === 1 ? FIRST_MESSAGE : MORE_MESSAGE
+  return `${message}\n\n${SIGNUP_LINE}\n${invite.inviteUrl}`
+}
+
+/**
+ * Draws what follows the invite once "Copy to share" is answered: what was
+ * copied, or why it wasn't, then what happens next.
+ *
+ * @param els - The surface's elements
+ * @param shared - How the question was answered
+ * @param frictions - The new frictions the run stored
+ * @returns The closing sections
+ */
+function sharedTree({ Box, Text }: Els, shared: NonNullable<SetupSummary['shared']>, frictions: number) {
+  const { copy, isCopied } = shared
+  const what = copy === 'message' ? 'message' : 'link'
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      {copy !== null && (
+        <Box flexDirection="column">
+          <Text dimColor>
+            {`· ${INVITE_QUESTION} → `}
+            <Text bold>{copy === 'message' ? COPY_MESSAGE : COPY_LINK}</Text>
+          </Text>
+          {isCopied ? (
+            <Text>
+              <Text color="success">✓</Text> {`${copy === 'message' ? 'Message' : 'Link'} copied. Paste it to your teammates in Slack.`}
+            </Text>
+          ) : (
+            <Text>
+              <Text color="warning">!</Text> {`Couldn't reach the clipboard here. Select the ${what} above to copy it.`}
+            </Text>
+          )}
+        </Box>
+      )}
+      <Box flexDirection="column" marginTop={copy === null ? 0 : 1}>
+        <Text bold>What happens next</Text>
+        <Text>1. Your teammate joins.</Text>
+        <Text>2. Quotient finds solutions in their setup.</Text>
+        <Text>3. You get suggestions next session.</Text>
+      </Box>
+      {frictions > 0 && (
+        <Box marginTop={1}>
+          <Text dimColor>Your frictions stay saved. Run /list-fixes to see the full list.</Text>
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+/**
+ * Asks "Copy to share" about a summary's invite, copies what the operator
+ * chose, and keeps the outcome on the summary, which draws it. A dismissed
+ * question, free text, or an answer given while they were away copies
+ * nothing.
+ *
+ * @param $ - The engine
+ * @param rowId - The summary call's id
+ */
+async function shareInvite($: Api, rowId: string): Promise<void> {
+  const shown = (await read($, drawn))[rowId]
+  if (shown?.kind !== 'summary' || shown.summary.invite === undefined) return
+  const { invite } = shown.summary
+  answeredWhileAway = false
+  let choice: string | null
+  try {
+    choice = await $.ui.ask(INVITE_QUESTION, { header: 'Invite', options: [COPY_MESSAGE, COPY_LINK] })
+  } catch {
+    choice = null
+  }
+  const copy = answeredWhileAway ? null : choice === COPY_MESSAGE ? 'message' : choice === COPY_LINK ? 'link' : null
+  const isCopied =
+    copy !== null && (await $.ui.copy({ text: copy === 'message' ? inviteText(invite) : invite.inviteUrl })).isCopied
+  await update($, drawn, (current): SetupDrawn => {
+    const row = current[rowId]
+    if (row?.kind !== 'summary') return current
+    return { ...current, [rowId]: { ...row, summary: { ...row.summary, shared: { copy, isCopied } } } }
+  })
+}
+
+/**
+ * Says how widely a friction reached: its share of the sources the run
+ * recorded, from 1% to 100%, or its session count when none were recorded.
+ * A batch whose record failed still counts its sessions, which can put a
+ * friction in more sessions than were recorded.
+ *
+ * @param sessions - The sessions and routine runs it appeared in
+ * @param reviewedCount - The sources the run recorded as reviewed
+ * @returns The text after the friction's impact
+ */
+function reach(sessions: number, reviewedCount: number | undefined): string {
+  if (reviewedCount === undefined || reviewedCount === 0) return plural(sessions, 'session')
+  return `${Math.min(100, Math.max(1, Math.round((100 * sessions) / reviewedCount)))}% of sessions`
+}
+
+/**
  * Draws setup's final summary: only its designed sections, from the checked
  * fields, in the order the mockups show them.
  *
@@ -585,7 +826,7 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
  */
 function summaryTree(els: Els, summary: SetupSummary) {
   const { Box, Text } = els
-  const { frictions, working, top, remainingHigh, inCommon, teammateCheck } = summary
+  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount, invite, shared } = summary
   const isInvited = teammateCheck !== undefined
   const found = `Your agents ran into ${frictions === 0 ? 'no new frictions' : plural(frictions, 'friction')} in the last two weeks.`
   const remaining = frictions - top.length
@@ -605,7 +846,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
       )}
       {top.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold>Where your agents lost the most time</Text>
+          <Text bold>Your top frictions</Text>
           {top.map(friction => {
             const { label, color } = SEVERITY_LABELS[friction.severity]
             return (
@@ -619,7 +860,10 @@ function summaryTree(els: Els, summary: SetupSummary) {
                   <Text>{friction.description}</Text>
                 </Box>
                 <Box flexShrink={0} marginLeft={2}>
-                  <Text dimColor>{`${impactLabel(friction.impact)} · ${plural(friction.sessions, 'session')}`}</Text>
+                  <Text dimColor>
+                    <Text color="suggestion">{impactLabel(friction.impact)}</Text>
+                    {` · ${reach(friction.sessions, reviewedCount)}`}
+                  </Text>
                 </Box>
               </Box>
             )
@@ -630,7 +874,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
         </Box>
       )}
       {teammateCheck !== undefined && teammateCheck.solvedCount > 0 && solvedTree(els, teammateCheck)}
-      {teammateCheck !== undefined && nextTree(els, teammateCheck.solvedCount)}
+      {teammateCheck !== undefined && invite === undefined && nextTree(els, teammateCheck.solvedCount)}
       {!isInvited && frictions > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Your teammates have probably already fixed some of these.</Text>
@@ -648,11 +892,13 @@ function summaryTree(els: Els, summary: SetupSummary) {
           </Box>
         </Box>
       )}
-      {!isInvited && frictions > 0 && (
+      {!isInvited && frictions > 0 && invite === undefined && (
         <Box marginTop={1}>
           <Text>{LIST_FIXES_HINT}</Text>
         </Box>
       )}
+      {invite !== undefined && inviteTree(els, invite)}
+      {invite !== undefined && shared !== undefined && sharedTree(els, shared, frictions)}
     </Box>
   )
 }
@@ -737,7 +983,8 @@ async function lookUpDirs($: Api): Promise<SetupRun['dirs']> {
  * Adds what quotient knows to a `start_setup_run` reply: a pinned window's
  * end as its `startedAt`, so the skill's "two weeks before `startedAt`" is
  * the pinned window, and the routine ids the window's sessions mention. The
- * model only reads these, and never sends them back to Quotient.
+ * model only reads these, and never sends them back to Quotient. The company
+ * the operator joined is taken out: only quotient draws it.
  *
  * @param text - The reply's text
  * @param window - The pinned window, or undefined when none is pinned
@@ -749,11 +996,13 @@ function withStartAdditions(text: string | undefined, window: PinnedWindow | und
     ...(window === undefined ? {} : { startedAt: `${window.end}T00:00:00Z` }),
     ...(routineIds === undefined || routineIds.length === 0 ? {} : { routineIdsInSessions: routineIds }),
   }
-  if (Object.keys(additions).length === 0 || text === undefined) return undefined
+  if (text === undefined) return undefined
   try {
     const reply: unknown = JSON.parse(text)
     if (typeof reply !== 'object' || reply === null || Array.isArray(reply)) return undefined
-    return JSON.stringify({ ...reply, ...additions })
+    if (Object.keys(additions).length === 0 && !('joinedCompany' in reply)) return undefined
+    const { joinedCompany: _joinedCompany, ...rest } = reply as Record<string, unknown>
+    return JSON.stringify({ ...rest, ...additions })
   } catch {
     return undefined
   }
@@ -847,6 +1096,24 @@ async function addReviewed($: Api, sources: readonly string[]): Promise<void> {
 }
 
 /**
+ * Reads the company the operator joined from a `start_setup_run` reply.
+ *
+ * @param text - The reply's text
+ * @returns The company's name, or null when the reply names none or can't be read
+ */
+function joinedCompanyFrom(text: string | undefined): string | null {
+  let reply: unknown
+  try {
+    reply = JSON.parse(text ?? '')
+  } catch {
+    return null
+  }
+  const joined = (reply as { joinedCompany?: unknown } | null)?.joinedCompany
+  const name = (joined as { name?: unknown } | null | undefined)?.name
+  return typeof name === 'string' ? cleanText(name) : null
+}
+
+/**
  * Answers a `setup_start` call: refuses input that breaks a rule, or keeps
  * the start values for its row, the band and the status line.
  *
@@ -867,7 +1134,8 @@ async function answerStart(
   if (checked.error !== undefined) return { deny: checked.error }
   const start = window === undefined ? checked.value : { ...checked.value, firstDay: window.firstDay, lastDay: window.lastDay }
   if (toolUseId !== undefined) {
-    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'start', start } }))
+    const { joinedCompany } = await read($, run)
+    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'start', start, joinedCompany } }))
   }
   await update($, run, current => (current.isRunning ? { ...current, start } : current))
   if ((await read($, run)).isRunning) await showStatus($)
@@ -1207,12 +1475,19 @@ async function answerSummary(
     : undefined
   const checked = checkSummary(input, current.reviewedIds, teammates)
   if (checked.error !== undefined) return { deny: checked.error }
-  const summary = checked.value
+  const reviewedCount = current.reviewedIds.length
+  const summary: SetupSummary = { ...checked.value, ...(reviewedCount === 0 ? {} : { reviewedCount }) }
   if (toolUseId !== undefined) {
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
   }
+  // Fetched once the summary shows, since Claude Code may ask before the call runs.
+  const invite = await fetchInvite($)
+  if (invite !== null && toolUseId !== undefined) {
+    await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary: { ...summary, invite } } }))
+  }
+  inviteRowId = invite === null || toolUseId === undefined ? null : toolUseId
   await endRun($)
-  const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0
+  const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0 && invite === null
   return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
 }
 
@@ -1373,6 +1648,8 @@ export const registerSetup: Register = on => {
     if (called.deny !== undefined || called.isError === true || !(await read($, run)).isRunning) return called
     if (e.tool === 'RemoteTrigger') return compactRemote(called, (e as unknown as Record<string, unknown>).action)
     if (name === 'start_setup_run') {
+      const joinedCompany = joinedCompanyFrom(called.text)
+      await update($, run, latest => ({ ...latest, joinedCompany }))
       const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
       const routineIds = await routineIdsInSessions($, (await read($, run)).dirs, window).catch(() => undefined)
       const added = withStartAdditions(called.text, window, routineIds)
@@ -1387,7 +1664,7 @@ export const registerSetup: Register = on => {
     if (e.props.isExpanded) return next(e)
     const shown = (await read($, drawn))[e.props.tool_use_id]
     if (shown?.kind === 'summary') return summaryTree($.ui.resolve(e), shown.summary)
-    if (shown?.kind === 'start') return startTree($.ui.resolve(e), shown.start)
+    if (shown?.kind === 'start') return startTree($.ui.resolve(e), shown.start, shown.joinedCompany)
     // Until the call is checked, its row would show the raw input.
     const isUnchecked = [START_TOOL, SUMMARY_TOOL].includes(e.props.tool as string) && e.props.isRunning
     if (!isUnchecked && !(await read($, run)).toolUseIds.includes(e.props.tool_use_id)) return next(e)
@@ -1428,10 +1705,27 @@ export const registerSetup: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
-    return next(e)
+    if (e.agentId !== undefined) return next(e)
+    // The summary's own turn is the only one that asks; any other ending drops it.
+    const rowId = inviteRowId
+    inviteRowId = null
+    if (e.reason !== 'answer' || rowId === null) return next(e)
+    const done = await next(e)
+    await shareInvite($, rowId)
+    return done
   }).catch(($, e, next) => next(e))
 
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    const asked = await next(e)
+    const reply = asked.result as { afkTimeoutMs?: number } | undefined
+    if (e.questions.some(one => one.question === INVITE_QUESTION) && reply?.afkTimeoutMs !== undefined) {
+      answeredWhileAway = true
+    }
+    return asked
+  })
+
   on('session.end', async ($, e, next) => {
+    inviteRowId = null
     await endRun($)
     return next(e)
   }).catch(($, e, next) => next(e))

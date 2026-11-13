@@ -748,8 +748,9 @@ export const registerFix: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: NOTE_PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
+    const { Box } = els
     // A surface with no text field can't take a note; Esc still leaves it.
-    if (!('Input' in els)) return <els.Box />
+    if (!('Input' in els)) return <Box />
     return noteTree($, els)
   }).catch(($, e, next) => next(e))
 

@@ -3,6 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import type { FrictionRow } from '../types'
 import { denial } from './fixtures/denial'
+import { runTool } from './fixtures/run-tool'
 
 type Api = Parameters<TestBody>[0]
 type On = Parameters<TestBody>[1]
@@ -196,7 +197,7 @@ function engine(
  * @returns What the call resolved to
  */
 function callTool($: Api, tool: string, toolUseId: string, input: Record<string, unknown>) {
-  return $.tool.call({ tool, tool_use_id: toolUseId, ...input } as unknown as Parameters<typeof $.tool.call>[0])
+  return runTool($, { tool, tool_use_id: toolUseId, ...input })
 }
 
 /**

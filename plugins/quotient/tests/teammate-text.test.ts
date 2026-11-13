@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { checkNotice, SHOWN_ALREADY, withoutTeammateText } from '../hooks/teammate-text'
+import { runTool } from './fixtures/run-tool'
 
 type On = Parameters<TestBody>[1]
 type Engine = Parameters<TestBody>[0]
@@ -68,7 +69,7 @@ function engine(
  * @returns What the model reads: the result's text blocks joined, or the refusal
  */
 async function list($: Engine): Promise<string> {
-  const called = await $.tool.call({ tool: TOOL, format: 'json', status: 'all' } as unknown as Parameters<Engine['tool']['call']>[0])
+  const called = await runTool($, { tool: TOOL, format: 'json', status: 'all' })
   if (called.deny !== undefined) return called.deny
   const { result } = called as { result: unknown }
   if (Array.isArray(result)) return result.map(block => (block as { text?: string }).text ?? '').join('')
@@ -163,13 +164,13 @@ test("review-frictions and setup won't start in a session where the model read a
 test("the model's Skill call can only hide teammates' fixes, never show them, however it's spelled", async ($, on) => {
   engine(on)
 
-  await $.tool.call({ tool: 'Skill', skill: 'quotient:fix-friction' } as unknown as Parameters<Engine['tool']['call']>[0])
+  await runTool($, { tool: 'Skill', skill: 'quotient:fix-friction' })
   expect((await list($)).includes(PLANTED)).toBe(false)
 
   await $.command.run({ ...REVIEW, command: 'quotient:fix-friction' })
   expect((await list($)).includes(PLANTED)).toBe(true)
 
-  await $.tool.call({ tool: 'Skill', skill: '/Review-Frictions' } as unknown as Parameters<Engine['tool']['call']>[0])
+  await runTool($, { tool: 'Skill', skill: '/Review-Frictions' })
   expect((await list($)).includes(PLANTED)).toBe(false)
 })
 
@@ -257,13 +258,13 @@ function agentEngine(on: On) {
  * @returns What the model reads
  */
 async function startCheck($: Engine, isBackground: boolean): Promise<string> {
-  const called = await $.tool.call({
+  const called = await runTool($, {
     tool: 'Agent',
     tool_use_id: 'toolu_check',
     subagent_type: 'quotient:teammate-check',
     prompt: 'Check my setup.',
     ...(isBackground ? { run_in_background: true } : {}),
-  } as unknown as Parameters<Engine['tool']['call']>[0])
+  })
   // What the model reads: core maps the Agent tool's result from its content.
   const { result } = called as { result?: { content?: { text?: string }[] } }
   if (result?.content === undefined) return called.text ?? ''

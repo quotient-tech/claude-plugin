@@ -3,6 +3,7 @@ import type { TestBody } from 'claude-code/testing'
 
 import type { FrictionRow } from '../types'
 import { denial } from './fixtures/denial'
+import { runTool } from './fixtures/run-tool'
 
 type Api = Parameters<TestBody>[0]
 type On = Parameters<TestBody>[1]
@@ -592,7 +593,7 @@ test("a fix picked in the pane shows its teammate's fix to fix-friction, even af
   const page = { frictions: [{ id: 'fr-2', solutions: [{ id: 's-2c', isOwn: false, prompt: 'Run ESLint from the repo root', implementedAt: null }] }], nextCursor: null }
   on('tool.call', { tool: 'mcp__plugin_quotient_agex__list_my_frictions' }, () => ({ result: 'ran', text: JSON.stringify(page) }))
   const listed = async () => {
-    const called = await $.tool.call({ tool: 'mcp__plugin_quotient_agex__list_my_frictions', format: 'json' } as unknown as Parameters<typeof $.tool.call>[0])
+    const called = await runTool($, { tool: 'mcp__plugin_quotient_agex__list_my_frictions', format: 'json' })
     const { result } = called as { result: unknown }
     return Array.isArray(result) ? result.map(block => (block as { text?: string }).text ?? '').join('') : (called.text ?? '')
   }

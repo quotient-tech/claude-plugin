@@ -13,7 +13,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 
 import type { TeammateTextMode } from '../types'
-import { isQuotientSkill, QUOTIENT_PREFIXES } from './sandbox'
+import { isQuotientSkill } from './sandbox'
 
 // The commands that show teammates' fixes, and those that must never see them.
 const SHOWS_FIXES = ['fix-friction', 'list-fixes']
@@ -22,7 +22,7 @@ export const HIDES_FIXES = ['review-frictions', 'setup']
 // conversation already holds.
 export const SHOWN_ALREADY =
   "This session already showed teammates' fixes, which review-frictions and setup must never see. Run /clear or start a new session, then run it again."
-const LIST_TOOLS = QUOTIENT_PREFIXES.map(prefix => `${prefix}list_my_frictions` as `mcp__${string}__${string}`)
+const LIST_TOOLS = /^mcp__(plugin_quotient_agex|claude_ai_Quotient)__list_my_frictions$/
 const WITHHELD = "quotient withheld this reply: it couldn't be read, so it might hold a teammate's fix"
 const CHECK_AGENT = 'teammate-check'
 const CHECK_DONE =
