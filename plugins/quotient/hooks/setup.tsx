@@ -6,6 +6,7 @@ import type { Elements, Hook, Register } from 'claude-code'
 import type {
   SetupAnswer,
   SetupDrawn,
+  SetupInvite,
   SetupRun,
   SetupSolved,
   SetupStart,
@@ -16,7 +17,7 @@ import type {
   StatusParts,
 } from '../types'
 import { fullPath, globRoot, isConfigPath, isQuotientSkill, isSkippedProject, QUOTIENT_PREFIXES, TEAMMATE_TOOL_USE } from './sandbox'
-import { statusLine } from './state'
+import { callFailure, errorText, SERVER_KEY, serverFor, statusLine } from './state'
 import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
@@ -57,6 +58,12 @@ const QUIET_TOOLS = [
 // The type the Agent tool starts when the model names none.
 const DEFAULT_AGENT = 'general-purpose'
 const END_TURN = 'The summary is shown to the operator. End your turn now without writing anything else.'
+const INVITE_TOOL = 'get_invite_link'
+const SIGNUP_LINE = 'signup + install here:'
+// The message to paste, in the operator's own voice; a team with members
+// already asks rather than announces.
+const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
+const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
 const LIST_FIXES_HINT = "When your teammates' agents find fixes, run /list-fixes to see them."
 // The model never sees the drawn summary, so the result repeats its last line:
 // the conversation is what Claude Code suggests the operator's next prompt from.
@@ -608,6 +615,81 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
 }
 
 /**
+ * Checks a `get_invite_link` reply. Any missing or mistyped field makes the
+ * whole reply unusable, and a trial with no seat left has no one to invite.
+ *
+ * @param text - The reply's text
+ * @returns The invite, or null when it can't be used
+ */
+function inviteFrom(text: string | undefined): SetupInvite | null {
+  let reply: unknown
+  try {
+    reply = JSON.parse(text ?? '')
+  } catch {
+    return null
+  }
+  if (typeof reply !== 'object' || reply === null) return null
+  const { companyName, inviteUrl, emailDomain, memberCount, maxSeats } = reply as Record<string, unknown>
+  const isText = (value: unknown): value is string => typeof value === 'string' && value !== ''
+  if (!isText(companyName) || !isText(inviteUrl) || !isText(emailDomain)) return null
+  if (!isCount(memberCount, 1) || !(maxSeats === null || isCount(maxSeats, 0))) return null
+  if (maxSeats !== null && memberCount >= maxSeats) return null
+  return { companyName, inviteUrl, memberCount }
+}
+
+/**
+ * Asks Quotient for the company's invite link. Any failure shows no invite,
+ * with a debug line saying why.
+ *
+ * @param $ - The engine
+ * @returns The invite, or null
+ */
+async function fetchInvite($: Api): Promise<SetupInvite | null> {
+  try {
+    const server = serverFor(await $.mcp.connect(SERVER_KEY))
+    if (server === null) return null
+    const result = await $.mcp.call(server, INVITE_TOOL, {})
+    const text = result.content.find(block => block.type === 'text')
+    const reply = text?.type === 'text' ? text.text : undefined
+    const invite = result.isError ? null : inviteFrom(reply)
+    if (invite === null) $.ui.log(`quotient setup: ${INVITE_TOOL} gave no invite to show`, { to: 'debug' })
+    return invite
+  } catch (error) {
+    $.ui.log(`quotient setup: ${INVITE_TOOL} ${callFailure(error)}: ${errorText(error)}`, { to: 'debug' })
+    return null
+  }
+}
+
+/**
+ * Draws the invite: a heading for the team's size, who joins, and the
+ * message to paste with the link.
+ *
+ * @param els - The surface's elements
+ * @param invite - The checked invite
+ * @returns The invite block
+ */
+function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
+  const others = invite.memberCount - 1
+  const heading =
+    others === 0
+      ? "You're the first on your team. Invite teammates by sharing the link."
+      : `You have ${plural(others, 'teammate')} on Quotient so far. Invite more by sharing the link.`
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text bold>{heading}</Text>
+      <Text dimColor>{`They'll join ${invite.companyName}. They won't see your sessions.`}</Text>
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} width={CARD_WIDTH + 4}>
+        <Text>{others === 0 ? FIRST_MESSAGE : MORE_MESSAGE}</Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text>{SIGNUP_LINE}</Text>
+          <Text color="suggestion">{invite.inviteUrl}</Text>
+        </Box>
+      </Box>
+    </Box>
+  )
+}
+
+/**
  * Says how widely a friction reached: its share of the run's sources, never
  * shown below 1%, or its session count when the run's size isn't known.
  *
@@ -630,7 +712,7 @@ function reach(sessions: number, reviewedCount: number | undefined): string {
  */
 function summaryTree(els: Els, summary: SetupSummary) {
   const { Box, Text } = els
-  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount } = summary
+  const { frictions, working, top, remainingHigh, inCommon, teammateCheck, reviewedCount, invite } = summary
   const isInvited = teammateCheck !== undefined
   const found = `Your agents ran into ${frictions === 0 ? 'no new frictions' : plural(frictions, 'friction')} in the last two weeks.`
   const remaining = frictions - top.length
@@ -678,7 +760,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
         </Box>
       )}
       {teammateCheck !== undefined && teammateCheck.solvedCount > 0 && solvedTree(els, teammateCheck)}
-      {teammateCheck !== undefined && nextTree(els, teammateCheck.solvedCount)}
+      {teammateCheck !== undefined && invite === undefined && nextTree(els, teammateCheck.solvedCount)}
       {!isInvited && frictions > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Your teammates have probably already fixed some of these.</Text>
@@ -696,11 +778,12 @@ function summaryTree(els: Els, summary: SetupSummary) {
           </Box>
         </Box>
       )}
-      {!isInvited && frictions > 0 && (
+      {!isInvited && frictions > 0 && invite === undefined && (
         <Box marginTop={1}>
           <Text>{LIST_FIXES_HINT}</Text>
         </Box>
       )}
+      {invite !== undefined && inviteTree(els, invite)}
     </Box>
   )
 }
@@ -1275,13 +1358,17 @@ async function answerSummary(
   const checked = checkSummary(input, current.reviewedIds, teammates)
   if (checked.error !== undefined) return { deny: checked.error }
   const { start } = current
-  const summary =
-    start === null ? checked.value : { ...checked.value, reviewedCount: start.sessions + start.automatedRuns + start.cloudRuns }
+  const invite = await fetchInvite($)
+  const summary = {
+    ...checked.value,
+    ...(start === null ? {} : { reviewedCount: start.sessions + start.automatedRuns + start.cloudRuns }),
+    ...(invite === null ? {} : { invite }),
+  }
   if (toolUseId !== undefined) {
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary } }))
   }
   await endRun($)
-  const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0
+  const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0 && invite === null
   return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
 }
 

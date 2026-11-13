@@ -52,6 +52,8 @@ const SAVED = {
  * @param opts.newFixes - How many frictions the fix-status part's read finds
  * @param opts.teammates - The teammate frictions `list_teammate_frictions` lists
  * @param opts.findExit - The exit code of the `find` that lists the transcripts, 0 when absent
+ * @param opts.invite - What `get_invite_link` replies, or 'throw' for a call that fails; `{}` when absent
+ * @param opts.connected - What connecting to the plugin's server resolves to, when it isn't connected
  * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
@@ -77,13 +79,17 @@ function engine(
     agents?: { id: string; type: string; status: 'running' | 'completed' }[]
     refused?: string[]
     findExit?: number
+    invite?: { text: string; isError?: boolean } | 'throw'
+    connected?: { isConnected: false; reason: string }
   } = {},
 ) {
   const seen = {
+    mcpCalls: [] as { server: string; tool: string }[],
     tools: [] as { name: string; isDeferred?: unknown }[],
     argv: [] as (readonly string[])[],
     status: [] as (string | undefined)[],
     logs: [] as string[],
+    debug: [] as string[],
     spawned: [] as { subagentType: string; prompt: string }[],
   }
   // An operator's session: not a daily run, so quotient's sandbox doesn't hold.
@@ -102,7 +108,8 @@ function engine(
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('ui.log', (_, e) => {
-    seen.logs.push(e.text)
+    if (e.to === 'debug') seen.debug.push(e.text)
+    else seen.logs.push(e.text)
     return { value: undefined }
   })
   // The subagent setup starts for its teammate check.
@@ -112,12 +119,17 @@ function engine(
       description: 'check',
     })),
   }))
-  on('mcp.connect', () => ({ value: { isConnected: true, server: 'plugin:quotient:agex' } }))
+  on('mcp.connect', () => ({ value: opts.connected ?? { isConnected: true, server: 'plugin:quotient:agex' } }) as never)
   on('agent.spawn', (_, e) => {
     seen.spawned.push({ subagentType: e.subagentType, prompt: e.prompt })
     return { model: 'claude-test' }
   })
   on('mcp.call', (_, e) => {
+    seen.mcpCalls.push({ server: e.server, tool: e.tool })
+    if (e.tool === 'get_invite_link' && opts.invite !== undefined) {
+      if (opts.invite === 'throw') throw new Error('socket hang up')
+      return { value: { content: [{ type: 'text', text: opts.invite.text }], isError: opts.invite.isError ?? false } }
+    }
     const fix = { isOwn: false, implementedAt: null, viewedAt: null }
     const frictions = Array.from({ length: opts.newFixes ?? 0 }, () => ({ solutions: [fix] }))
     const text = e.tool === 'list_my_frictions' ? JSON.stringify({ frictions, nextCursor: null }) : '{}'
@@ -1110,6 +1122,133 @@ test("setup's own session learns there are none when the list is empty", async (
   const called = await $.tool.call({ tool: `${CONNECTOR}list_teammate_frictions` } as unknown as Parameters<typeof $.tool.call>[0])
 
   expect(JSON.stringify(called)).toContain('{\\"hasFrictions\\":false}')
+})
+
+const INVITE_URL = 'https://dev.getquotient.com/join/ABCD1234'
+const INVITE = { companyName: 'Northwind Robotics', inviteUrl: INVITE_URL, emailDomain: 'acme.com', memberCount: 1, maxSeats: 20 }
+const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
+const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
+
+/**
+ * The `get_invite_link` reply for an invite, with any fields changed.
+ *
+ * @param change - The fields to change
+ * @returns The reply as `engine` takes it
+ */
+function inviteReply(change: Record<string, unknown> = {}) {
+  return { text: JSON.stringify({ ...INVITE, ...change }) }
+}
+
+test("the first on their team sees the invite after the sample card, in place of the /list-fixes hint", async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const { texts, shown } = await drawSummary($, SAVED)
+
+  expectInOrder(shown, [
+    'Apply it · Ask Ron · Not now',
+    "You're the first on your team. Invite teammates by sharing the link.",
+    "They'll join Northwind Robotics. They won't see your sessions.",
+    FIRST_MESSAGE,
+    'signup + install here:',
+    INVITE_URL,
+  ])
+  expect(shown).not.toContain(LIST_FIXES_HINT)
+  expect(texts.find(one => one.text.startsWith("You're the first"))?.props.bold).toBe(true)
+  expect(texts.find(one => one.text.startsWith("They'll join"))?.props.dimColor).toBe(true)
+})
+
+test('a summary with the invite tells the model only to end the turn, without the link', async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const called = await callSummary($, SAVED)
+
+  expect(called.result).toBe(END_TURN)
+  expect(JSON.stringify(called)).not.toContain('ABCD1234')
+})
+
+test('an operator with one teammate is asked if they are using it yet', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 2 }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expectInOrder(shown, [
+    'You have 1 teammate on Quotient so far. Invite more by sharing the link.',
+    "They'll join Northwind Robotics. They won't see your sessions.",
+    MORE_MESSAGE,
+    INVITE_URL,
+  ])
+  expect(shown).not.toContain(FIRST_MESSAGE)
+})
+
+test('an operator with several teammates counts the others', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 15 }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('You have 14 teammates on Quotient so far. Invite more by sharing the link.')
+})
+
+test("an invited operator sees the invite after the frictions their setup solves, in place of what's next", async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 3 }) })
+  await checkTeammates($, [['t1', FIXES[0]]])
+
+  const { shown } = await drawSummary($, INVITED)
+
+  expectInOrder(shown, ["Your setup solves 1 of your teammates' frictions.", FIXES[0], 'You have 2 teammates on Quotient so far.'])
+  for (const absent of ["What's next", 'What you can do now', 'Invite more teammates.']) {
+    expect(shown).not.toContain(absent)
+  }
+})
+
+test('an operator with no new frictions still sees the invite', async ($, on) => {
+  engine(on, { invite: inviteReply() })
+
+  const { shown } = await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+
+  expectInOrder(shown, ['Setup is done. Your agents ran into no new frictions', "You're the first on your team."])
+})
+
+test('quotient asks the Quotient connector for the invite when the session runs the plugin servers itself', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply(), connected: { isConnected: false, reason: 'unlisted' } })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(seen.mcpCalls).toContainEqual({ server: 'claude.ai Quotient', tool: 'get_invite_link' })
+  expect(shown).toContain(INVITE_URL)
+})
+
+for (const [why, opts] of [
+  ['a refusal', { invite: { text: "Your company doesn't have an AgEx invite link.", isError: true } }],
+  ['a reply that is not JSON', { invite: { text: 'not json' } }],
+  ['a missing company name', { invite: inviteReply({ companyName: undefined }) }],
+  ['an empty invite link', { invite: inviteReply({ inviteUrl: '' }) }],
+  ['a member count of 0', { invite: inviteReply({ memberCount: 0 }) }],
+  ['a fractional member count', { invite: inviteReply({ memberCount: 1.5 }) }],
+  ['a seat limit that is not a number', { invite: inviteReply({ maxSeats: 'twenty' }) }],
+  ['a full trial', { invite: inviteReply({ memberCount: 20, maxSeats: 20 }) }],
+  ['a call that fails', { invite: 'throw' }],
+  ['an operator who is not signed in', { invite: inviteReply(), connected: { isConnected: false, reason: 'failed' } }],
+  ['a server without the tool', {}],
+] as const) {
+  test(`${why} shows no invite, and the summary ends as before`, async ($, on) => {
+    const seen = engine(on, opts as Parameters<typeof engine>[1])
+
+    const called = await callSummary($, SAVED)
+    const { shown } = await drawSummary($, SAVED)
+
+    expect(called.result).toBe(END_TURN_WITH_HINT)
+    if (why !== 'an operator who is not signed in') expect(seen.debug.some(line => line.includes('get_invite_link'))).toBe(true)
+    expect(shown).toContain(LIST_FIXES_HINT)
+    expect(shown).not.toContain('sharing the link')
+  })
+}
+
+test('a summary with no seat limit still shows the invite', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 40, maxSeats: null }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain('You have 39 teammates on Quotient so far.')
 })
 
 test('the desktop app draws the summary too', async ($, on) => {

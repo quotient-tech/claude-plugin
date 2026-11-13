@@ -104,6 +104,16 @@ export type SetupSummary = {
   teammateCheck?: SetupTeammateCheck
   /** How many sources the run reviews, from its start message; absent when it wasn't shown. */
   reviewedCount?: number
+  /** The company's invite link, when it can invite and its trial has a seat left. */
+  invite?: SetupInvite
+}
+
+/** A company's invite link, from a `get_invite_link` reply that passed its checks. */
+export type SetupInvite = {
+  companyName: string
+  inviteUrl: string
+  /** The company's members, the operator included. */
+  memberCount: number
 }
 
 /** The fields of a `setup_start` call that passed its checks. */
