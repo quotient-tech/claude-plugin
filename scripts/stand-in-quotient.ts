@@ -393,6 +393,28 @@ const TOOLS: Record<string, Tool> = {
       return ok({ status: "recorded", outcome });
     },
   },
+  // The mod calls these itself. No daily run is ever due, so a check never
+  // starts quotient's background runs beside the skill it runs.
+  claim_daily_run: {
+    description: "Claim today's daily run of a kind. Replies with `due`, and the run's `runId` when one is due.",
+    inputSchema: { type: "object", properties: { kind: { type: "string" }, source: SOURCE, repository: { type: "string" } }, required: ["kind", "source"] },
+    answer: () => ok({ due: false }),
+  },
+  complete_daily_run: {
+    description: "Complete a daily run this user holds.",
+    inputSchema: { type: "object", properties: { runId: { type: "string" }, outcome: { type: "string" } }, required: ["runId", "outcome"] },
+    answer: () => refuse("The signed-in user holds no daily run with that runId. It may have been resumed by a later claim after its lease ran out."),
+  },
+  record_usage: {
+    description: "Record the plugin's skill usage. Replies with how many requests were stored and how many were duplicates.",
+    inputSchema: { type: "object", properties: { requests: { type: "array", items: { type: "object" } } }, required: ["requests"] },
+    answer: (_, args) => ok({ storedCount: ((args.requests as unknown[] | undefined) ?? []).length, duplicateCount: 0 }),
+  },
+  check_thank_yous: {
+    description: "List the thank-yous the user's teammates sent for their fixes that the user hasn't seen.",
+    inputSchema: { type: "object", properties: {} },
+    answer: () => ok({ thankYous: [] }),
+  },
 };
 
 // JSON-RPC's codes for an unknown method and for bad params, which MCP uses

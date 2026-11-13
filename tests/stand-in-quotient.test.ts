@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { pluginPointingAt, productionCalls, runEnv, startStandIn } from "../scripts/stand-in-quotient.ts";
+import { readFrontmatter } from "./helpers/frontmatter.ts";
 
 type Line = Record<string, unknown>;
 
@@ -280,6 +281,49 @@ test("submit_review refuses an unknown friction, and a fix with no description, 
     const fixed = await callTool(standIn.url, "submit_review", { frictionId: listed.frictions[0].id, outcome: "fixed", source: "local" });
     assert.equal(fixed.isError, true);
     assert.match(fixed.body, /needs a description/);
+  } finally {
+    await standIn.close();
+  }
+});
+
+test("the mod's own calls get Quotient's replies: no daily run due, usage stored, no thank-yous", async () => {
+  const standIn = await startStandIn();
+  try {
+    assert.deepEqual(await callTool(standIn.url, "claim_daily_run", { kind: "find-solutions", source: "local" }), { body: { due: false }, isError: false });
+    assert.deepEqual(await callTool(standIn.url, "record_usage", { requests: [{ skill: "setup" }, { skill: "setup" }] }), {
+      body: { storedCount: 2, duplicateCount: 0 },
+      isError: false,
+    });
+    assert.deepEqual(await callTool(standIn.url, "check_thank_yous"), { body: { thankYous: [] }, isError: false });
+    assert.deepEqual(await callTool(standIn.url, "complete_daily_run", { runId: "nope", outcome: "failed" }), {
+      body: "The signed-in user holds no daily run with that runId. It may have been resumed by a later claim after its lease ran out.",
+      isError: true,
+    });
+  } finally {
+    await standIn.close();
+  }
+});
+
+const SKILLS = join(import.meta.dirname, "../plugins/quotient/skills");
+const HOOKS = join(import.meta.dirname, "../plugins/quotient/hooks");
+
+test("the stand-in serves every Quotient tool that setup, find-solutions, review-frictions and the mod's own calls name", async () => {
+  const needed = new Set<string>();
+  for (const skill of ["setup", "find-solutions", "review-frictions"]) {
+    const allowed = readFrontmatter(join(SKILLS, skill, "SKILL.md")).data["allowed-tools"] ?? "";
+    for (const [, tool] of allowed.matchAll(/mcp__(?:plugin_quotient_agex|claude_ai_Quotient)__(\w+)/g)) needed.add(tool!);
+  }
+  // Only literal tool names: fix-friction's call names its tool through a
+  // variable, and the stand-in doesn't serve fix-friction.
+  for (const file of readdirSync(HOOKS)) {
+    for (const [, tool] of readFileSync(join(HOOKS, file), "utf8").matchAll(/\$\.mcp\.call\(server, '(\w+)'/g)) needed.add(tool!);
+  }
+  assert.ok(needed.has("start_setup_run") && needed.has("record_usage"), "both sources were read");
+  const standIn = await startStandIn();
+  try {
+    const { reply } = await post(standIn.url, { id: 1, method: "tools/list" });
+    const served = new Set((reply?.result as { tools: { name: string }[] }).tools.map((tool) => tool.name));
+    assert.deepEqual([...needed].filter((tool) => !served.has(tool)), []);
   } finally {
     await standIn.close();
   }
