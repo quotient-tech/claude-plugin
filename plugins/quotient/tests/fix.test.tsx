@@ -159,7 +159,7 @@ function engine(
     // The fix-status part reads the same tool as json on its own, and the
     // thank-yous check runs on its own; both are answered apart, so these
     // tests see only the fix flow's calls.
-    if (e.tool === 'check_thank_yous') {
+    if (e.tool === 'list_thank_yous') {
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
     }
     if (e.args.format === 'json') {

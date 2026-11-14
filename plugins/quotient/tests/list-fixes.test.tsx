@@ -169,7 +169,7 @@ function engine(
       const frictions = Array.from({ length: opts.newFixes ?? 0 }, () => ({ solutions: [fix] }))
       return { value: { content: [{ type: 'text', text: JSON.stringify({ frictions, nextCursor: null }) }], isError: false } }
     }
-    if (e.tool === 'check_thank_yous') {
+    if (e.tool === 'list_thank_yous') {
       seen.thankYouChecks += 1
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
     }

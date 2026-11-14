@@ -11,6 +11,8 @@ const HEADLESS = { cwd: '/data', surface: null, isInteractive: false } as const
 const FIFTEEN_MINUTES = 15 * 60 * 1000
 const ANSWERED = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
 const THANK_YOU_ID = '0b5d3c1e-8f4a-4d2b-9c6e-1a2b3c4d5e6f'
+const OTHER_ID = '1c6e4d2f-9a5b-4e3c-8d7f-2b3c4d5e6f70'
+const SHOWN_KEY = 'shownThankYous'
 const SOLUTION_ID = '7e8f9a0b-1c2d-4e3f-8a5b-6c7d8e9f0a1b'
 
 type On = Parameters<TestBody>[1]
@@ -19,13 +21,13 @@ type Connect =
   | { isConnected: false; reason: 'unlisted' | 'auth' | 'failed'; message: string }
 
 /**
- * One thank-you as `check_thank_yous` returns it.
+ * One thank-you as `list_thank_yous` returns it.
  *
  * @param fields - The fields that differ from a high-five for a described fix
  * @returns The thank-you
  */
 function thankYou(
-  fields: Partial<{ message: string | null; fixDescription: string | null; frictionTitle: string | null }> = {},
+  fields: Partial<{ id: string; message: string | null; fixDescription: string | null; frictionTitle: string | null }> = {},
 ) {
   return {
     id: THANK_YOU_ID,
@@ -39,7 +41,7 @@ function thankYou(
 }
 
 /**
- * A `check_thank_yous` reply.
+ * A `list_thank_yous` reply.
  *
  * @param thankYous - The thank-yous it carries
  * @returns The tool's reply
@@ -50,15 +52,18 @@ function reply(thankYous: unknown[]) {
 
 /**
  * Answers the mod's calls the way the engine would, and records them.
- * `check_thank_yous` answers with `opts.reply`; every other Quotient tool
+ * `list_thank_yous` answers with `opts.reply`, `mark_thank_yous_delivered`
+ * answers with how many ids it was given, and every other Quotient tool
  * answers as having nothing to do.
  *
  * @param on - The test's hooks, which stand for the engine
- * @param opts.reply - The text `check_thank_yous` replies with
+ * @param opts.reply - The text `list_thank_yous` replies with
  * @param opts.connect - What `$.mcp.connect("agex")` resolves to
- * @param opts.call - How `check_thank_yous` fails: it rejects, Claude Code denies it, or it never answers
+ * @param opts.call - How `list_thank_yous` fails: it rejects, Claude Code denies it, or it never answers
+ * @param opts.mark - How `mark_thank_yous_delivered` fails, the same ways
  * @param opts.isHeadless - Whether the session draws on no surface, as a `claude -p` run
- * @param opts.wait - How long `check_thank_yous` takes to answer, on the test's clock
+ * @param opts.wait - How long `list_thank_yous` takes to answer, on the test's clock
+ * @param opts.store - What the plugin's store holds at the start
  * @returns What the mod called, showed and logged
  */
 function engine(
@@ -67,30 +72,58 @@ function engine(
     reply?: string
     connect?: Connect
     call?: 'rejects' | 'denied' | 'hangs'
+    mark?: 'rejects' | 'denied' | 'hangs'
     isHeadless?: boolean
     wait?: { clock: ReturnType<typeof mock.clock>; ms: number }
+    store?: Record<string, unknown>
   } = {},
 ) {
   const seen = {
     reply: opts.reply ?? JSON.stringify({ thankYous: [] }),
     checks: [] as { server: string; args: Record<string, unknown> }[],
+    marks: [] as { server: string; args: Record<string, unknown> }[],
+    deliveringChecks: 0,
     toasts: [] as { text: string; timeoutMs?: number }[],
     status: [] as (string | undefined)[],
     logs: [] as { text: string; to: unknown }[],
+    store: { ...opts.store } as Record<string, unknown>,
+  }
+  /**
+   * Fails a call the way `how` says, or answers it.
+   *
+   * @param how - How the call fails, if it does
+   * @param server - The server called
+   * @param tool - The tool called
+   * @param text - The reply's text when it answers
+   * @returns The call's answer
+   */
+  const answer = (how: 'rejects' | 'denied' | 'hangs' | undefined, server: string, tool: string, text: string) => {
+    if (how === 'rejects') throw new Error('call failed')
+    if (how === 'denied') return { deny: denial(server, tool) }
+    if (how === 'hangs') return new Promise<never>(() => {})
+    return { value: { content: [{ type: 'text' as const, text }], isError: false } }
   }
   mock.env(on, { HOME: '/home/op' })
+  on('store.get', (_, e) => ({ value: seen.store[e.key] }))
+  on('store.set', (_, e) => {
+    seen.store[e.key] = e.value
+    return { value: undefined }
+  })
   on('mcp.connect', () => ({ value: opts.connect ?? { isConnected: true, server: SERVER } }))
   on('mcp.call', async (_, e) => {
-    if (e.tool !== 'check_thank_yous') {
-      const text = e.tool === 'list_my_frictions' ? '{"frictions":[],"nextCursor":null}' : '{"due":false}'
-      return { value: { content: [{ type: 'text', text }], isError: false } }
+    if (e.tool === 'check_thank_yous') seen.deliveringChecks += 1
+    if (e.tool === 'list_thank_yous') {
+      seen.checks.push({ server: e.server, args: e.args })
+      if (opts.wait !== undefined) await opts.wait.clock.sleep(opts.wait.ms)
+      return answer(opts.call, e.server, e.tool, seen.reply)
     }
-    seen.checks.push({ server: e.server, args: e.args })
-    if (opts.wait !== undefined) await opts.wait.clock.sleep(opts.wait.ms)
-    if (opts.call === 'rejects') throw new Error('call failed')
-    if (opts.call === 'denied') return { deny: denial(e.server, e.tool) }
-    if (opts.call === 'hangs') return new Promise<never>(() => {})
-    return { value: { content: [{ type: 'text', text: seen.reply }], isError: false } }
+    if (e.tool === 'mark_thank_yous_delivered') {
+      seen.marks.push({ server: e.server, args: e.args })
+      const ids = (e.args as { ids: unknown[] }).ids
+      return answer(opts.mark, e.server, e.tool, JSON.stringify({ marked: ids.length }))
+    }
+    const text = e.tool === 'list_my_frictions' ? '{"frictions":[],"nextCursor":null}' : '{"due":false}'
+    return { value: { content: [{ type: 'text', text }], isError: false } }
   })
   on('ui.toast', (_, e) => {
     seen.toasts.push({ text: e.text, timeoutMs: e.timeoutMs })
@@ -116,8 +149,14 @@ function engine(
 test('a reply is read oldest first, keeping only what a toast shows', () => {
   const read = readThankYous(reply([thankYou(), thankYou({ message: 'That saved my afternoon' })]))
   expect(read).toEqual([
-    { message: null, fixDescription: 'Run ESLint from the repo root', frictionTitle: 'Lint fails in the pre-commit hook' },
     {
+      id: THANK_YOU_ID,
+      message: null,
+      fixDescription: 'Run ESLint from the repo root',
+      frictionTitle: 'Lint fails in the pre-commit hook',
+    },
+    {
+      id: THANK_YOU_ID,
       message: 'That saved my afternoon',
       fixDescription: 'Run ESLint from the repo root',
       frictionTitle: 'Lint fails in the pre-commit hook',
@@ -128,12 +167,12 @@ test('a reply is read oldest first, keeping only what a toast shows', () => {
 test('a reply with no thank-yous, or with each text field null, is read', () => {
   expect(readThankYous(reply([]))).toEqual([])
   expect(readThankYous(reply([thankYou({ fixDescription: null, frictionTitle: null })]))).toEqual([
-    { message: null, fixDescription: null, frictionTitle: null },
+    { id: THANK_YOU_ID, message: null, fixDescription: null, frictionTitle: null },
   ])
 })
 
-test('the read thank-yous keep no id', () => {
-  expect(JSON.stringify(readThankYous(reply([thankYou()])))).not.toContain(THANK_YOU_ID)
+test("the read thank-yous keep their own id but not their fix's", () => {
+  expect(readThankYous(reply([thankYou()]))?.[0]?.id).toBe(THANK_YOU_ID)
   expect(JSON.stringify(readThankYous(reply([thankYou()])))).not.toContain(SOLUTION_ID)
 })
 
@@ -141,6 +180,8 @@ test('a reply that failed or is not the expected shape reads as nothing', () => 
   const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }], isError: false })
   const missingMessage = { ...thankYou() } as Record<string, unknown>
   delete missingMessage.message
+  const missingId = { ...thankYou() } as Record<string, unknown>
+  delete missingId.id
   const cases = [
     { ...reply([thankYou()]), isError: true },
     text('not json'),
@@ -149,6 +190,9 @@ test('a reply that failed or is not the expected shape reads as nothing', () => 
     text(JSON.stringify({ thankYous: 'none' })),
     reply([null]),
     reply([missingMessage]),
+    reply([missingId]),
+    reply([thankYou({ id: 7 as unknown as string })]),
+    reply([thankYou({ id: '' })]),
     reply([thankYou({ message: 5 as unknown as string })]),
     reply([thankYou({ fixDescription: {} as unknown as string })]),
     reply([thankYou({ frictionTitle: false as unknown as string })]),
@@ -239,6 +283,106 @@ test('an interactive session start checks for thank-yous once and shows one as a
   expect(seen.status).toEqual([])
 })
 
+test('a shown thank-you is marked delivered with its id, and the check that delivers on read is never called', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.marks).toEqual([{ server: SERVER, args: { ids: [THANK_YOU_ID] } }])
+  expect(seen.deliveringChecks).toBe(0)
+  expect(seen.store[SHOWN_KEY]).toEqual([THANK_YOU_ID])
+  expect(seen.toasts.some(toast => toast.text.includes(THANK_YOU_ID))).toBe(false)
+})
+
+test('a thank-you already shown in this install is neither shown nor marked again', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    reply: JSON.stringify({ thankYous: [thankYou(), thankYou({ id: OTHER_ID, fixDescription: 'New fix' })] }),
+    store: { [SHOWN_KEY]: [THANK_YOU_ID] },
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.toasts.map(toast => toast.text)).toEqual(['High-five from a teammate · for your fix: New fix'])
+  expect(seen.marks).toEqual([{ server: SERVER, args: { ids: [OTHER_ID] } }])
+  expect(seen.store[SHOWN_KEY]).toEqual([THANK_YOU_ID, OTHER_ID])
+})
+
+test('a store that holds anything but a list of ids counts as nothing shown', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), store: { [SHOWN_KEY]: { ids: 5 } } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.toasts.length).toBe(1)
+  expect(seen.store[SHOWN_KEY]).toEqual([THANK_YOU_ID])
+})
+
+test('the store keeps only the 1000 most recently shown ids', async ($, on) => {
+  const clock = mock.clock(on)
+  const older = Array.from({ length: 1000 }, (_, at) => `older-${at}`)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), store: { [SHOWN_KEY]: older } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.toasts.length).toBe(1)
+  expect(seen.store[SHOWN_KEY]).toEqual([...older.slice(1), THANK_YOU_ID])
+})
+
+for (const mark of ['rejects', 'denied'] as const) {
+  test(`a mark that ${mark === 'denied' ? 'Claude Code denies' : 'rejects'} logs to the debug log only, and the next check doesn't show the thank-you again`, async ($, on) => {
+    const clock = mock.clock(on)
+    const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), mark })
+
+    await $.session.start(INTERACTIVE)
+    await clock.settle()
+    expect(seen.toasts.length).toBe(1)
+    expect(seen.logs.map(log => log.to)).toEqual(['debug'])
+    expect(seen.logs[0]?.text).toMatch(
+      new RegExp(`^quotient thank-yous: mark_thank_yous_delivered ${mark === 'denied' ? 'denied' : 'failed'}: `),
+    )
+
+    await clock.advance(FIFTEEN_MINUTES)
+    expect(seen.checks.length).toBe(2)
+    expect(seen.toasts.length).toBe(1)
+    expect(seen.marks.length).toBe(1)
+  })
+}
+
+test('a mark that never answers gives up after 5 seconds, so the next check still runs', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), mark: 'hangs' })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(3_000)
+  await starting
+  await clock.advance(2_000)
+  expect(seen.logs.map(log => log.to)).toEqual(['debug'])
+
+  await $.turn.complete(ANSWERED)
+  await clock.settle()
+  expect(seen.checks.length).toBe(2)
+})
+
+test('at most 200 new thank-yous are shown and marked in one check; the rest wait for the next', async ($, on) => {
+  const clock = mock.clock(on)
+  const many = Array.from({ length: 201 }, (_, at) => thankYou({ id: `id-${at}` }))
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: many }) })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(200 * 8_000)
+  await starting
+
+  expect(seen.toasts.length).toBe(200)
+  expect(seen.marks.length).toBe(1)
+  expect((seen.marks[0]?.args as { ids: string[] }).ids).toEqual(many.slice(0, 200).map(one => one.id))
+})
+
 test('no thank-yous shows nothing', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on)
@@ -248,6 +392,7 @@ test('no thank-yous shows nothing', async ($, on) => {
 
   expect(seen.checks.length).toBe(1)
   expect(seen.toasts).toEqual([])
+  expect(seen.marks).toEqual([])
 })
 
 test('a headless session never checks, so no thank-you is used up unseen', async ($, on) => {
@@ -259,6 +404,7 @@ test('a headless session never checks, so no thank-you is used up unseen', async
 
   expect(seen.checks).toEqual([])
   expect(seen.toasts).toEqual([])
+  expect(seen.marks).toEqual([])
 })
 
 test('not signed in checks nothing and shows nothing', async ($, on) => {
@@ -297,13 +443,14 @@ test('a malformed reply shows nothing and only logs to the debug log, without th
   await clock.settle()
 
   expect(seen.toasts).toEqual([])
+  expect(seen.marks).toEqual([])
   expect(seen.logs.map(log => log.to)).toEqual(['debug'])
   expect(seen.logs.some(log => log.text.includes('MARKER'))).toBe(false)
 })
 
 const FAILED_CALLS: ['rejects' | 'denied', RegExp][] = [
-  ['rejects', /^quotient thank-yous: check_thank_yous failed: HooksError: /],
-  ['denied', /^quotient thank-yous: check_thank_yous denied: HooksError: /],
+  ['rejects', /^quotient thank-yous: list_thank_yous failed: HooksError: /],
+  ['denied', /^quotient thank-yous: list_thank_yous denied: HooksError: /],
 ]
 for (const [call, logged] of FAILED_CALLS) {
   test(`a call that ${call === 'denied' ? 'Claude Code denies' : 'rejects'} shows nothing and logs why to the debug log only`, async ($, on) => {
@@ -314,6 +461,7 @@ for (const [call, logged] of FAILED_CALLS) {
     await clock.settle()
 
     expect(seen.toasts).toEqual([])
+    expect(seen.marks).toEqual([])
     expect(seen.logs.map(log => log.to)).toEqual(['debug'])
     expect(seen.logs[0]?.text).toMatch(logged)
   })
@@ -330,6 +478,7 @@ test('a call that never answers gives up after 5 seconds and shows nothing', asy
   await clock.advance(2_000)
 
   expect(seen.toasts).toEqual([])
+  expect(seen.marks).toEqual([])
   expect(seen.logs.map(log => log.to)).toEqual(['debug'])
 })
 
@@ -338,20 +487,23 @@ test('several thank-yous show one at a time, oldest first, each 8 seconds after 
   const seen = engine(on, {
     reply: JSON.stringify({
       thankYous: [
-        thankYou({ fixDescription: 'First fix' }),
-        thankYou({ fixDescription: 'Second fix' }),
-        thankYou({ fixDescription: 'Third fix' }),
-        thankYou({ fixDescription: 'Fourth fix' }),
+        thankYou({ id: 'id-1', fixDescription: 'First fix' }),
+        thankYou({ id: 'id-2', fixDescription: 'Second fix' }),
+        thankYou({ id: 'id-3', fixDescription: 'Third fix' }),
+        thankYou({ id: 'id-4', fixDescription: 'Fourth fix' }),
       ],
     }),
   })
   const shown = () => seen.toasts.map(toast => toast.text.replace('High-five from a teammate · for your fix: ', ''))
 
-  await $.session.start(INTERACTIVE)
+  // The session's start waits 3 seconds for the check, which goes on showing.
+  const starting = $.session.start(INTERACTIVE)
   await clock.settle()
   expect(shown()).toEqual(['First fix'])
+  expect(seen.marks).toEqual([])
 
   await clock.advance(7_999)
+  await starting
   expect(shown()).toEqual(['First fix'])
   await clock.advance(1)
   expect(shown()).toEqual(['First fix', 'Second fix'])
@@ -359,6 +511,8 @@ test('several thank-yous show one at a time, oldest first, each 8 seconds after 
   expect(shown()).toEqual(['First fix', 'Second fix', 'Third fix', 'Fourth fix'])
   expect(seen.toasts.every(toast => toast.timeoutMs === 8000)).toBe(true)
   expect(seen.checks.length).toBe(1)
+  // Marked once, only after the last toast has shown.
+  expect(seen.marks).toEqual([{ server: SERVER, args: { ids: ['id-1', 'id-2', 'id-3', 'id-4'] } }])
 })
 
 test('a thank-you sent mid-session shows at the next check, 15 minutes on', async ($, on) => {
@@ -438,7 +592,7 @@ test('a check does not start while one is still running', async ($, on) => {
   expect(seen.checks.length).toBe(2)
 })
 
-test('a reply that comes after the 5-second wait is still shown, since the check already marked it delivered', async ($, on) => {
+test('a reply that comes after the 5-second wait is dropped and nothing is marked, so the next check lists it again', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), wait: { clock, ms: 6_000 } })
 
@@ -446,9 +600,10 @@ test('a reply that comes after the 5-second wait is still shown, since the check
   await clock.advance(3_000)
   await starting
   await clock.advance(2_000)
-  expect(seen.toasts).toEqual([])
-
   await clock.advance(1_000)
-  expect(seen.toasts.length).toBe(1)
+
+  expect(seen.toasts).toEqual([])
+  expect(seen.marks).toEqual([])
+  expect(seen.store[SHOWN_KEY]).toBeUndefined()
   expect(seen.logs.map(log => log.to)).toEqual(['debug'])
 })
