@@ -1,5 +1,7 @@
 // Keeps teammates' fix text away from the model, except while
-// /quotient:fix-friction or /quotient:list-fixes shows it to the operator.
+// /quotient:fix-friction or /quotient:list-fixes shows it to the operator,
+// and keeps teammates' thank-you notes away from it always: the operator
+// reads those in quotient's own toasts.
 // review-frictions and setup can send new frictions, which every teammate
 // reads, so they must never hold text a teammate's agent wrote. Outside
 // those two commands, each teammate's fix in the model's `list_my_frictions`
@@ -23,7 +25,9 @@ export const HIDES_FIXES = ['review-frictions', 'setup']
 export const SHOWN_ALREADY =
   "This session already showed teammates' fixes, which review-frictions and setup must never see. Run /clear or start a new session, then run it again."
 const LIST_TOOLS = /^mcp__(plugin_quotient_agex|claude_ai_Quotient)__list_my_frictions$/
+const THANK_YOU_TOOLS = /^mcp__(plugin_quotient_agex|claude_ai_Quotient)__(list|check)_thank_yous$/
 const WITHHELD = "quotient withheld this reply: it couldn't be read, so it might hold a teammate's fix"
+const WITHHELD_NOTES = "quotient withheld this reply: it couldn't be read, so it might hold a teammate's note"
 const CHECK_AGENT = 'teammate-check'
 const CHECK_DONE =
   "The teammate check finished. quotient showed each answer it sent, and builds the summary's cards from them: don't read its output."
@@ -97,6 +101,27 @@ export function withoutTeammateText(text: string): string | null {
   })
   if (cut.some(friction => friction === null || (friction as { solutions?: unknown[] }).solutions?.includes(null))) return null
   return JSON.stringify({ ...(page as Record<string, unknown>), frictions: cut })
+}
+
+/**
+ * Drops each teammate's note from a thank-you reply, leaving the rest: the
+ * fix and friction a thank-you names are the operator's own.
+ *
+ * @param text - The reply as the model would read it
+ * @returns The reply with every `message` null, or null when it isn't a list of thank-yous
+ */
+export function withoutNotes(text: string): string | null {
+  let reply: unknown
+  try {
+    reply = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const thankYous = (reply as { thankYous?: unknown } | null)?.thankYous
+  if (!Array.isArray(thankYous) || !thankYous.every(one => typeof one === 'object' && one !== null && !Array.isArray(one))) {
+    return null
+  }
+  return JSON.stringify({ ...(reply as Record<string, unknown>), thankYous: thankYous.map(one => ({ ...one, message: null })) })
 }
 
 /**
@@ -213,6 +238,17 @@ export function registerTeammateText(on: On): void {
     if (called.deny !== undefined || called.isError === true) return called
     const cut = withoutTeammateText(called.text ?? '')
     if (cut === null) return { deny: WITHHELD }
+    return { result: [{ type: 'text', text: cut }] } as unknown as typeof called
+  })
+
+  // quotient's own check calls through `$.mcp.call`, which raises no
+  // tool.call, so its toasts keep the notes. No .catch, as above.
+  on('tool.call', { tool: THANK_YOU_TOOLS }, async ($, e, next) => {
+    if (next.origin.plugin !== 'engine') return next(e)
+    const called = await next(e)
+    if (called.deny !== undefined || called.isError === true) return called
+    const cut = withoutNotes(called.text ?? '')
+    if (cut === null) return { deny: WITHHELD_NOTES }
     return { result: [{ type: 'text', text: cut }] } as unknown as typeof called
   })
 }
