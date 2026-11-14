@@ -148,7 +148,7 @@ In local sessions the plugin runs once a day in the background scanning for new 
      <img src="docs/assets/readme/apply-fix-light.png" alt="A fix card shows the friction, a suggested fix from a teammate's setup and a one-line change to .husky/pre-commit. After applying it, Claude reports Fix implemented and offers to send a high-five." width="100%">
    </picture>
 
-4. **Send a high-five.** When a teammate's fix helps you, thank them with one keypress. It reaches them at the start of their next session, and it never says who sent it.
+4. **Send a high-five.** When a teammate's fix helps you, thank them with one keypress. It reaches them the next time they send Claude a prompt, and it never says who sent it.
 
    <picture>
      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/high-five-dark.png">

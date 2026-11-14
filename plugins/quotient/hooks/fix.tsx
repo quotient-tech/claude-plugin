@@ -530,7 +530,7 @@ function thanksTree({ Box, Text }: Els, shown: Extract<FixDrawn[string], { kind:
           <Text color="success">●</Text> <Text bold>This fix came from a teammate's setup. Want to say thanks?</Text>
         </Text>
       )}
-      {!shown.isRetry && <Text dimColor>  They'll see it at the start of their next session.</Text>}
+      {!shown.isRetry && <Text dimColor>  They'll see it the next time they send Claude a prompt.</Text>}
       {shown.error !== null && <Text color="warning">{`  The thanks couldn't be sent: ${shown.error}`}</Text>}
       {shown.isNoteSent && (
         <Text>

@@ -687,7 +687,7 @@ test('the status line keeps a running setup over the count of fixes implemented'
 })
 
 const LEAD = "This fix came from a teammate's setup. Want to say thanks?"
-const LEAD_DIM = "They'll see it at the start of their next session."
+const LEAD_DIM = "They'll see it the next time they send Claude a prompt."
 
 /**
  * Records a fix as the fix-friction skill would, so a thank-you is due for it.

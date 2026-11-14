@@ -7,7 +7,6 @@ import { denial } from './fixtures/denial'
 const SERVER = 'plugin:quotient:agex'
 const CONNECTOR = 'claude.ai Quotient'
 const INTERACTIVE = { cwd: '/repo', surface: 'terminal', isInteractive: true } as const
-const HEADLESS = { cwd: '/data', surface: null, isInteractive: false } as const
 const FIFTEEN_MINUTES = 15 * 60 * 1000
 const ANSWERED = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
 const THANK_YOU_ID = '0b5d3c1e-8f4a-4d2b-9c6e-1a2b3c4d5e6f'
@@ -61,7 +60,6 @@ function reply(thankYous: unknown[]) {
  * @param opts.connect - What `$.mcp.connect("agex")` resolves to
  * @param opts.call - How `list_thank_yous` fails: it rejects, Claude Code denies it, or it never answers
  * @param opts.mark - How `mark_thank_yous_delivered` fails, the same ways
- * @param opts.isHeadless - Whether the session draws on no surface, as a `claude -p` run
  * @param opts.wait - How long `list_thank_yous` takes to answer, on the test's clock
  * @param opts.store - What the plugin's store holds at the start
  * @returns What the mod called, showed and logged
@@ -73,7 +71,6 @@ function engine(
     connect?: Connect
     call?: 'rejects' | 'denied' | 'hangs'
     mark?: 'rejects' | 'denied' | 'hangs'
-    isHeadless?: boolean
     wait?: { clock: ReturnType<typeof mock.clock>; ms: number }
     store?: Record<string, unknown>
   } = {},
@@ -138,12 +135,23 @@ function engine(
     return { value: undefined }
   })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('session.surfaces', () => ({ value: opts.isHeadless ? [] : ['terminal'] }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__quotient__${e.name}` } }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('command.run', () => ({ text: '' }))
+  on('prompt.submit', (_, e) => ({ text: e.text }))
   return seen
+}
+
+/**
+ * Submits a prompt as the engine would, stamped with where it came from.
+ *
+ * @param $ - The engine
+ * @param kind - Its origin: the operator's own Enter at this terminal by default
+ */
+async function prompt($: Parameters<TestBody>[0], kind = 'composer'): Promise<void> {
+  await $.prompt.submit({ text: 'hi', wait: false, origin: { kind } } as unknown as Parameters<typeof $.prompt.submit>[0])
 }
 
 test('a reply is read oldest first, keeping only what a toast shows', () => {
@@ -269,11 +277,11 @@ test('a note that is only control characters or spaces shows as a high-five', ()
   )
 })
 
-test('an interactive session start checks for thank-yous once and shows one as a toast for 8 seconds', async ($, on) => {
+test('a prompt the operator types checks for thank-yous once and shows one as a toast for 8 seconds', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.checks).toEqual([{ server: SERVER, args: {} }])
@@ -287,7 +295,7 @@ test('a shown thank-you is marked delivered with its id, and the check that deli
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.marks).toEqual([{ server: SERVER, args: { ids: [THANK_YOU_ID] } }])
@@ -303,7 +311,7 @@ test('a thank-you already shown in this install is neither shown nor marked agai
     store: { [SHOWN_KEY]: [THANK_YOU_ID] },
   })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.toasts.map(toast => toast.text)).toEqual(['High-five from a teammate · for your fix: New fix'])
@@ -315,7 +323,7 @@ test('a store that holds anything but a list of ids counts as nothing shown', as
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), store: { [SHOWN_KEY]: { ids: 5 } } })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.toasts.length).toBe(1)
@@ -327,7 +335,7 @@ test('the store keeps only the 1000 most recently shown ids', async ($, on) => {
   const older = Array.from({ length: 1000 }, (_, at) => `older-${at}`)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), store: { [SHOWN_KEY]: older } })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.toasts.length).toBe(1)
@@ -339,7 +347,7 @@ for (const mark of ['rejects', 'denied'] as const) {
     const clock = mock.clock(on)
     const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), mark })
 
-    await $.session.start(INTERACTIVE)
+    await prompt($)
     await clock.settle()
     expect(seen.toasts.length).toBe(1)
     expect(seen.logs.map(log => log.to)).toEqual(['debug'])
@@ -347,7 +355,8 @@ for (const mark of ['rejects', 'denied'] as const) {
       new RegExp(`^quotient thank-yous: mark_thank_yous_delivered ${mark === 'denied' ? 'denied' : 'failed'}: `),
     )
 
-    await clock.advance(FIFTEEN_MINUTES)
+    await prompt($)
+    await clock.settle()
     expect(seen.checks.length).toBe(2)
     expect(seen.toasts.length).toBe(1)
     expect(seen.marks.length).toBe(1)
@@ -358,13 +367,11 @@ test('a mark that never answers gives up after 5 seconds, so the next check stil
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), mark: 'hangs' })
 
-  const starting = $.session.start(INTERACTIVE)
-  await clock.advance(3_000)
-  await starting
-  await clock.advance(2_000)
+  await prompt($)
+  await clock.advance(5_000)
   expect(seen.logs.map(log => log.to)).toEqual(['debug'])
 
-  await $.turn.complete(ANSWERED)
+  await prompt($)
   await clock.settle()
   expect(seen.checks.length).toBe(2)
 })
@@ -374,9 +381,8 @@ test('at most 200 new thank-yous are shown and marked in one check; the rest wai
   const many = Array.from({ length: 201 }, (_, at) => thankYou({ id: `id-${at}` }))
   const seen = engine(on, { reply: JSON.stringify({ thankYous: many }) })
 
-  const starting = $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.advance(200 * 8_000)
-  await starting
 
   expect(seen.toasts.length).toBe(200)
   expect(seen.marks.length).toBe(1)
@@ -387,7 +393,7 @@ test('no thank-yous shows nothing', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on)
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.checks.length).toBe(1)
@@ -395,16 +401,33 @@ test('no thank-yous shows nothing', async ($, on) => {
   expect(seen.marks).toEqual([])
 })
 
-test('a headless session never checks, so no thank-you is used up unseen', async ($, on) => {
-  const clock = mock.clock(on)
-  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), isHeadless: true })
+const NOT_TYPED = ['sdk', 'bridge', 'peer', 'peer-send-message', 'task-notification', 'scheduled-trigger', 'coordinator', 'unclassified']
+for (const kind of NOT_TYPED) {
+  test(`a prompt from ${kind}, not typed at this terminal, never checks, so no thank-you is used up unseen`, async ($, on) => {
+    const clock = mock.clock(on)
+    const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
 
-  await $.session.start(HEADLESS)
+    await prompt($, kind)
+    await clock.settle()
+
+    expect(seen.checks).toEqual([])
+    expect(seen.toasts).toEqual([])
+    expect(seen.marks).toEqual([])
+  })
+}
+
+test('a session start, a 15-minute wait or an answered turn never checks, since none shows the operator is there', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await clock.advance(FIFTEEN_MINUTES)
+  await $.turn.complete(ANSWERED)
   await clock.settle()
 
   expect(seen.checks).toEqual([])
   expect(seen.toasts).toEqual([])
-  expect(seen.marks).toEqual([])
 })
 
 test('not signed in checks nothing and shows nothing', async ($, on) => {
@@ -414,7 +437,7 @@ test('not signed in checks nothing and shows nothing', async ($, on) => {
     connect: { isConnected: false, reason: 'auth', message: 'sign in' },
   })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.checks).toEqual([])
@@ -428,7 +451,7 @@ test('where the host runs the plugin servers itself, it checks through the Quoti
     connect: { isConnected: false, reason: 'unlisted', message: 'run by the host' },
   })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.checks.map(check => check.server)).toEqual([CONNECTOR])
@@ -439,7 +462,7 @@ test('a malformed reply shows nothing and only logs to the debug log, without th
   const clock = mock.clock(on)
   const seen = engine(on, { reply: 'NOTE-MARKER not json' })
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
 
   expect(seen.toasts).toEqual([])
@@ -457,7 +480,7 @@ for (const [call, logged] of FAILED_CALLS) {
     const clock = mock.clock(on)
     const seen = engine(on, { call })
 
-    await $.session.start(INTERACTIVE)
+    await prompt($)
     await clock.settle()
 
     expect(seen.toasts).toEqual([])
@@ -471,11 +494,8 @@ test('a call that never answers gives up after 5 seconds and shows nothing', asy
   const clock = mock.clock(on)
   const seen = engine(on, { call: 'hangs' })
 
-  // The session's start waits 3 seconds for the first check, then goes on.
-  const starting = $.session.start(INTERACTIVE)
-  await clock.advance(3_000)
-  await starting
-  await clock.advance(2_000)
+  await prompt($)
+  await clock.advance(5_000)
 
   expect(seen.toasts).toEqual([])
   expect(seen.marks).toEqual([])
@@ -496,14 +516,12 @@ test('several thank-yous show one at a time, oldest first, each 8 seconds after 
   })
   const shown = () => seen.toasts.map(toast => toast.text.replace('High-five from a teammate · for your fix: ', ''))
 
-  // The session's start waits 3 seconds for the check, which goes on showing.
-  const starting = $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
   expect(shown()).toEqual(['First fix'])
   expect(seen.marks).toEqual([])
 
   await clock.advance(7_999)
-  await starting
   expect(shown()).toEqual(['First fix'])
   await clock.advance(1)
   expect(shown()).toEqual(['First fix', 'Second fix'])
@@ -515,54 +533,36 @@ test('several thank-yous show one at a time, oldest first, each 8 seconds after 
   expect(seen.marks).toEqual([{ server: SERVER, args: { ids: ['id-1', 'id-2', 'id-3', 'id-4'] } }])
 })
 
-test('a thank-you sent mid-session shows at the next check, 15 minutes on', async ($, on) => {
+test('a thank-you sent mid-session shows after the next prompt the operator types', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on)
 
-  await $.session.start(INTERACTIVE)
+  await prompt($)
   await clock.settle()
   seen.reply = JSON.stringify({ thankYous: [thankYou()] })
   await clock.advance(FIFTEEN_MINUTES)
+  expect(seen.toasts).toEqual([])
 
-  expect(seen.checks.length).toBe(2)
-  expect(seen.toasts.length).toBe(1)
-})
-
-test('the end of a main-loop turn checks; a subagent turn does not', async ($, on) => {
-  const clock = mock.clock(on)
-  const seen = engine(on)
-
-  await $.session.start(INTERACTIVE)
-  await clock.settle()
-  seen.reply = JSON.stringify({ thankYous: [thankYou()] })
-  await $.turn.complete({ ...ANSWERED, agentId: 'a1' })
-  await clock.settle()
-  expect(seen.checks.length).toBe(1)
-
-  await $.turn.complete(ANSWERED)
+  await prompt($)
   await clock.settle()
   expect(seen.checks.length).toBe(2)
   expect(seen.toasts.length).toBe(1)
 })
 
-test('a turn in a session with no surface to draw on does not check', async ($, on) => {
-  const clock = mock.clock(on)
-  const seen = engine(on, { isHeadless: true })
-
-  await $.session.start(HEADLESS)
-  await $.turn.complete(ANSWERED)
-  await clock.advance(FIFTEEN_MINUTES)
-
-  expect(seen.checks).toEqual([])
-})
-
-test('running /quotient:list-fixes checks again', async ($, on) => {
+test('running /quotient:list-fixes from this terminal checks; run by another session, it does not', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on)
 
-  await $.session.start(INTERACTIVE)
-  await clock.settle()
   seen.reply = JSON.stringify({ thankYous: [thankYou()] })
+  await $.command.run({
+    command: 'quotient:list-fixes',
+    args: '',
+    origin: { kind: 'peer' },
+    presentation: { isFullscreen: true, columns: 200 },
+  })
+  await clock.settle()
+  expect(seen.checks.length).toBe(0)
+
   await $.command.run({
     command: 'quotient:list-fixes',
     args: '',
@@ -571,7 +571,7 @@ test('running /quotient:list-fixes checks again', async ($, on) => {
   })
   await clock.settle()
 
-  expect(seen.checks.length).toBe(2)
+  expect(seen.checks.length).toBe(1)
   expect(seen.toasts.length).toBe(1)
 })
 
@@ -579,15 +579,14 @@ test('a check does not start while one is still running', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on, { call: 'hangs' })
 
-  const starting = $.session.start(INTERACTIVE)
-  await clock.advance(3_000)
-  await starting
-  await $.turn.complete(ANSWERED)
+  await prompt($)
+  await clock.settle()
+  await prompt($)
   await clock.settle()
   expect(seen.checks.length).toBe(1)
 
-  await clock.advance(2_000)
-  await $.turn.complete(ANSWERED)
+  await clock.advance(5_000)
+  await prompt($)
   await clock.settle()
   expect(seen.checks.length).toBe(2)
 })
@@ -596,11 +595,8 @@ test('a reply that comes after the 5-second wait is dropped and nothing is marke
   const clock = mock.clock(on)
   const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }), wait: { clock, ms: 6_000 } })
 
-  const starting = $.session.start(INTERACTIVE)
-  await clock.advance(3_000)
-  await starting
-  await clock.advance(2_000)
-  await clock.advance(1_000)
+  await prompt($)
+  await clock.advance(6_000)
 
   expect(seen.toasts).toEqual([])
   expect(seen.marks).toEqual([])

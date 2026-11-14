@@ -516,7 +516,7 @@ test("fix-friction: offers a thank-you only after the fix is recorded, through f
 test("fix-friction: without the mod, asks for the thank-you itself and sends what the operator chose", () => {
   const { body } = skill("fix-friction");
   assert.ok(body.includes("**This fix came from a teammate's setup. Want to say thanks?**"));
-  assert.ok(body.includes("They'll see it at the start of their next session."));
+  assert.ok(body.includes("They'll see it the next time they send Claude a prompt."));
   assert.match(body, /Ask \*\*"Send a thank-you, or type a note below\?"\*\* with AskUserQuestion, with the header "Thanks" and exactly these options, in this order: \*\*Send a high-five \(Recommended\)\*\*, \*\*Skip\*\*\./);
   assert.doesNotMatch(body, /Write a note|next message/);
   assert.match(body, /Any other answer is a note the operator typed, and the answer, exactly as typed, is the note/);

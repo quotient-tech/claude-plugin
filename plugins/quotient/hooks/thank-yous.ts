@@ -2,8 +2,10 @@
 // toast, then marks them delivered. Listing marks nothing, so a thank-you is
 // marked only once its toast has shown; the ids shown are kept in the
 // plugin's store, so one whose mark failed or was denied isn't shown again in
-// this install. A check runs only where a toast can be seen, never in a
-// headless run or a subagent. The toast never names the sender.
+// this install. A check runs only right after the operator acts at this
+// terminal, typing a prompt or running /quotient:list-fixes, so its toast
+// shows where they're looking: never in a headless run, a subagent, or a
+// session another tool started or drives. The toast never names the sender.
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
@@ -12,7 +14,6 @@ import { cleanText, FORBIDDEN, MAX_TEXT } from './text'
 type On = Parameters<Register>[0]
 
 const COMMAND = 'quotient:list-fixes'
-const CHECK_MS = 15 * 60 * 1000
 const TOAST_MS = 8_000
 // About three lines of the toast, which wraps at about 40 columns.
 const MAX_NOTE = 120
@@ -26,10 +27,6 @@ const MAX_MARK = 200
 // that one whose mark keeps failing ages out long after it stops being listed.
 const SHOWN_KEY = 'shownThankYous'
 const MAX_SHOWN = 1000
-// How long the session's start waits for the first check. Claude Code decides
-// a call's permission as it's sent, so a check still in flight after this
-// finishes on its own; the wait counts toward the hook's 10-second budget.
-const FIRST_CHECK_WAIT_MS = 3_000
 
 // Whether a check is running. A reload starting over at false costs at most
 // one extra check, which returns nothing already shown.
@@ -234,34 +231,25 @@ async function checkThankYous($: EngineInterface): Promise<void> {
 }
 
 /**
- * Adds the hooks that check for thank-yous in an interactive session, at the
- * times the fix-status part reads its count: once at the start, every 15
- * minutes, after each answered main-loop turn, and after
- * /quotient:list-fixes. Only the start waits for the check, and briefly.
+ * Adds the hooks that check for thank-yous: after each prompt the operator
+ * types at this terminal, and after they run /quotient:list-fixes from it.
+ * Neither waits for the check. The engine stamps a prompt's origin, so one
+ * another session, a schedule, a notification or a plugin sent never counts.
  *
  * @param on - Adds the module's hooks
  */
 export function registerThankYous(on: On): void {
-  on('session.start', { isInteractive: true }, async ($, e, next) => {
-    const started = await next(e)
-    // Claude Code asks quotient's tool.check about its own calls only while
-    // one of its hooks is running, so the first check is sent before this
-    // returns. It holds the first prompt for at most FIRST_CHECK_WAIT_MS.
-    await Promise.race([checkThankYous($), $.clock.sleep(FIRST_CHECK_WAIT_MS)])
-    $.clock.every(CHECK_MS, () => void checkThankYous($))
-    return started
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    const entered = await next(e)
+    void checkThankYous($)
+    return entered
   }).catch(($, e, next) => next(e))
 
   // Registered before the list-fixes pane's hook, so it runs outside it: the
   // pane answers the command without calling next.
   on('command.run', { command: COMMAND }, async ($, e, next) => {
     const ran = await next(e)
-    void checkThankYous($)
+    if (e.origin.kind === 'composer') void checkThankYous($)
     return ran
-  }).catch(($, e, next) => next(e))
-
-  on('turn.complete', { reason: 'answer' }, async ($, e, next) => {
-    if (e.agentId === undefined && (await $.session.surfaces()).length > 0) void checkThankYous($)
-    return next(e)
   }).catch(($, e, next) => next(e))
 }
