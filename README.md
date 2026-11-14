@@ -201,6 +201,8 @@ Some of quotient's calls to Quotient happen outside any skill: the `/quotient:li
     "allow": [
       "mcp__plugin_quotient_agex__list_my_frictions",
       "mcp__claude_ai_Quotient__list_my_frictions",
+      "mcp__plugin_quotient_agex__list_thank_yous",
+      "mcp__claude_ai_Quotient__list_thank_yous",
       "mcp__plugin_quotient_agex__record_usage",
       "mcp__claude_ai_Quotient__record_usage",
       "mcp__plugin_quotient_agex__claim_daily_run",
@@ -212,7 +214,7 @@ Some of quotient's calls to Quotient happen outside any skill: the `/quotient:li
 }
 ```
 
-These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `check_thank_yous` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. [Permissions](docs/permissions.md#background-calls) explains each one.
+These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `mark_thank_yous_delivered` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. Without that rule, Claude Code may ask you to allow marking a thank-you delivered once its toast has shown. [Permissions](docs/permissions.md#background-calls) explains each one.
 
 Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient makes and what each denial looks like.
 
