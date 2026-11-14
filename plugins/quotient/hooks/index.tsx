@@ -37,8 +37,8 @@ export const register: Register = (on, options) => {
   registerTeammateText(on)
 
   // A hook added earlier runs outside one added later. The fix-status part's
-  // and the thank-yous' command.run hooks have to wrap the list-fixes pane's,
-  // which answers the command without calling next.
+  // command.run hook has to wrap the list-fixes pane's, which answers the
+  // command without calling next.
   registerFixStatus(on)
   registerThankYous(on)
   registerListFixes(on, options)

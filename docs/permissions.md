@@ -11,7 +11,7 @@ Some of quotient's work runs outside any skill: the `/quotient:list-fixes` pane,
 Three kinds of call happen in the background, outside anything you do:
 
 - the status line's count is read again every 15 minutes, after each answered turn and after `/quotient:list-fixes`, which calls `list_my_frictions`;
-- new thank-yous are checked for at those same times, which calls `check_thank_yous`;
+- new thank-yous are checked for after each prompt or command you type, which calls `list_thank_yous`, and once their toasts have shown, `mark_thank_yous_delivered` marks them delivered;
 - the token usage is sent after each answered turn, which calls `record_usage`.
 
 In auto mode they run. In the default and accept-edits modes Claude Code asks you to allow them, and in don't-ask mode they're denied. To have them, the daily runs and the invite link below run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
@@ -22,6 +22,8 @@ In auto mode they run. In the default and accept-edits modes Claude Code asks yo
     "allow": [
       "mcp__plugin_quotient_agex__list_my_frictions",
       "mcp__claude_ai_Quotient__list_my_frictions",
+      "mcp__plugin_quotient_agex__list_thank_yous",
+      "mcp__claude_ai_Quotient__list_thank_yous",
       "mcp__plugin_quotient_agex__record_usage",
       "mcp__claude_ai_Quotient__record_usage",
       "mcp__plugin_quotient_agex__claim_daily_run",
@@ -33,7 +35,7 @@ In auto mode they run. In the default and accept-edits modes Claude Code asks yo
 }
 ```
 
-The `plugin_quotient_agex` names are the plugin's own server and the `claude_ai_Quotient` names the claude.ai connector a cloud session uses. If you set up Quotient's server yourself under another name, use `mcp__<that name>__<tool>`. These rules let Claude, too, call the tool without asking: read your frictions, or send token usage to Quotient. Leave out the `record_usage` rules if you'd rather approve each send. Don't add a rule for `check_thank_yous`: each check marks the thank-yous it returns as delivered, so a check Claude made would use them up without showing them to you. Approve the check when Claude Code asks instead, or it waits for the next one. Don't add a rule for the whole server, such as `mcp__plugin_quotient_agex`: it would also let Claude send frictions, record fixes and send thank-yous without asking you.
+The `plugin_quotient_agex` names are the plugin's own server and the `claude_ai_Quotient` names the claude.ai connector a cloud session uses. If you set up Quotient's server yourself under another name, use `mcp__<that name>__<tool>`. These rules let Claude, too, call the tool without asking: read your frictions or thank-yous, or send token usage to Quotient. Leave out the `record_usage` rules if you'd rather approve each send. Don't add a rule for `mark_thank_yous_delivered`: a mark Claude made would use up your thank-yous without showing them to you. quotient marks a thank-you only after its toast has shown, so Claude Code asks you only when one has arrived. If you deny it, quotient doesn't show that thank-you again on this machine, but Quotient still counts it as undelivered, so it shows again on another machine or after you reinstall. Don't add a rule for the whole server, such as `mcp__plugin_quotient_agex`: it would also let Claude send frictions, record fixes and send thank-yous without asking you.
 
 The daily runs make two calls of their own when an interactive local session starts: `claim_daily_run` asks Quotient whether a run is due, and `complete_daily_run` marks a claimed run failed when it can't start. The `claim_daily_run` and `complete_daily_run` rules in the block above let them start without asking. Cloud sessions start no daily runs, so these need no `claude_ai_Quotient` rules.
 

@@ -186,7 +186,6 @@ declare module 'claude-code' {
       fixDrawn: Shaped<FixDrawn>
       fixesImplemented: number
       thanksDue: Shaped<ThanksDue>
-      noteError: string | null
       statusParts: StatusParts
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
