@@ -549,26 +549,18 @@ test('a thank-you sent mid-session shows after the next prompt the operator type
   expect(seen.toasts.length).toBe(1)
 })
 
-test('running /quotient:list-fixes from this terminal checks; run by another session, it does not', async ($, on) => {
+test('typing /quotient:list-fixes checks once, as any typed prompt does', async ($, on) => {
   const clock = mock.clock(on)
-  const seen = engine(on)
+  const seen = engine(on, { reply: JSON.stringify({ thankYous: [thankYou()] }) })
+  const origin = { kind: 'composer' } as const
 
-  seen.reply = JSON.stringify({ thankYous: [thankYou()] })
-  await $.command.run({
-    command: 'quotient:list-fixes',
-    args: '',
-    origin: { kind: 'peer' },
-    presentation: { isFullscreen: true, columns: 200 },
-  })
-  await clock.settle()
-  expect(seen.checks.length).toBe(0)
-
-  await $.command.run({
-    command: 'quotient:list-fixes',
-    args: '',
-    origin: { kind: 'composer' },
-    presentation: { isFullscreen: true, columns: 200 },
-  })
+  await $.prompt.submit({
+    text: '/quotient:list-fixes',
+    wait: false,
+    command: { name: 'quotient:list-fixes', args: '' },
+    origin,
+  } as unknown as Parameters<typeof $.prompt.submit>[0])
+  await $.command.run({ command: 'quotient:list-fixes', args: '', origin, presentation: { isFullscreen: true, columns: 200 } })
   await clock.settle()
 
   expect(seen.checks.length).toBe(1)

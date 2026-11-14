@@ -11,7 +11,7 @@ Some of quotient's work runs outside any skill: the `/quotient:list-fixes` pane,
 Three kinds of call happen in the background, outside anything you do:
 
 - the status line's count is read again every 15 minutes, after each answered turn and after `/quotient:list-fixes`, which calls `list_my_frictions`;
-- new thank-yous are checked for after each prompt you type and after you run `/quotient:list-fixes`, which calls `list_thank_yous`, and once their toasts have shown, `mark_thank_yous_delivered` marks them delivered;
+- new thank-yous are checked for after each prompt or command you type, which calls `list_thank_yous`, and once their toasts have shown, `mark_thank_yous_delivered` marks them delivered;
 - the token usage is sent after each answered turn, which calls `record_usage`.
 
 In auto mode they run. In the default and accept-edits modes Claude Code asks you to allow them, and in don't-ask mode they're denied. To have them, the daily runs and the invite link below run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
