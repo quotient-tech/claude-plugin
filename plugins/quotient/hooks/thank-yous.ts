@@ -1,7 +1,10 @@
 // Shows the thank-yous teammates sent the operator for their fixes, each as a
-// toast. `check_thank_yous` marks every thank-you it returns as delivered, so
-// a check runs only where a toast can be seen: a headless run or a subagent
-// would use them up unseen. The toast never names the sender.
+// toast, then marks them delivered. Listing marks nothing, so a thank-you is
+// marked only once its toast has shown; the ids shown are kept in the
+// plugin's store, so one whose mark failed or was denied isn't shown again in
+// this install. A check runs only right after the operator types a prompt
+// or a command at this terminal, so its toast shows where they're looking: never in a headless run, a subagent, or a
+// session another tool started or drives. The toast never names the sender.
 import type { EngineInterface, McpToolResult, Register } from 'claude-code'
 
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
@@ -9,28 +12,29 @@ import { cleanText, FORBIDDEN, MAX_TEXT } from './text'
 
 type On = Parameters<Register>[0]
 
-const COMMAND = 'quotient:list-fixes'
-const CHECK_MS = 15 * 60 * 1000
 const TOAST_MS = 8_000
 // About three lines of the toast, which wraps at about 40 columns.
 const MAX_NOTE = 120
-// How long a `check_thank_yous` call may take before the check counts as
-// failed, so a hung call can't hold the next check back forever.
+// How long a list or mark call may take before the check counts as failed,
+// so a hung call can't hold the next check back forever.
 const CALL_TIMEOUT_MS = 5_000
-// How long the session's start waits for the first check. Claude Code decides
-// a call's permission as it's sent, so a check still in flight after this
-// finishes on its own; the wait counts toward the hook's 10-second budget.
-const FIRST_CHECK_WAIT_MS = 3_000
+// The most ids `mark_thank_yous_delivered` takes in one call; any more wait
+// for the next check.
+const MAX_MARK = 200
+// Where the store keeps the ids already shown, and how many it keeps: enough
+// that one whose mark keeps failing ages out long after it stops being listed.
+const SHOWN_KEY = 'shownThankYous'
+const MAX_SHOWN = 1000
 
 // Whether a check is running. A reload starting over at false costs at most
 // one extra check, which returns nothing already shown.
 let isChecking = false
 
-/** One thank-you, keeping only the fields its toast shows. */
-export type ThankYou = { message: string | null; fixDescription: string | null; frictionTitle: string | null }
+/** One thank-you, keeping its id and the fields its toast shows. */
+export type ThankYou = { id: string; message: string | null; fixDescription: string | null; frictionTitle: string | null }
 
 /**
- * Reads a `check_thank_yous` reply.
+ * Reads a `list_thank_yous` reply.
  *
  * @param result - The tool's reply
  * @returns The thank-yous oldest first, or null when the tool failed or any
@@ -51,10 +55,12 @@ export function readThankYous(result: McpToolResult): ThankYou[] | null {
   const read: ThankYou[] = []
   for (const entry of thankYous) {
     if (typeof entry !== 'object' || entry === null) return null
-    const { message, fixDescription, frictionTitle } = entry as Record<string, unknown>
+    const { id, message, fixDescription, frictionTitle } = entry as Record<string, unknown>
     const isText = (value: unknown) => value === null || typeof value === 'string'
+    if (typeof id !== 'string' || id === '') return null
     if (!isText(message) || !isText(fixDescription) || !isText(frictionTitle)) return null
     read.push({
+      id,
       message: message as string | null,
       fixDescription: fixDescription as string | null,
       frictionTitle: frictionTitle as string | null,
@@ -97,7 +103,7 @@ function shownText(value: string | null): string | null {
  * @param thankYou - The thank-you
  * @returns The toast's text
  */
-export function thankYouText(thankYou: ThankYou): string {
+export function thankYouText(thankYou: Omit<ThankYou, 'id'>): string {
   const note = cleanText(thankYou.message)
   const thanks = note === null ? 'High-five from a teammate' : `Note from a teammate: "${cut(note, MAX_NOTE)}"`
   const fix = shownText(thankYou.fixDescription)
@@ -108,63 +114,96 @@ export function thankYouText(thankYou: ThankYou): string {
 }
 
 /**
- * Checks for thank-yous and shows each one.
+ * Waits for a call, at most CALL_TIMEOUT_MS. A call that answers later is
+ * dropped, failure and all.
  *
  * @param $ - The engine
- * @throws When the tool call rejects
+ * @param call - The call
+ * @returns The call's reply, or null when it took too long
+ * @throws When the call rejects in time
+ */
+async function within($: EngineInterface, call: Promise<McpToolResult>): Promise<McpToolResult | null> {
+  call.catch(() => {})
+  return Promise.race([call, $.clock.sleep(CALL_TIMEOUT_MS).then(() => null)])
+}
+
+/**
+ * Reads the ids already shown in this install.
+ *
+ * @param $ - The engine
+ * @returns The ids, oldest first; none when the store holds anything else
+ */
+async function shownIds($: EngineInterface): Promise<string[]> {
+  const stored = await $.store.get(SHOWN_KEY)
+  return Array.isArray(stored) && stored.every(id => typeof id === 'string') ? stored : []
+}
+
+/**
+ * Logs a failed call to the debug log, with why.
+ *
+ * @param $ - The engine
+ * @param tool - The tool called
+ * @param error - What the call rejected with
+ */
+function logFailure($: EngineInterface, tool: string, error: unknown): void {
+  $.ui.log(`quotient thank-yous: ${tool} ${callFailure(error)}: ${errorText(error)}`, { to: 'debug' })
+}
+
+/**
+ * Lists the thank-yous, shows each one not shown before in this install,
+ * then marks those delivered. A reply that is late or isn't the expected
+ * shape shows and marks nothing, so the next check lists the same ones.
+ *
+ * @param $ - The engine
+ * @throws When the list call rejects
  */
 async function showThankYous($: EngineInterface): Promise<void> {
   const server = serverFor(await $.mcp.connect(SERVER_KEY))
   if (server === null) return
-  const call = $.mcp.call(server, 'check_thank_yous', {})
-  const result = await Promise.race([call, $.clock.sleep(CALL_TIMEOUT_MS).then(() => null)])
-  if (result !== null) {
-    showReply($, result)
+  const result = await within($, $.mcp.call(server, 'list_thank_yous', {}))
+  if (result === null) {
+    $.ui.log('quotient thank-yous: list_thank_yous is slow; the next check lists its thank-yous again', { to: 'debug' })
     return
   }
-  // The server marks what it returns as delivered, so a slow reply is still
-  // shown when it comes; only the next check stops waiting for it.
-  $.ui.log('quotient thank-yous: check_thank_yous is slow; its reply shows when it comes', { to: 'debug' })
-  call
-    .then(
-      late => showReply($, late),
-      error => logFailure($, error),
-    )
-    .catch(() => {
-      // The engine went away before the reply came, as when the session ends.
-    })
-}
-
-/**
- * Logs a failed check to the debug log, with why.
- *
- * @param $ - The engine
- * @param error - What the call rejected with
- */
-function logFailure($: EngineInterface, error: unknown): void {
-  $.ui.log(`quotient thank-yous: check_thank_yous ${callFailure(error)}: ${errorText(error)}`, { to: 'debug' })
-}
-
-/**
- * Shows each thank-you a reply holds, or logs a reply that isn't the expected
- * shape to the debug log, without its text.
- *
- * @param $ - The engine
- * @param result - The tool's reply
- */
-function showReply($: EngineInterface, result: McpToolResult): void {
   const thankYous = readThankYous(result)
   if (thankYous === null) {
-    $.ui.log('quotient thank-yous: check_thank_yous gave no usable reply', { to: 'debug' })
+    $.ui.log('quotient thank-yous: list_thank_yous gave no usable reply', { to: 'debug' })
     return
   }
+  if (thankYous.length === 0) return
+  const shown = await shownIds($)
+  const fresh = thankYous.filter(thankYou => !shown.includes(thankYou.id)).slice(0, MAX_MARK)
+  if (fresh.length === 0) return
   // One at a time, each as the one before times out; a hovered toast that
-  // stays longer may share the screen with the next.
-  thankYous.forEach((thankYou, at) => {
-    const show = () => $.ui.toast(thankYouText(thankYou), { timeoutMs: TOAST_MS })
-    if (at === 0) show()
-    else $.clock.after(at * TOAST_MS, show)
-  })
+  // stays longer may share the screen with the next. Each id is stored as its
+  // toast shows, so a session that ends partway never shows one twice.
+  const ids: string[] = []
+  for (const thankYou of fresh) {
+    if (ids.length > 0) await $.clock.sleep(TOAST_MS)
+    $.ui.toast(thankYouText(thankYou), { timeoutMs: TOAST_MS })
+    ids.push(thankYou.id)
+    await $.store.set(SHOWN_KEY, [...shown, ...ids].slice(-MAX_SHOWN))
+  }
+  await markDelivered($, server, ids)
+}
+
+/**
+ * Marks shown thank-yous delivered in one call. A failure goes to the debug
+ * log only: the store already keeps them from showing again here.
+ *
+ * @param $ - The engine
+ * @param server - The server to call
+ * @param ids - The ids shown
+ */
+async function markDelivered($: EngineInterface, server: string, ids: string[]): Promise<void> {
+  const tool = 'mark_thank_yous_delivered'
+  try {
+    const result = await within($, $.mcp.call(server, tool, { ids }))
+    if (result === null) $.ui.log(`quotient thank-yous: ${tool} is slow`, { to: 'debug' })
+    else if (result.isError) $.ui.log(`quotient thank-yous: ${tool} answered with an error`, { to: 'debug' })
+  } catch (error) {
+    logFailure($, tool, error)
+  }
 }
 
 /**
@@ -180,7 +219,7 @@ async function checkThankYous($: EngineInterface): Promise<void> {
     try {
       await showThankYous($)
     } catch (error) {
-      logFailure($, error)
+      logFailure($, 'list_thank_yous', error)
     }
   } catch {
     // The engine went away mid-check, as when the session ends.
@@ -190,34 +229,17 @@ async function checkThankYous($: EngineInterface): Promise<void> {
 }
 
 /**
- * Adds the hooks that check for thank-yous in an interactive session, at the
- * times the fix-status part reads its count: once at the start, every 15
- * minutes, after each answered main-loop turn, and after
- * /quotient:list-fixes. Only the start waits for the check, and briefly.
+ * Adds the hook that checks for thank-yous after each prompt or command the
+ * operator types at this terminal, without waiting for the check. The engine
+ * stamps a prompt's origin, so one another session, a schedule, a
+ * notification or a plugin sent never counts.
  *
  * @param on - Adds the module's hooks
  */
 export function registerThankYous(on: On): void {
-  on('session.start', { isInteractive: true }, async ($, e, next) => {
-    const started = await next(e)
-    // Claude Code asks quotient's tool.check about its own calls only while
-    // one of its hooks is running, so the first check is sent before this
-    // returns. It holds the first prompt for at most FIRST_CHECK_WAIT_MS.
-    await Promise.race([checkThankYous($), $.clock.sleep(FIRST_CHECK_WAIT_MS)])
-    $.clock.every(CHECK_MS, () => void checkThankYous($))
-    return started
-  }).catch(($, e, next) => next(e))
-
-  // Registered before the list-fixes pane's hook, so it runs outside it: the
-  // pane answers the command without calling next.
-  on('command.run', { command: COMMAND }, async ($, e, next) => {
-    const ran = await next(e)
+  on('prompt.submit', { origin: { kind: 'composer' } }, async ($, e, next) => {
+    const entered = await next(e)
     void checkThankYous($)
-    return ran
-  }).catch(($, e, next) => next(e))
-
-  on('turn.complete', { reason: 'answer' }, async ($, e, next) => {
-    if (e.agentId === undefined && (await $.session.surfaces()).length > 0) void checkThankYous($)
-    return next(e)
+    return entered
   }).catch(($, e, next) => next(e))
 }

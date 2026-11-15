@@ -159,7 +159,7 @@ function engine(
   on('mcp.connect', () => ({ value: opts.connect ?? { isConnected: true, server: SERVER } }))
   on('mcp.call', (_, e) => {
     seen.tools.push(e.tool)
-    if (e.tool === 'check_thank_yous') {
+    if (e.tool === 'list_thank_yous') {
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
     }
     if (e.tool !== 'list_my_frictions') {

@@ -203,6 +203,82 @@ test("when it can't tell whether to cut, it cuts", async ($, on) => {
   expect((await list($)).includes(PLANTED)).toBe(false)
 })
 
+const THANK_YOUS = {
+  thankYous: [
+    {
+      id: 't1',
+      solutionId: 's3',
+      message: PLANTED,
+      createdAt: '2026-11-05T12:00:00.000Z',
+      fixDescription: 'My own fix',
+      frictionTitle: 'Lint fails in CI',
+    },
+    { id: 't2', solutionId: 's3', message: null, createdAt: '2026-11-06T12:00:00.000Z', fixDescription: null, frictionTitle: null },
+  ],
+}
+
+/**
+ * Makes the model's call to one of Quotient's thank-you tools.
+ *
+ * @param $ - The engine
+ * @param tool - The tool's full name
+ * @returns What the model reads: the result's text blocks joined, or the refusal
+ */
+async function thankYous($: Engine, tool = 'mcp__plugin_quotient_agex__list_thank_yous'): Promise<string> {
+  const called = await runTool($, { tool })
+  if (called.deny !== undefined) return called.deny
+  const { result } = called as { result: unknown }
+  if (Array.isArray(result)) return result.map(block => (block as { text?: string }).text ?? '').join('')
+  return called.text ?? ''
+}
+
+const THANK_YOU_TOOLS = [
+  'mcp__plugin_quotient_agex__list_thank_yous',
+  'mcp__claude_ai_Quotient__list_thank_yous',
+  'mcp__plugin_quotient_agex__check_thank_yous',
+  'mcp__claude_ai_Quotient__check_thank_yous',
+]
+for (const tool of THANK_YOU_TOOLS) {
+  test(`the model never reads a teammate's thank-you note from ${tool}; the rest of the reply stays whole`, async ($, on) => {
+    engine(on, { reply: JSON.stringify(THANK_YOUS) })
+
+    const read = JSON.parse(await thankYous($, tool)) as typeof THANK_YOUS
+
+    expect(read).toEqual({
+      thankYous: [
+        { ...THANK_YOUS.thankYous[0], message: null },
+        THANK_YOUS.thankYous[1],
+      ],
+    })
+  })
+}
+
+test("thank-you notes stay hidden even while fix-friction shows teammates' fixes", async ($, on) => {
+  engine(on, { reply: JSON.stringify(THANK_YOUS) })
+
+  await $.command.run({ ...REVIEW, command: 'quotient:fix-friction' })
+
+  expect((await thankYous($)).includes(PLANTED)).toBe(false)
+})
+
+const UNREADABLE = [`not json, ${PLANTED}`, JSON.stringify({ thankYous: [PLANTED] }), JSON.stringify({ notes: PLANTED })]
+for (const reply of UNREADABLE) {
+  test(`a thank-you reply that can't be read is withheld whole: ${reply.slice(0, 20)}`, async ($, on) => {
+    engine(on, { reply })
+
+    const read = await thankYous($)
+
+    expect(read.includes(PLANTED)).toBe(false)
+    expect(read.includes('withheld')).toBe(true)
+  })
+}
+
+test("Quotient's error text from a thank-you tool reaches the model unchanged", async ($, on) => {
+  engine(on, { reply: 'Quotient could not complete this request.', isError: true })
+
+  expect(await thankYous($)).toBe('Quotient could not complete this request.')
+})
+
 const NOTICE = `<task-notification>
 <task-id>a66abf</task-id>
 <tool-use-id>toolu_check</tool-use-id>

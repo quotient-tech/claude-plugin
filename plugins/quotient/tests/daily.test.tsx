@@ -132,7 +132,7 @@ function engine(
       seen.otherReads += 1
       return { value: { content: [{ type: 'text', text: '{"frictions":[],"nextCursor":null}' }], isError: false } }
     }
-    if (e.tool === 'check_thank_yous') {
+    if (e.tool === 'list_thank_yous') {
       seen.otherReads += 1
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
     }
