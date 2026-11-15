@@ -193,7 +193,7 @@ If Claude already read a teammate's fix in this session, further scanning waits 
 
 ### If Claude Code denies quotient's calls
 
-Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, the invite link after `/quotient:setup`'s summary, and, in the background, the status line's count, checks for thank-yous, and token usage. Depending on your permission mode, Claude Code may ask you to allow them or deny them. To have them run without asking, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
+Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, the invite link after `/quotient:setup`'s summary, and, in the background, the status line's count, checks for thank-yous, and token usage. Claude Code lets them run unless a deny rule or a hook steps in, such as another plugin's permission hook that asks you or denies them. To have them run without a hook getting in the way, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
 
 ```json
 {
@@ -214,7 +214,7 @@ Some of quotient's calls to Quotient happen outside any skill: the `/quotient:li
 }
 ```
 
-These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `mark_thank_yous_delivered` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. Without that rule, Claude Code may ask you to allow marking a thank-you delivered once its toast has shown. [Permissions](docs/permissions.md#background-calls) explains each one.
+These rules also let Claude call those tools without asking. To approve each send of token usage yourself, leave out the two `record_usage` rules. Don't add any other quotient rules. A rule for `mark_thank_yous_delivered` would let Claude use up your thank-yous before you see them, and a rule for the whole server would let Claude send frictions and fixes without asking you. [Permissions](docs/permissions.md#background-calls) explains each one.
 
 Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), on a line starting `quotient`. On a Team or Enterprise account, a notice that quotient's `tool.check` hook was skipped because `cc-plugin-sec-default` runs first doesn't by itself mean a call was denied. See [Permissions](docs/permissions.md) for which calls quotient makes and what each denial looks like.
 
