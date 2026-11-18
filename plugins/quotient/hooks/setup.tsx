@@ -67,6 +67,10 @@ const COPY_LINK = 'Copy link'
 // already asks rather than announces.
 const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
 const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
+// Added to the message to paste once every trial seat is taken, so a teammate
+// knows what to expect before they open the link.
+const PENDING_MESSAGE = "heads up: our trial seats are full, so you'll show as pending until an admin approves you."
+const PENDING_NOTE = 'Every trial seat is taken. People who join now are pending, with no access until a company admin approves them.'
 const LIST_FIXES_HINT = "When your teammates' agents find fixes, run /list-fixes to see them."
 // The model never sees the drawn summary, so the result repeats its last line:
 // the conversation is what Claude Code suggests the operator's next prompt from.
@@ -624,7 +628,8 @@ function nextTree({ Box, Text }: Els, solvedCount: number) {
 
 /**
  * Checks a `get_invite_link` reply. Any missing or mistyped field makes the
- * whole reply unusable, and a trial with no seat left has no one to invite.
+ * whole reply unusable. A trial with no seat left still has an invite: its
+ * link works, and people who use it join as pending.
  *
  * @param text - The reply's text
  * @returns The invite, or null when it can't be used
@@ -641,8 +646,7 @@ function inviteFrom(text: string | undefined): SetupInvite | null {
   const name = typeof companyName === 'string' ? cleanText(companyName) : null
   if (name === null || !isWebLink(inviteUrl) || typeof emailDomain !== 'string' || emailDomain === '') return null
   if (!isCount(memberCount, 1) || !(maxSeats === null || isCount(maxSeats, 0))) return null
-  if (maxSeats !== null && memberCount >= maxSeats) return null
-  return { companyName: name, inviteUrl, memberCount }
+  return { companyName: name, inviteUrl, memberCount, isFull: maxSeats !== null && memberCount >= maxSeats }
 }
 
 /**
@@ -686,7 +690,8 @@ async function fetchInvite($: Api): Promise<SetupInvite | null> {
 
 /**
  * Draws the invite: a heading for the team's size, who joins, and the
- * message to paste with the link.
+ * message to paste with the link. Once every trial seat is taken, it also
+ * says that people who join now are pending.
  *
  * @param els - The surface's elements
  * @param invite - The checked invite
@@ -702,8 +707,15 @@ function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
     <Box flexDirection="column" marginTop={1}>
       <Text bold>{heading}</Text>
       <Text dimColor>{`They'll join ${invite.companyName}. They won't see your sessions.`}</Text>
+      {invite.isFull && (
+        <Text>
+          <Text color="warning">!</Text> {PENDING_NOTE}
+        </Text>
+      )}
       <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1} width={CARD_WIDTH + 4}>
-        <Text>{others === 0 ? FIRST_MESSAGE : MORE_MESSAGE}</Text>
+        {inviteMessage(invite).map(line => (
+          <Text key={line}>{line}</Text>
+        ))}
         <Box flexDirection="column" marginTop={1}>
           <Text>{SIGNUP_LINE}</Text>
           <Text color="suggestion">{invite.inviteUrl}</Text>
@@ -714,6 +726,18 @@ function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
 }
 
 /**
+ * Writes the message to paste, in the operator's own voice. Once every trial
+ * seat is taken, a second line tells the teammate they'll be pending.
+ *
+ * @param invite - The checked invite
+ * @returns The message's lines
+ */
+function inviteMessage(invite: SetupInvite): string[] {
+  const message = invite.memberCount === 1 ? FIRST_MESSAGE : MORE_MESSAGE
+  return invite.isFull ? [message, PENDING_MESSAGE] : [message]
+}
+
+/**
  * Builds the invite message as it's pasted: the message, then the sign-up
  * line and the link.
  *
@@ -721,8 +745,7 @@ function inviteTree({ Box, Text }: Els, invite: SetupInvite) {
  * @returns The text to copy
  */
 function inviteText(invite: SetupInvite): string {
-  const message = invite.memberCount === 1 ? FIRST_MESSAGE : MORE_MESSAGE
-  return `${message}\n\n${SIGNUP_LINE}\n${invite.inviteUrl}`
+  return `${inviteMessage(invite).join('\n')}\n\n${SIGNUP_LINE}\n${invite.inviteUrl}`
 }
 
 /**
@@ -730,12 +753,12 @@ function inviteText(invite: SetupInvite): string {
  * copied, or why it wasn't, then what happens next.
  *
  * @param els - The surface's elements
- * @param shared - How the question was answered
- * @param frictions - The new frictions the run stored
+ * @param summary - The summary, with its invite and how the question was answered
  * @returns The closing sections
  */
-function sharedTree({ Box, Text }: Els, shared: NonNullable<SetupSummary['shared']>, frictions: number) {
-  const { copy, isCopied } = shared
+function sharedTree({ Box, Text }: Els, summary: SetupSummary & { invite: SetupInvite; shared: NonNullable<SetupSummary['shared']> }) {
+  const { frictions, invite } = summary
+  const { copy, isCopied } = summary.shared
   const what = copy === 'message' ? 'message' : 'link'
   return (
     <Box flexDirection="column" marginTop={1}>
@@ -758,7 +781,7 @@ function sharedTree({ Box, Text }: Els, shared: NonNullable<SetupSummary['shared
       )}
       <Box flexDirection="column" marginTop={copy === null ? 0 : 1}>
         <Text bold>What happens next</Text>
-        <Text>1. Your teammate joins.</Text>
+        <Text>{invite.isFull ? '1. Your teammate joins as pending, and a company admin approves them.' : '1. Your teammate joins.'}</Text>
         <Text>2. Quotient finds solutions in their setup.</Text>
         <Text>3. You get suggestions next session.</Text>
       </Box>
@@ -898,7 +921,7 @@ function summaryTree(els: Els, summary: SetupSummary) {
         </Box>
       )}
       {invite !== undefined && inviteTree(els, invite)}
-      {invite !== undefined && shared !== undefined && sharedTree(els, shared, frictions)}
+      {invite !== undefined && shared !== undefined && sharedTree(els, { ...summary, invite, shared })}
     </Box>
   )
 }

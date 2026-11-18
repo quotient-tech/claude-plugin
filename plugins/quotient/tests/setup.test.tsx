@@ -1203,6 +1203,8 @@ const INVITE_URL = 'https://dev.getquotient.com/join/ABCD1234'
 const INVITE = { companyName: 'Northwind Robotics', inviteUrl: INVITE_URL, emailDomain: 'acme.com', memberCount: 1, maxSeats: 20 }
 const FIRST_MESSAGE = 'hey this plugin lets our agents talk to each other / suggest fixes for problems.'
 const MORE_MESSAGE = "hey are you using this yet? it's a plugin that lets our agents talk to each other and suggest fixes."
+const PENDING_MESSAGE = "heads up: our trial seats are full, so you'll show as pending until an admin approves you."
+const PENDING_NOTE = 'Every trial seat is taken. People who join now are pending, with no access until a company admin approves them.'
 
 /**
  * The `get_invite_link` reply for an invite, with any fields changed.
@@ -1314,7 +1316,6 @@ for (const [why, opts] of [
   ['a member count of 0', { invite: inviteReply({ memberCount: 0 }) }],
   ['a fractional member count', { invite: inviteReply({ memberCount: 1.5 }) }],
   ['a seat limit that is not a number', { invite: inviteReply({ maxSeats: 'twenty' }) }],
-  ['a full trial', { invite: inviteReply({ memberCount: 20, maxSeats: 20 }) }],
   ['a link that is not a web address', { invite: inviteReply({ inviteUrl: 'javascript:alert(1)' }) }],
   ['a link with a control character', { invite: inviteReply({ inviteUrl: `${INVITE_URL}\x1b[2J` }) }],
   ['a company name with nothing printable', { invite: inviteReply({ companyName: '\x1b[31m\x07' }) }],
@@ -1350,6 +1351,38 @@ test('a summary with no seat limit still shows the invite', async ($, on) => {
   const { shown } = await drawSummary($, SAVED)
 
   expect(shown).toContain('You have 39 teammates on Quotient so far.')
+})
+
+for (const [why, change] of [
+  ['every seat taken', { memberCount: 20, maxSeats: 20 }],
+  ['more members than seats', { memberCount: 21, maxSeats: 20 }],
+] as const) {
+  test(`a trial with ${why} still shows the invite, and says people who join now are pending`, async ($, on) => {
+    engine(on, { invite: inviteReply(change) })
+
+    const { texts, shown } = await drawSummary($, SAVED)
+
+    expectInOrder(shown, [
+      `You have ${change.memberCount - 1} teammates on Quotient so far. Invite more by sharing the link.`,
+      "They'll join Northwind Robotics. They won't see your sessions.",
+      PENDING_NOTE,
+      MORE_MESSAGE,
+      PENDING_MESSAGE,
+      'signup + install here:',
+      INVITE_URL,
+    ])
+    expect(shown).not.toContain(LIST_FIXES_HINT)
+    expect(texts.find(one => one.text === '!')?.props.color).toBe('warning')
+  })
+}
+
+test('a trial with a seat left says nothing about pending', async ($, on) => {
+  engine(on, { invite: inviteReply({ memberCount: 19, maxSeats: 20 }) })
+
+  const { shown } = await drawSummary($, SAVED)
+
+  expect(shown).toContain(INVITE_URL)
+  expect(shown).not.toContain('pending')
 })
 
 const WHAT_HAPPENS_NEXT = [
@@ -1408,6 +1441,22 @@ test('Copy message copies the message and the link, then says what happens next'
   ])
   expect(texts.find(one => one.text === '✓')?.props.color).toBe('success')
   expect(texts.find(one => one.text === 'What happens next')?.props.bold).toBe(true)
+})
+
+test('Copy message at a full trial also tells the teammate they will be pending, and what happens next says an admin approves them', async ($, on) => {
+  const seen = engine(on, { invite: inviteReply({ memberCount: 20, maxSeats: 20 }), share: 'Copy message' })
+
+  const { shown } = await shareInvite($)
+
+  expect(seen.copied).toEqual([`${MORE_MESSAGE}\n${PENDING_MESSAGE}\n\nsignup + install here:\n${INVITE_URL}`])
+  expectInOrder(shown, [
+    'Message copied. Paste it to your teammates in Slack.',
+    'What happens next',
+    '1. Your teammate joins as pending, and a company admin approves them.',
+    '2. Quotient finds solutions in their setup.',
+    '3. You get suggestions next session.',
+  ])
+  expect(shown).not.toContain('1. Your teammate joins.')
 })
 
 test('Copy link copies only the link', async ($, on) => {

@@ -104,7 +104,7 @@ export type SetupSummary = {
   teammateCheck?: SetupTeammateCheck
   /** How many sources the run recorded as reviewed; absent when it recorded none. */
   reviewedCount?: number
-  /** The company's invite link, when it can invite and its trial has a seat left. */
+  /** The company's invite link, when it can invite. */
   invite?: SetupInvite
   /** How "Copy to share" was answered, once it has been: what was copied, if anything, and whether it reached the clipboard. */
   shared?: { copy: 'message' | 'link' | null; isCopied: boolean }
@@ -116,6 +116,8 @@ export type SetupInvite = {
   inviteUrl: string
   /** The company's members, the operator included. */
   memberCount: number
+  /** Whether every trial seat is taken, so people who use the link join as pending until a company admin approves them. */
+  isFull: boolean
 }
 
 /** The fields of a `setup_start` call that passed its checks. */
