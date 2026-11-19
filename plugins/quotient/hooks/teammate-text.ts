@@ -30,7 +30,7 @@ const WITHHELD = "quotient withheld this reply: it couldn't be read, so it might
 const WITHHELD_NOTES = "quotient withheld this reply: it couldn't be read, so it might hold a teammate's note"
 const CHECK_AGENT = 'teammate-check'
 const CHECK_DONE =
-  "The teammate check finished. quotient showed each answer it sent, and builds the summary's cards from them: don't read its output."
+  "The teammate check finished. quotient counted each answer it sent, and builds the summary's cards from them: don't read its output."
 
 // Which kind of quotient command last started in this session: one that
 // shows teammates' fixes, one that must never see them, or none. It stays
