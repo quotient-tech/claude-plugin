@@ -2,7 +2,7 @@
 // against, so a check sends nothing to dev or production.
 //
 // Its replies follow Quotient's tools in apps/nextjs/src/lib/mcp/mcpServer.ts
-// and the lib/agex code it calls, as of Quotient commit 483c280d4. Keep them
+// and the lib/agex code it calls, as of Quotient commit a679bc409. Keep them
 // in step: the mod shows nothing on a reply it can't read, so a drifted shape
 // fails the checks for the wrong reason.
 import { createHash } from "node:crypto";
@@ -410,10 +410,22 @@ const TOOLS: Record<string, Tool> = {
     inputSchema: { type: "object", properties: { requests: { type: "array", items: { type: "object" } } }, required: ["requests"] },
     answer: (_, args) => ok({ storedCount: ((args.requests as unknown[] | undefined) ?? []).length, duplicateCount: 0 }),
   },
-  check_thank_yous: {
-    description: "List the thank-yous the user's teammates sent for their fixes that the user hasn't seen.",
+  list_thank_yous: {
+    description: "List the thank-yous teammates sent the signed-in user that haven't been marked delivered.",
     inputSchema: { type: "object", properties: {} },
     answer: () => ok({ thankYous: [] }),
+  },
+  mark_thank_yous_delivered: {
+    description: "Mark thank-yous from list_thank_yous delivered. Replies with `marked`, how many this call marked.",
+    inputSchema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } } }, required: ["ids"] },
+    answer: () => ok({ marked: 0 }),
+  },
+  // Setup's summary shows the invite. A link on a reserved domain can't
+  // lead anyone anywhere if a check's output is shared.
+  get_invite_link: {
+    description: "Get the signed-in user's company name, its AgEx invite link, the email domain it accepts, the seats taken and the seat limit.",
+    inputSchema: { type: "object", properties: {} },
+    answer: () => ok({ companyName: "Stand-in Company", inviteUrl: "https://quotient.example.test/join/stand-in", emailDomain: "example.test", memberCount: 1, maxSeats: null }),
   },
 };
 

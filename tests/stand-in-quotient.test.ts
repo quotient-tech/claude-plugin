@@ -286,7 +286,7 @@ test("submit_review refuses an unknown friction, and a fix with no description, 
   }
 });
 
-test("the mod's own calls get Quotient's replies: no daily run due, usage stored, no thank-yous", async () => {
+test("the mod's own calls get Quotient's replies: no daily run due, usage stored, no thank-yous, an invite link", async () => {
   const standIn = await startStandIn();
   try {
     assert.deepEqual(await callTool(standIn.url, "claim_daily_run", { kind: "find-solutions", source: "local" }), { body: { due: false }, isError: false });
@@ -294,7 +294,12 @@ test("the mod's own calls get Quotient's replies: no daily run due, usage stored
       body: { storedCount: 2, duplicateCount: 0 },
       isError: false,
     });
-    assert.deepEqual(await callTool(standIn.url, "check_thank_yous"), { body: { thankYous: [] }, isError: false });
+    assert.deepEqual(await callTool(standIn.url, "list_thank_yous"), { body: { thankYous: [] }, isError: false });
+    assert.deepEqual(await callTool(standIn.url, "mark_thank_yous_delivered", { ids: ["nope"] }), { body: { marked: 0 }, isError: false });
+    const invite = await callTool(standIn.url, "get_invite_link");
+    assert.equal(invite.isError, false);
+    assert.deepEqual(Object.keys(invite.body as object).sort(), ["companyName", "emailDomain", "inviteUrl", "maxSeats", "memberCount"]);
+    assert.match((invite.body as { inviteUrl: string }).inviteUrl, /^https:\/\/[^/]*\.test\//);
     assert.deepEqual(await callTool(standIn.url, "complete_daily_run", { runId: "nope", outcome: "failed" }), {
       body: "The signed-in user holds no daily run with that runId. It may have been resumed by a later claim after its lease ran out.",
       isError: true,
@@ -313,12 +318,17 @@ test("the stand-in serves every Quotient tool that setup, find-solutions, review
     const allowed = readFrontmatter(join(SKILLS, skill, "SKILL.md")).data["allowed-tools"] ?? "";
     for (const [, tool] of allowed.matchAll(/mcp__(?:plugin_quotient_agex|claude_ai_Quotient)__(\w+)/g)) needed.add(tool!);
   }
-  // Only literal tool names: fix-friction's call names its tool through a
-  // variable, and the stand-in doesn't serve fix-friction.
+  // A call names its tool literally or through a constant in the same file.
+  // fix-friction's call takes its tool as a parameter, and the stand-in
+  // doesn't serve fix-friction.
   for (const file of readdirSync(HOOKS)) {
-    for (const [, tool] of readFileSync(join(HOOKS, file), "utf8").matchAll(/\$\.mcp\.call\(server, '(\w+)'/g)) needed.add(tool!);
+    const source = readFileSync(join(HOOKS, file), "utf8");
+    for (const [, literal, name] of source.matchAll(/\$\.mcp\.call\(server, (?:'(\w+)'|(\w+))/g)) {
+      const tool = literal ?? source.match(new RegExp(`const ${name} = '(\\w+)'`))?.[1];
+      if (tool !== undefined) needed.add(tool);
+    }
   }
-  assert.ok(needed.has("start_setup_run") && needed.has("record_usage"), "both sources were read");
+  assert.ok(needed.has("start_setup_run") && needed.has("record_usage") && needed.has("get_invite_link"), "every source was read");
   const standIn = await startStandIn();
   try {
     const { reply } = await post(standIn.url, { id: 1, method: "tools/list" });
