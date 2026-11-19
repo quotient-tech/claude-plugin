@@ -1069,7 +1069,8 @@ function reviewedFrom(name: string, input: Record<string, unknown>, text: string
 
 /**
  * Says how far setup has got: getting ready until the start message is
- * shown, then how many of its sources it has recorded as reviewed.
+ * shown, then how many of its sources it has recorded as reviewed, and, once
+ * the teammate check has answered, how many teammate frictions it checked.
  *
  * @param current - The setup run
  * @returns The progress, without a "Quotient setup" prefix
@@ -1077,7 +1078,11 @@ function reviewedFrom(name: string, input: Record<string, unknown>, text: string
 function progress(current: SetupRun): string {
   if (current.start === null) return 'Quotient setup is getting ready…'
   const { sessions, automatedRuns, cloudRuns } = current.start
-  return `${current.reviewedIds.length} of ${sessions + automatedRuns + cloudRuns} sources reviewed`
+  const reviewed = `${current.reviewedIds.length} of ${sessions + automatedRuns + cloudRuns} sources reviewed`
+  const answers = current.teammateAnswers
+  if (answers.length === 0) return reviewed
+  const fixes = answers.filter(answer => answer.fix !== null).length
+  return `${reviewed} · ${plural(answers.length, 'teammate friction')} checked, ${plural(fixes, 'fix', 'fixes')} sent`
 }
 
 /**
@@ -1519,8 +1524,8 @@ async function answerSummary(
  * session holds submit_frictions, so it learns only whether teammates have
  * frictions, never their text. The teammate-check subagent's calls are
  * recorded instead: each friction's title as Quotient listed it, and each
- * answer as it was sent, leaving out any Quotient refused, each with a log
- * line of its own.
+ * answer as it was sent, leaving out any Quotient refused. The answers are
+ * counted on the progress line, not written to the transcript one by one.
  *
  * @param $ - The engine
  * @param input - The call's input, with its tool
@@ -1545,18 +1550,13 @@ async function answerTeammateCall<R extends { text?: string }>(
     if (titles !== null) await update($, run, current => ({ ...current, teammateTitles: { ...current.teammateTitles, ...titles } }))
   }
   if (agentId === undefined) return called
-  for (const { frictionId, description } of sentAnswers(name, input, called.text)) {
+  const answers = sentAnswers(name, input, called.text)
+  for (const { frictionId, description } of answers) {
     const fix = cleanText(typeof description === 'string' ? description : null)
-    const current = await update($, run, latest => ({ ...latest, teammateAnswers: [...latest.teammateAnswers, { frictionId, fix }] }))
-    const shown = cardText(fix, current.reviewedIds)
-    $.ui.log(
-      fix === null
-        ? "Checked a teammate's friction: no fix found in your setup."
-        : shown === null
-          ? 'Sent a teammate a fix.'
-          : `Sent a teammate a fix: ${shown}`,
-    )
+    await update($, run, latest => ({ ...latest, teammateAnswers: [...latest.teammateAnswers, { frictionId, fix }] }))
+    $.ui.log(`quotient setup: teammate check answered ${fix === null ? 'without' : 'with'} a fix`, { to: 'debug' })
   }
+  if (answers.length > 0) await showStatus($)
   return called
 }
 

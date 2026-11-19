@@ -1135,37 +1135,51 @@ test("escape sequences and control characters in a teammate's text are drawn as 
   expect(shown.includes('\u001b')).toBe(false)
 })
 
-test('each answer the teammate check sends gets a row of its own, without its friction id', async ($, on) => {
+test("the teammate check's answers add no transcript rows, and the band and status line count them", async ($, on) => {
   const seen = engine(on)
-  await checkTeammates($, [['t1', FIXES[0]], ['t2', null], ['t3', 'See fr-20261029-5.']])
+  engineRows(on)
+  const answers = Array.from({ length: 50 }, (_, i): [string, string | null] => [`t${i}`, i % 5 === 0 ? FIXES[0] : null])
+  await checkTeammates($, answers)
 
-  expect(seen.logs).toEqual([
-    `Sent a teammate a fix: ${FIXES[0]}`,
-    "Checked a teammate's friction: no fix found in your setup.",
-    'Sent a teammate a fix.',
-  ])
+  expect(seen.logs).toEqual([])
+  expect(await band($)).toBe('0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
+  expect(seen.status.at(-1)).toBe('setup · 0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
 })
 
-test('each answer in a batch the teammate check sends gets a row of its own, and only those Quotient stored count', async ($, on) => {
+test("the debug log gets a line per answer, without a teammate's friction or fix", async ($, on) => {
+  const seen = engine(on)
+  await checkTeammates($, [['t1', FIXES[0]], ['t2', null]])
+
+  const debug = seen.debug.join('\n')
+  expect(debug).not.toContain(FIXES[0])
+  expect(debug).not.toContain('t1')
+  expect(seen.debug.filter(line => line.startsWith('quotient setup: teammate check'))).toHaveLength(2)
+})
+
+test("an answer Quotient refused counts toward neither the band nor the summary", async ($, on) => {
   const seen = engine(on, { refused: ['t3'] })
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', null], ['t3', FIXES[2]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 1 fix sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain(FIXES[2])
 })
 
 test('a batch whose reply cannot be read still counts every answer it sent', async ($, on) => {
   const seen = engine(on)
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', FIXES[1]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 2 fixes sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
 })
 
