@@ -371,11 +371,14 @@ test("a call to the claude.ai Quotient connector is found in any of the run's tr
   assert.deepEqual(productionCalls([main, reviewer]), ["mcp__claude_ai_Quotient__list_teammate_frictions"]);
 });
 
-test("a run gets its own empty config folder, keeps the token, and turns off claude.ai's servers", () => {
+test("a run gets its own config folder that keeps old transcripts, keeps the token, and turns off claude.ai's servers", () => {
   const { env, configDir } = runEnv({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "token" });
   try {
     assert.equal(env.CLAUDE_CONFIG_DIR, configDir);
-    assert.deepEqual(readdirSync(configDir), []);
+    assert.deepEqual(readdirSync(configDir), ["settings.json"]);
+    const { cleanupPeriodDays } = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { cleanupPeriodDays: number };
+    const fixtureAgeDays = (Date.now() - Date.parse("2020-01-01")) / 86_400_000;
+    assert.ok(cleanupPeriodDays > fixtureAgeDays * 2, "the fixture's 2020 sessions outlive Claude Code's startup cleanup for decades");
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "token");
     assert.equal(env.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
     assert.equal(env.PATH, "/bin");

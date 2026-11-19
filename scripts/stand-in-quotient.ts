@@ -572,6 +572,10 @@ export function runEnv(base: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; confi
   const token = base.CLAUDE_CODE_OAUTH_TOKEN || savedToken(base);
   // realpath: on macOS mkdtemp gives /var/..., but Claude Code reports /private/var/...
   const configDir = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-config-")));
+  // Claude Code deletes transcripts older than cleanupPeriodDays (30 unless
+  // set) in the background as it starts, which would take the fixture's
+  // dated sessions before setup lists them.
+  writeFileSync(join(configDir, "settings.json"), JSON.stringify({ cleanupPeriodDays: 100_000 }));
   return { env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir };
 }
 
