@@ -6,7 +6,7 @@
 // in step: the mod shows nothing on a reply it can't read, so a drifted shape
 // fails the checks for the wrong reason.
 import { createHash } from "node:crypto";
-import { cpSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -566,13 +566,29 @@ export function pluginPointingAt(url: string): string {
  * account would otherwise bring them.
  * @param base - The environment to start from, usually `process.env`.
  * @returns The run's environment, and its config folder, which the caller removes.
- * @throws When `CLAUDE_CODE_OAUTH_TOKEN` is unset.
+ * @throws When there's no token, or its saved file is readable by others.
  */
 export function runEnv(base: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; configDir: string } {
-  if (!base.CLAUDE_CODE_OAUTH_TOKEN) throw new Error("set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` first: see CONTRIBUTING.md");
+  const token = base.CLAUDE_CODE_OAUTH_TOKEN || savedToken(base);
   // realpath: on macOS mkdtemp gives /var/..., but Claude Code reports /private/var/...
   const configDir = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-config-")));
-  return { env: { ...base, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir };
+  return { env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir };
+}
+
+/**
+ * Reads the token saved for the checks. A file, unlike an exported env var,
+ * leaves the operator's own `claude` sessions on their usual sign-in.
+ * @param base - The environment whose config folder holds the file.
+ * @returns The token.
+ * @throws When the file is missing or empty, or anyone else can read it.
+ */
+function savedToken(base: NodeJS.ProcessEnv): string {
+  const config = base.XDG_CONFIG_HOME || (base.HOME && join(base.HOME, ".config"));
+  const file = config ? join(config, "quotient", "check-token") : "$XDG_CONFIG_HOME/quotient/check-token";
+  const token = existsSync(file) ? readFileSync(file, "utf8").trim() : "";
+  if (token === "") throw new Error(`set CLAUDE_CODE_OAUTH_TOKEN, or save it in ${file}, from \`claude setup-token\` first`);
+  if ((statSync(file).mode & 0o077) !== 0) throw new Error(`others can read ${file}: run chmod 600 on it`);
+  return token;
 }
 
 // The claude.ai Quotient connector always reaches production, whichever

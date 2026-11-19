@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { pluginPointingAt, productionCalls, runEnv, startStandIn } from "../scripts/stand-in-quotient.ts";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
+import { sandbox } from "./helpers/sandbox.ts";
 
 type Line = Record<string, unknown>;
 
@@ -385,6 +386,47 @@ test("a run gets its own empty config folder, keeps the token, and turns off cla
 
 test("a run refuses to start without a token, since a new config folder isn't signed in", () => {
   assert.throws(() => runEnv({ PATH: "/bin" }), /CLAUDE_CODE_OAUTH_TOKEN/);
+  const { root, env } = sandbox();
+  try {
+    assert.throws(() => runEnv(env), new RegExp(`${env.XDG_CONFIG_HOME}/quotient/check-token`));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Saves a token where runEnv looks for one, in a sandbox's config folder.
+ * @param env - The sandbox's environment.
+ * @param text - The file's text.
+ * @param mode - The file's permissions.
+ */
+function saveToken(env: NodeJS.ProcessEnv, text: string, mode: number): void {
+  const folder = join(env.XDG_CONFIG_HOME!, "quotient");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "check-token"), text, { mode });
+}
+
+test("without the env var, a run signs in with the token saved in the config folder", () => {
+  const { root, env } = sandbox();
+  try {
+    saveToken(env, "saved-token\n", 0o600);
+    const { env: ran, configDir } = runEnv(env);
+    rmSync(configDir, { recursive: true, force: true });
+    assert.equal(ran.CLAUDE_CODE_OAUTH_TOKEN, "saved-token");
+    assert.equal(runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "env-token" }).env.CLAUDE_CODE_OAUTH_TOKEN, "env-token");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run refuses a saved token that anyone else can read", () => {
+  const { root, env } = sandbox();
+  try {
+    saveToken(env, "saved-token\n", 0o644);
+    assert.throws(() => runEnv(env), /chmod 600/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a run never reuses the operator's config folder", () => {
