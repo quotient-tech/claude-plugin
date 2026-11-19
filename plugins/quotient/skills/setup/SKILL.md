@@ -37,7 +37,7 @@ When this setup checks your setup for fixes, start one subagent with the Agent t
 
 > Check my setup for fixes to my teammates' frictions.
 
-Only that agent type may read teammates' frictions, and it can read nothing but your Claude Code config folder. Review the sessions while it works. Wait for it to finish before the summary. It reports only how many answers it sent with a fix and how many without: quotient shows each answer as it's sent, and builds the summary's cards from them. If it fails, carry on: it found no fixes.
+Only that agent type may read teammates' frictions, and it can read nothing but your Claude Code config folder. Review the sessions while it works. Wait for it to finish before the summary. It reports only how many answers it sent with a fix and how many without: quotient counts each answer as it's sent, and builds the summary's cards from them. If it fails, carry on: it found no fixes.
 
 ## Goal
 Find me any unresolved frictions or room for improvement the agent experienced across all sessions over the two weeks before the run's `startedAt`.
