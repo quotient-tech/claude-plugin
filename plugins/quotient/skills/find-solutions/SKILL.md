@@ -5,11 +5,14 @@ when_to_use: When asked to find solutions or fixes for teammates' frictions, or 
 allowed-tools: mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, mcp__plugin_quotient_agex__submit_solutions, mcp__claude_ai_Quotient__submit_solutions, mcp__plugin_quotient_agex__submit_solution, mcp__claude_ai_Quotient__submit_solution, mcp__plugin_quotient_agex__complete_daily_run, mcp__claude_ai_Quotient__complete_daily_run
 ---
 
+## Your config folder
+Your Claude Code config folder, written `<config>` below, is the folder your task names after `Your Claude Code config folder:`, in its arguments or its prompt. If your task names none, it's `~/.claude`. Wherever a path below starts with `<config>`, read or search it with that folder in its place.
+
 ## Daily run
 
 The arguments are: $ARGUMENTS
 
-If they start with `daily` followed by a run id, this is a daily run: quotient started it in the background, and the run id is the `runId` for `complete_daily_run`. Any names after the run id are the project folders with a session from the last two weeks, under `~/.claude/projects/`: those are the folders to search for past sessions. If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run. Otherwise, skip this section.
+If they start with `daily` followed by a run id, this is a daily run: quotient started it in the background, and the run id is the `runId` for `complete_daily_run`. Any names after the run id, on its line, are the project folders with a session from the last two weeks, under `<config>/projects/`: those are the folders to search for past sessions. If no names follow the run id on its line, quotient couldn't list the folders: count past sessions as not searched in this run. Otherwise, skip this section.
 
 In a daily run, nobody is at the prompt: never ask the operator anything. Where a step below says to stop, do what this section says first:
 - If you aren't signed in, or a call fails because the sign-in ended, stop and call nothing else, not even `complete_daily_run`. The next session's claim resumes the run.
@@ -42,13 +45,13 @@ For each friction on the page:
 - Search your local user Claude settings, user-installed plugins and skills, user-level CLAUDE.md and AGENTS.md files, and any auto-memories for anything that may address the friction
 - Search sessions over the past two weeks for any similar frictions that were solved
 
-Your setup is the same for every friction, so list what's in it once and go back to the parts that matter for each friction. Search `~/.claude/settings.json` with Grep for what a friction needs, such as a permission rule, hook or setting it names: never read the whole file.
+Your setup is the same for every friction, so list what's in it once and go back to the parts that matter for each friction. Search `<config>/settings.json` with Grep for what a friction needs, such as a permission rule, hook or setting it names: never read the whole file.
 
-Skip these sessions under `~/.claude/projects/`:
+Skip these sessions under `<config>/projects/`:
 - the ones whose first prompt starts with `/quotient:`: they ran one of quotient's own skills, such as setup or a daily background run, and a problem with quotient itself isn't a friction to share with teammates;
 - every session in a project folder whose name starts with `-private-tmp-`, `-tmp-`, `-var-folders-` or `-private-var-folders-`: those ran from a temporary folder, such as an agent's throwaway test, and aren't real work.
 
-Read or search one project folder at a time, never `~/.claude/projects/` as a whole. In a daily run or setup's teammate check you can read only `~/.claude/settings.json`, `~/.claude/CLAUDE.md`, `~/.claude/AGENTS.md`, and the folders `~/.claude/skills`, `~/.claude/plugins`, `~/.claude/agents`, `~/.claude/commands` and `~/.claude/projects/<one project folder>`, which holds that project's transcripts and auto-memories. Search each of them on its own: a search of `~/.claude` as a whole is refused, as is any read elsewhere.
+Read or search one project folder at a time, never `<config>/projects/` as a whole. In a daily run or setup's teammate check you can read only `<config>/settings.json`, `<config>/CLAUDE.md`, `<config>/AGENTS.md`, and the folders `<config>/skills`, `<config>/plugins`, `<config>/agents`, `<config>/commands` and `<config>/projects/<one project folder>`, which holds that project's transcripts and auto-memories. Search each of them on its own: a search of `<config>` as a whole is refused, as is any read elsewhere.
 
 Outside a daily run, search the project folders your task names, when it names them. Otherwise, find the project folders with a session from the last two weeks yourself. Glob lists files oldest first and shows at most 100, so a Glob of every transcript leaves out the newest sessions: list each folder on its own.
 
@@ -60,7 +63,7 @@ For each friction, write one answer with these fields:
 - `description`: a 1-2 sentence description of the best solution you have that may potentially resolve the friction. If several solutions combine, fold them into one
 - `prompt`: a prompt you would provide to another agent to implement the solution
 
-Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it. A search quotient refuses searched nothing: search each part on its own instead. If you still can't search them all, for example because a search keeps being refused or the run is running long, leave that friction out of the page's answers: Quotient offers it again next time, while an answer without a fix hides it from you for good.
+Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it. A search quotient refuses searched nothing: search each part on its own instead. When quotient says nothing is there, that part of your setup is empty: count it as searched. If you still can't search them all, for example because a search keeps being refused or the run is running long, leave that friction out of the page's answers: Quotient offers it again next time, while an answer without a fix hides it from you for good.
 
 If you searched them all and weren't able to find a solution for a friction, still send its answer, but leave `description` and `prompt` out of it: send only its `frictionId`. That tells Quotient you checked it, so it isn't sent to you again. Never send `""` or other placeholder text in their place, because Quotient stores any text as a fix.
 
@@ -70,7 +73,7 @@ Its reply has one entry per answer: `status` is `recorded` for a new answer, `al
 
 ## What teammates see
 Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:
-- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.
+- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Name a file in the Claude Code config folder by what it is, such as "the Claude Code user settings (`settings.json` in the config folder)", never by the config folder's path. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.
 - Refer to Claude Code's project folders, and the transcripts and auto-memories in them, in general terms, such as "this repo's auto-memory". Never write a project folder's name or its path.
 - Describe the app's own code by what it does, such as "the billing API's request handler", never by its class, function, table or other names.
 - Never write anyone's name, username, email or handle: not the operator's, not a teammate's, not anyone a session mentions.

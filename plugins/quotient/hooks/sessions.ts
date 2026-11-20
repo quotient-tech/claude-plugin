@@ -20,6 +20,10 @@ export const LOCKED_QUOTIENT_TOOLS = {
   setup: ['start_setup_run', 'list_teammate_frictions', 'record_setup_progress', 'submit_frictions', 'finish_setup_run'],
   'review-frictions': ['list_my_frictions', 'submit_friction', 'submit_review', 'complete_daily_run'],
 } as const
+// Starts the line that tells a sandboxed agent where the operator's Claude
+// Code config folder is, which `~` can't: `CLAUDE_CONFIG_DIR` may move it.
+// The skills that read the folder quote these words.
+export const CONFIG_FOLDER = 'Your Claude Code config folder:'
 // How many lines one read of a transcript asks for. Output stops at 4 MiB,
 // so a range that runs past it is halved until it fits.
 export const LINES_PER_READ = 500

@@ -22,7 +22,15 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
-import { heldVerdict, holdsTeammateText, LINES_PER_READ, projectFolders, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import {
+  CONFIG_FOLDER,
+  heldVerdict,
+  holdsTeammateText,
+  LINES_PER_READ,
+  projectFolders,
+  QUOTIENT_STARTED,
+  transcriptFindArgs,
+} from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -33,7 +41,7 @@ const SUMMARY_TOOL = 'mcp__quotient__setup_summary'
 const START_TOOL = 'mcp__quotient__setup_start'
 const DIGEST_TOOL = 'mcp__quotient__setup_digest'
 const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
-const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under `~/.claude/projects/`:'
+const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under its `projects/`:';
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
 const DAY = /^[A-Z][a-z]{2} [1-9]\d?$/
 const TEAMMATES_CLAUSE = ", and checking your setup for fixes to your teammates' frictions"
@@ -1694,16 +1702,20 @@ export const registerSetup: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // The teammate check reads with Read, Grep and Glob only, and Glob lists
-  // files oldest first and stops at 100, so it can't find the window's
-  // sessions itself: its prompt names their project folders.
+  // The teammate check's prompt names the config folder, which `~` can't
+  // when CLAUDE_CONFIG_DIR moves it. It reads with Read, Grep and Glob only,
+  // and Glob lists files oldest first and stops at 100, so it can't find the
+  // window's sessions itself: its prompt names their project folders too.
   on('agent.spawn', async ($, e, next) => {
     const current = await read($, run)
     if (e.subagentType !== TEAMMATE_CHECK_AGENT || !current.isRunning || current.dirs === null) return next(e)
     const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
     const dirs = current.dirs
-    const folders = projectFolders(await windowFiles($, dirs, window), name => isSkippedProject(name, dirs))
-    return folders.length === 0 ? next(e) : next({ ...e, prompt: `${e.prompt}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
+    const told = `${e.prompt}\n\n${CONFIG_FOLDER} \`${dirs.config}\``
+    const folders = await windowFiles($, dirs, window)
+      .then(files => projectFolders(files, name => isSkippedProject(name, dirs)))
+      .catch(() => [])
+    return next({ ...e, prompt: folders.length === 0 ? told : `${told}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
   }).catch(($, e, next) => next(e))
 
   // One hook for every call: the summary tool's name isn't in the generated

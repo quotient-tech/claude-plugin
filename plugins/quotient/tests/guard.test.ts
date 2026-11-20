@@ -17,8 +17,8 @@ const AGEX = 'mcp__plugin_quotient_agex__'
  *
  * @param on - The test's `on`
  * @param opts - The daily run's kind, if any, the subagents running, whether the folder lookup fails,
- *   the exit code of the check for teammates' text by transcript (1, none, when not given), and
- *   paths that can't be resolved
+ *   the exit code of the check for teammates' text by transcript (1, none, when not given),
+ *   paths that can't be resolved, and variables set over the home folder
  * @returns What the guard asked for
  */
 function engine(on: On, opts: {
@@ -29,9 +29,10 @@ function engine(on: On, opts: {
     missing?: string[]
     below?: Awaited<ReturnType<Engine['tool']['check']>>
     links?: Record<string, string>
+    env?: Record<string, string>
   } = {}) {
   const seen = { lookups: 0 }
-  mock.env(on, opts.kind === undefined ? { HOME: '/home/op' } : { HOME: '/home/op', QUOTIENT_DAILY_RUN_KIND: opts.kind })
+  mock.env(on, { HOME: '/home/op', ...(opts.kind === undefined ? {} : { QUOTIENT_DAILY_RUN_KIND: opts.kind }), ...opts.env })
   on('session.cwd', () => {
     if (opts.cwdFails) throw new Error('no folder')
     return { value: RUNS }
@@ -314,6 +315,26 @@ test('the teammate-check subagent may send a clean answer, never one with privat
   expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /home/op/.claude/settings.json' }, 'a1')).toBe('deny')
 })
 
+test("a send naming the config folder CLAUDE_CONFIG_DIR sets is refused, even outside the home folder", async ($, on) => {
+  engine(on, { env: { CLAUDE_CONFIG_DIR: '/cfg' } })
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg/settings.json' })).toBe('deny')
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit the Claude Code user settings' })).toBe('allow')
+})
+
+test('a send naming the real folder a linked CLAUDE_CONFIG_DIR leads to is refused, as is one naming the link', async ($, on) => {
+  engine(on, { env: { CLAUDE_CONFIG_DIR: '/cfg-link' }, links: { '/cfg-link': '/srv/operator-profile' } })
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /srv/operator-profile/settings.json' })).toBe('deny')
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg-link/settings.json' })).toBe('deny')
+})
+
+test('without CLAUDE_CONFIG_DIR, a path outside the home folder is left to the checks beneath', async ($, on) => {
+  engine(on)
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg/settings.json' })).toBe('allow')
+})
+
 test('clean sends, other Quotient tools and other tools are left to the checks beneath', async ($, on) => {
   engine(on)
 
@@ -494,6 +515,16 @@ test("a transcript that can't be checked for teammates' fixes is refused", async
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
 
   expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
+})
+
+test("a whole read of the user settings is pointed at Grep without naming ~/.claude", async ($, on) => {
+  engine(on, { kind: 'find-solutions' })
+
+  const verdict = await $.tool.check({ tool: 'Read', input: { file_path: `${CONFIG}/settings.json` } } as Parameters<Engine['tool']['check']>[0])
+  expect(verdict.decision).toBe('deny')
+  expect(verdict.decision === 'deny' ? verdict.reason : '').toBe(
+    "quotient's sandbox: search settings.json in your Claude Code config folder with Grep for what you need, never read it whole",
+  )
 })
 
 test("once a review holds transcripts back, a read whose check fails is refused", async ($, on) => {
