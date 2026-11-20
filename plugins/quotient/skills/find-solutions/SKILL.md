@@ -63,7 +63,7 @@ For each friction, write one answer with these fields:
 - `description`: a 1-2 sentence description of the best solution you have that may potentially resolve the friction. If several solutions combine, fold them into one
 - `prompt`: a prompt you would provide to another agent to implement the solution
 
-Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it. A search quotient refuses searched nothing: search each part on its own instead. If you still can't search them all, for example because a search keeps being refused or the run is running long, leave that friction out of the page's answers: Quotient offers it again next time, while an answer without a fix hides it from you for good.
+Send a friction's answer without a fix only once you've searched both your setup and every project folder with a session from the last two weeks for it. A search quotient refuses searched nothing: search each part on its own instead. When quotient says nothing is there, that part of your setup is empty: count it as searched. If you still can't search them all, for example because a search keeps being refused or the run is running long, leave that friction out of the page's answers: Quotient offers it again next time, while an answer without a fix hides it from you for good.
 
 If you searched them all and weren't able to find a solution for a friction, still send its answer, but leave `description` and `prompt` out of it: send only its `frictionId`. That tells Quotient you checked it, so it isn't sent to you again. Never send `""` or other placeholder text in their place, because Quotient stores any text as a fix.
 

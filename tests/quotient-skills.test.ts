@@ -376,6 +376,9 @@ test("find-solutions: leaving a friction out doesn't stop the page's answers fro
 test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /A search quotient refuses searched nothing/);
+  // The guard refuses a missing path with a reply of its own: an operator
+  // with no agents folder has nothing there to search.
+  assert.match(body, /When quotient says nothing is there, that part of your setup is empty: count it as searched/);
   assert.match(body, /leave that friction out of the page's answers: Quotient offers it again next time/);
   assert.match(body, /weren't able to find a solution.*still send its answer/);
 });

@@ -48,6 +48,10 @@ const ALWAYS = ['ToolSearch', 'SubagentHandback']
 const REPO_DAYS = 14
 const DENIED_TOOL = "quotient's sandbox: not one of this agent's tools"
 const DENIED_READ = "quotient's sandbox: outside what this agent may read"
+// A path the agent could read if it existed. Said apart from DENIED_READ so a
+// missing folder, such as an operator's absent `agents/`, counts as searched
+// rather than as a search that couldn't run.
+const DENIED_MISSING = "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched"
 const DENIED_SETTINGS = "quotient's sandbox: search ~/.claude/settings.json with Grep for what you need, never read it whole"
 // A background task's output file, or the folder that holds them, under
 // Claude Code's temporary folder (`/tmp/claude-<uid>/…/tasks/<id>.output`).
@@ -180,6 +184,7 @@ async function scopeOf($: EngineInterface, agentId: string | undefined): Promise
  * Says why a sandboxed agent's read is refused: Read and Grep by the real
  * path they reach, a Grep of a folder as reading everything in it, and Glob
  * by the folder it lists from. The user settings file may only be searched.
+ * A missing path the agent could otherwise read is refused as empty.
  *
  * @param $ - The engine
  * @param tool - Read, Grep or Glob
@@ -193,11 +198,12 @@ async function readDenial($: EngineInterface, tool: string, input: Record<string
   if (tool === 'Glob') {
     const root = globRoot(input, where.dirs, cwd)
     const stat = root === null ? undefined : await real(root)
-    return stat?.realPath !== undefined && isGlobAllowed(stat.realPath, where, input.pattern) ? null : DENIED_READ
+    if (stat?.realPath === undefined) return root !== null && isGlobAllowed(root, where, input.pattern) ? DENIED_MISSING : DENIED_READ
+    return isGlobAllowed(stat.realPath, where, input.pattern) ? null : DENIED_READ
   }
   const full = fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
   const stat = full === null ? undefined : await real(full)
-  if (stat?.realPath === undefined) return DENIED_READ
+  if (stat?.realPath === undefined) return full !== null && isReadAllowed(full, where, tool === 'Grep') ? DENIED_MISSING : DENIED_READ
   // Through a link, the settings may live elsewhere, such as a dotfiles repo,
   // so both the path as written and the file the link leads to count.
   if (tool === 'Read' && full !== null) {

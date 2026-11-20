@@ -496,6 +496,27 @@ test("a transcript that can't be checked for teammates' fixes is refused", async
   expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
 })
 
+// Most operators have no agents or commands folder, and many no user-level
+// CLAUDE.md. A refusal there reads as a search that couldn't run, and the
+// skill then holds back every answer, so it says nothing is there instead.
+test("a sandboxed read of a missing path it may read says nothing is there; a missing path elsewhere is refused as before", async ($, on) => {
+  engine(on, {
+    kind: 'find-solutions',
+    missing: [`${CONFIG}/CLAUDE.md`, `${CONFIG}/agents`, `${CONFIG}/commands`, `${CONFIG}/projects`, '/home/op/.ssh/none'],
+  })
+  const reason = async (tool: string, input: Record<string, unknown>) => {
+    const verdict = await $.tool.check({ tool, input } as Parameters<Engine['tool']['check']>[0])
+    return verdict.decision === 'deny' ? verdict.reason : verdict.decision
+  }
+  const missing = "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched"
+
+  expect(await reason('Read', { file_path: `${CONFIG}/CLAUDE.md` })).toBe(missing)
+  expect(await reason('Grep', { pattern: 'x', path: `${CONFIG}/agents` })).toBe(missing)
+  expect(await reason('Glob', { pattern: '*', path: `${CONFIG}/commands` })).toBe(missing)
+  expect(await reason('Grep', { pattern: 'x', path: `${CONFIG}/projects` })).toBe("quotient's sandbox: outside what this agent may read")
+  expect(await reason('Read', { file_path: '/home/op/.ssh/none' })).toBe("quotient's sandbox: outside what this agent may read")
+})
+
 test("once a review holds transcripts back, a read whose check fails is refused", async ($, on) => {
   engine(on, { cwdFails: true })
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
