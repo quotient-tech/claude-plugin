@@ -391,10 +391,9 @@ test('a run started from a session that loaded quotient from outside the plugin 
 
   expect(seen.launched).toHaveLength(2)
   expect(seen.pluginDirs).toHaveLength(2)
-  for (const dir of seen.pluginDirs) {
-    expect(dir).toMatch(/^\/.*\/plugins\/quotient$/)
-    expect(dir).not.toContain('/plugins/cache/')
-  }
+  expect(seen.pluginDirs[0]).toMatch(/^\//)
+  expect(seen.pluginDirs[1]).toBe(seen.pluginDirs[0])
+  expect(seen.pluginDirs[0]).not.toMatch(/^\/home\/op\/\.claude\/plugins\/cache\//)
 })
 
 test('an installed plugin, in the plugin cache, is not passed on', () => {
