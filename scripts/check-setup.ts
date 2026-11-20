@@ -2,7 +2,9 @@
 // against a local Quotient whose tables were just dropped:
 //   - stopped after its first recorded batch and run again, it reviews no
 //     source the first run recorded;
-//   - it never reviews the session that holds teammates' fixes.
+//   - it never reviews the session that holds teammates' fixes;
+//   - the resumed run's summary shows each top friction's stored severity,
+//     impact and session count, including one found before the resume.
 // Then it prints both runs' numbers, with the status lines each wrote
 // between the start message and the summary. Claude Code asks the model for
 // visible text when a turn ends with none, so it writes them while waiting on
@@ -25,6 +27,11 @@ const START = "mcp__quotient__setup_start";
 const SUMMARY = "mcp__quotient__setup_summary";
 const DIGEST = "mcp__quotient__setup_digest";
 const RECORD = /__record_setup_progress$/;
+const SUBMIT = /__submit_frictions$/;
+const NOT_RESUMED = "no friction found before the resume reached the summary's top rows, so their stored values weren't checked";
+
+type SentFriction = { title?: string; description: string; severity: string; impact: string; affectedSessionCount: number };
+type TopRow = { severity: string; description: string; impact: string; sessions: number };
 
 /**
  * Lists a transcript's content blocks of one type, in order.
@@ -78,6 +85,77 @@ export function recordedSources(lines: readonly Line[]): string[] {
   return succeeded(lines)
     .filter((call) => RECORD.test(String(call.name)))
     .flatMap((call) => ((call.input as { sources?: unknown }).sources as string[] | undefined) ?? []);
+}
+
+/**
+ * Finds the text of a tool call's reply.
+ * @param lines - The transcript's lines.
+ * @param id - The call's id.
+ * @returns The reply's text, or an empty string when there is none.
+ */
+function replyText(lines: readonly Line[], id: unknown): string {
+  const content = blocks(lines, "tool_result").find((result) => result.tool_use_id === id)?.content;
+  if (typeof content === "string") return content;
+  return Array.isArray(content) ? (content as Block[]).map((block) => String(block.text ?? "")).join("") : "";
+}
+
+/**
+ * Works out what Quotient stored from a run's `submit_frictions` calls: each
+ * friction it stored or updated, as last sent.
+ * @param lines - The run's main transcript lines.
+ * @returns The stored frictions, by id.
+ */
+function storedFrictions(lines: readonly Line[]): Map<string, SentFriction> {
+  const stored = new Map<string, SentFriction>();
+  for (const call of succeeded(lines).filter((block) => SUBMIT.test(String(block.name)))) {
+    const sent = ((call.input as { frictions?: unknown }).frictions ?? []) as SentFriction[];
+    let reply: { frictions?: { status?: string; frictionId?: string }[] };
+    try {
+      reply = JSON.parse(replyText(lines, call.id)) as typeof reply;
+    } catch {
+      continue;
+    }
+    reply.frictions?.forEach((entry, i) => {
+      const friction = sent[i];
+      if ((entry.status === "new" || entry.status === "updated") && entry.frictionId !== undefined && friction !== undefined) stored.set(entry.frictionId, friction);
+    });
+  }
+  return stored;
+}
+
+/**
+ * Checks a resumed run's summary against what Quotient stored: each `top`
+ * row must show its friction's stored severity, impact and session count,
+ * and at least one row must be a friction only the first run sent, or the
+ * resume went unchecked.
+ * @param first - The first run's main transcript lines.
+ * @param second - The resumed run's main transcript lines.
+ * @returns Each failure found, or none.
+ */
+export function topFailures(first: readonly Line[], second: readonly Line[]): string[] {
+  const before = storedFrictions(first);
+  const after = storedFrictions(second);
+  const stored = new Map([...before, ...after]);
+  const summary = succeeded(second).filter((call) => call.name === SUMMARY).at(-1);
+  const top = ((summary?.input as { top?: unknown } | undefined)?.top ?? []) as TopRow[];
+  const failures: string[] = [];
+  let isResumeChecked = false;
+  for (const row of top) {
+    const match = [...stored].find(([, friction]) => (friction.title ?? friction.description) === row.description);
+    if (match === undefined) {
+      failures.push(`the summary's top row "${row.description}" matches no friction the runs stored`);
+      continue;
+    }
+    const [id, friction] = match;
+    if (before.has(id) && !after.has(id)) isResumeChecked = true;
+    const expected = { severity: friction.severity, impact: friction.impact, sessions: friction.affectedSessionCount };
+    for (const [field, value] of Object.entries(expected)) {
+      const shown = row[field as keyof TopRow];
+      if (shown !== value) failures.push(`the summary shows ${field} ${shown} for "${row.description}", where Quotient stored ${value}`);
+    }
+  }
+  if (!isResumeChecked) failures.push(NOT_RESUMED);
+  return failures;
 }
 
 /**
@@ -178,6 +256,7 @@ if (import.meta.main) {
       if (recorded.includes(source)) failures.push(`the second run reviewed ${source}, which the first run recorded`);
     }
     if (!blocks(secondFiles[0] ?? [], "tool_use").some((call) => call.name === SUMMARY)) failures.push("the second run never showed the summary");
+    else failures.push(...topFailures(firstFiles[0] ?? [], secondFiles[0] ?? []));
     const statusLines = [firstFiles, secondFiles].map((files) => textDuringRun(files[0] ?? []).length);
     console.log(JSON.stringify({ recordedByFirst: recorded.length, statusLines, runs: runs.map((files) => measureSetup(files)), failures }, null, 2));
   } finally {
