@@ -414,8 +414,8 @@ test('a plugin loaded from anywhere outside the plugin cache is passed on as it 
 
 test("an installed plugin's run gets the same arguments as before, and a side-loaded one's adds only --plugin-dir at the end", () => {
   const folder = '/home/op/.local/share/quotient'
-  expect(launchArgs(folder, SERVER, 'find-solutions', 'run-1', [], null)).toEqual(launch('find-solutions', 'run-1', FIND_TOOLS))
-  expect(launchArgs(folder, SERVER, 'review-frictions', 'run-2', [], '/src/plugins/quotient')).toEqual([
+  expect(launchArgs(folder, SERVER, 'find-solutions', 'run-1', [], '/home/op/.claude', null)).toEqual(launch('find-solutions', 'run-1', FIND_TOOLS))
+  expect(launchArgs(folder, SERVER, 'review-frictions', 'run-2', [], '/home/op/.claude', '/src/plugins/quotient')).toEqual([
     ...launch('review-frictions', 'run-2', REVIEW_TOOLS),
     '--plugin-dir',
     '/src/plugins/quotient',
