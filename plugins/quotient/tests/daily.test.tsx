@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { launchArgs, sideLoadedRoot } from '../hooks/daily'
 import { denial } from './fixtures/denial'
 
 type On = Parameters<TestBody>[1]
@@ -114,6 +115,7 @@ function engine(
     found: [] as (readonly string[])[],
     calls: [] as { server: string; tool: string; args: Record<string, unknown> }[],
     launched: [] as (readonly string[])[],
+    pluginDirs: [] as string[],
     launchEnv: [] as (Record<string, string> | undefined)[],
     logs: [] as string[],
     debugged: [] as string[],
@@ -159,7 +161,12 @@ function engine(
       const isStdoutTruncated = opts.isFindTruncated === true
       return { value: { exitCode: opts.findExit ?? 0, stdout, stderr: '', isStdoutTruncated, isStderrTruncated: false } }
     }
-    seen.launched.push(e.argv)
+    // The harness loads quotient from its own folder, as --plugin-dir does,
+    // so each run is told to load that folder. That last pair is kept apart
+    // here, so each launch reads the same as an installed session's.
+    const isSideLoaded = e.argv.at(-2) === '--plugin-dir'
+    if (isSideLoaded) seen.pluginDirs.push(e.argv.at(-1) ?? '')
+    seen.launched.push(isSideLoaded ? e.argv.slice(0, -2) : e.argv)
     seen.launchEnv.push(e.init?.env)
     if (opts.launchRejects) throw new Error('launch failed')
     const exitCode = opts.launchExit?.[e.argv[7] ?? ''] ?? 0
@@ -373,6 +380,43 @@ test('a due run starts detached, in its own folder, with only its own tools', as
   await clock.settle()
 
   expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS)])
+})
+
+test('a run started from a session that loaded quotient from outside the plugin cache loads that same folder', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toHaveLength(2)
+  expect(seen.pluginDirs).toHaveLength(2)
+  expect(seen.pluginDirs[0]).toMatch(/^\//)
+  expect(seen.pluginDirs[1]).toBe(seen.pluginDirs[0])
+  expect(seen.pluginDirs[0]).not.toMatch(/^\/home\/op\/\.claude\/plugins\/cache\//)
+})
+
+test('an installed plugin, in the plugin cache, is not passed on', () => {
+  expect(sideLoadedRoot('/home/op/.claude/plugins/cache/quotient/quotient/0.1.2', '/home/op/.claude')).toBeNull()
+  expect(sideLoadedRoot('/cfg/plugins/cache/quotient/quotient/0.1.2', '/cfg/')).toBeNull()
+})
+
+test('a plugin loaded from anywhere outside the plugin cache is passed on as it is', () => {
+  expect(sideLoadedRoot('/src/claude-plugin/plugins/quotient', '/home/op/.claude')).toBe('/src/claude-plugin/plugins/quotient')
+  expect(sideLoadedRoot('/home/op/.claude/plugins/cache-old/quotient', '/home/op/.claude')).toBe('/home/op/.claude/plugins/cache-old/quotient')
+  expect(sideLoadedRoot('/home/op/.claude/plugins/cache/quotient/quotient/0.1.2', '/cfg')).toBe(
+    '/home/op/.claude/plugins/cache/quotient/quotient/0.1.2',
+  )
+})
+
+test("an installed plugin's run gets the same arguments as before, and a side-loaded one's adds only --plugin-dir at the end", () => {
+  const folder = '/home/op/.local/share/quotient'
+  expect(launchArgs(folder, SERVER, 'find-solutions', 'run-1', [], null)).toEqual(launch('find-solutions', 'run-1', FIND_TOOLS))
+  expect(launchArgs(folder, SERVER, 'review-frictions', 'run-2', [], '/src/plugins/quotient')).toEqual([
+    ...launch('review-frictions', 'run-2', REVIEW_TOOLS),
+    '--plugin-dir',
+    '/src/plugins/quotient',
+  ])
 })
 
 test("each run uses the default output style, whatever the operator's own settings choose", async ($, on) => {
