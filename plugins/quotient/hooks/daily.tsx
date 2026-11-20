@@ -5,7 +5,7 @@
 import type { Hook, McpToolResult, Register } from 'claude-code'
 
 import { isSkippedProject } from './sandbox'
-import { projectFolders, transcriptFindArgs } from './sessions'
+import { CONFIG_FOLDER, projectFolders, transcriptFindArgs } from './sessions'
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
 import { DENIED_HELP } from './text'
 
@@ -72,12 +72,21 @@ function claimedRunId(result: McpToolResult): string | null {
  * @param kind - Which daily run
  * @param runId - The claimed run's id
  * @param projects - The project folders the prompt names after the run id
+ * @param config - The Claude Code config folder the prompt names on its own line, or null for none
  * @returns The argument list for `$.process.run`
  */
-function launchArgs(folder: string, server: string, kind: Kind, runId: string, projects: readonly string[]): string[] {
+function launchArgs(
+  folder: string,
+  server: string,
+  kind: Kind,
+  runId: string,
+  projects: readonly string[],
+  config: string | null,
+): string[] {
   // Claude Code names a server's tools mcp__<server>__<tool>, with each
   // character other than a letter, digit, _ or - in the server's name as _.
   const prefix = `mcp__${server.replace(/[^A-Za-z0-9_-]/g, '_')}__`
+  const named = [`/quotient:${kind} daily ${runId}`, ...projects].join(' ')
   return [
     'sh',
     '-c',
@@ -86,7 +95,7 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string, p
     folder,
     'claude',
     '-p',
-    [`/quotient:${kind} daily ${runId}`, ...projects].join(' '),
+    config === null ? named : `${named}\n\n${CONFIG_FOLDER} \`${config}\``,
     '--tools',
     'Read',
     'Grep',
@@ -113,12 +122,12 @@ function launchArgs(folder: string, server: string, kind: Kind, runId: string, p
  * can't find these itself.
  *
  * @param $ - The engine
+ * @param config - The operator's Claude Code config folder
  * @param home - The operator's home folder
  * @param runs - The daily runs' own folder
  * @returns The folders' names under `projects/`, sorted, or none when they can't be listed
  */
-async function recentProjects($: Api, home: string, runs: string): Promise<string[]> {
-  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`
+async function recentProjects($: Api, config: string, home: string, runs: string): Promise<string[]> {
   const dirs = { config, home, runs }
   try {
     const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
@@ -143,11 +152,12 @@ async function recentProjects($: Api, home: string, runs: string): Promise<strin
  */
 async function startRun($: Api, folder: string, server: string, kind: Kind, runId: string, home: string): Promise<boolean> {
   try {
-    const projects = kind === 'find-solutions' ? await recentProjects($, home, folder) : []
+    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`
+    const projects = kind === 'find-solutions' ? await recentProjects($, config, home, folder) : []
     // Marks the run's session as a background run, so its requests aren't
     // counted as the operator's own, and names its kind, so guard.ts holds
     // it to that kind's tools and reads.
-    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects), {
+    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects, kind === 'find-solutions' ? config : null), {
       env: { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: kind },
     })
     if (launched.exitCode === 0) return true

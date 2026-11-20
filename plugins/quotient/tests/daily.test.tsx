@@ -40,6 +40,7 @@ function due(runId: string): string {
  * @param tools - The Quotient tools the run may call, by their full names
  * @param folder - Where the run starts
  * @param projects - The project folders the prompt names after the run id
+ * @param config - The Claude Code config folder the prompt names on its own line, or null for none
  * @returns What `$.process.run` should receive
  */
 function launch(
@@ -48,7 +49,9 @@ function launch(
   tools: string[],
   folder = '/home/op/.local/share/quotient',
   projects: string[] = [],
+  config: string | null = kind === 'find-solutions' ? '/home/op/.claude' : null,
 ): string[] {
+  const named = [`/quotient:${kind} daily ${runId}`, ...projects].join(' ')
   return [
     'sh',
     '-c',
@@ -57,7 +60,7 @@ function launch(
     folder,
     'claude',
     '-p',
-    [`/quotient:${kind} daily ${runId}`, ...projects].join(' '),
+    config === null ? named : `${named}\n\nYour Claude Code config folder: \`${config}\``,
     '--tools',
     'Read',
     'Grep',
@@ -84,7 +87,7 @@ function launch(
  * @param opts.denied - The tools Claude Code denies, and for `claim_daily_run` only these kinds' claims
  * @param opts.env - The environment the mod reads, over a home folder of `/home/op`
  * @param opts.wait - Holds each tool reply until the test moves the clock this far
- * @param opts.launchExit - Each run's launch exit code, by the prompt it starts; 0 when absent
+ * @param opts.launchExit - Each run's launch exit code, by the first line of the prompt it starts; 0 when absent
  * @param opts.launchRejects - Whether every launch rejects
  * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
  * @param opts.findExit - The exit code of that `find`, 0 when absent
@@ -162,7 +165,7 @@ function engine(
     seen.launched.push(e.argv)
     seen.launchEnv.push(e.init?.env)
     if (opts.launchRejects) throw new Error('launch failed')
-    const exitCode = opts.launchExit?.[e.argv[7] ?? ''] ?? 0
+    const exitCode = opts.launchExit?.[(e.argv[7] ?? '').split('\n')[0] ?? ''] ?? 0
     return { value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
   on('ui.log', (_, e) => {
@@ -593,6 +596,7 @@ test('the transcripts are looked up under CLAUDE_CONFIG_DIR when it is set', asy
   await clock.settle()
 
   expect(seen.found.map(argv => argv[1])).toEqual(['/cfg/projects'])
+  expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS, undefined, [], '/cfg')])
 })
 
 test('a review-frictions run lists its own sessions, so its prompt names no folders', async ($, on) => {

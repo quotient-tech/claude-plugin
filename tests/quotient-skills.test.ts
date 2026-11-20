@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
-import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
+import { CONFIG_FOLDER, LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -324,7 +324,7 @@ test("find-solutions: sends each page's answers in one call, including frictions
 
 test("find-solutions: searches the user settings and never reads them whole", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /Search `~\/\.claude\/settings\.json` with Grep for what a friction needs/);
+  assert.match(body, /Search `<config>\/settings\.json` with Grep for what a friction needs/);
   assert.match(body, /never read the whole file/);
   assert.match(body, /list what's in it once/);
 });
@@ -333,7 +333,7 @@ test("find-solutions: searches the user settings and never reads them whole", ()
 // one sent after a shallow or refused search loses a fix their sessions hold.
 test("find-solutions: answers without a fix only after searching the setup and each recent project folder", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /Any names after the run id are the project folders with a session from the last two weeks/);
+  assert.match(body, /Any names after the run id, on its line, are the project folders with a session from the last two weeks/);
   // Glob lists files oldest first and stops at 100, so a Glob of every
   // transcript leaves out the newest sessions.
   assert.match(body, /Glob lists files oldest first and shows at most 100/);
@@ -354,7 +354,16 @@ test("find-solutions: searches each project folder once per page, for every fric
 // are none", the search rule would hold for every friction without a search.
 test("find-solutions: a daily run told no project folders hasn't searched past sessions", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run/);
+  assert.match(body, /If no names follow the run id on its line, quotient couldn't list the folders: count past sessions as not searched in this run/);
+});
+
+// CLAUDE_CONFIG_DIR can move the config folder away from ~/.claude, and the
+// sandbox reads only the real one: the hooks name it with these words.
+test("find-solutions: reads the config folder its task names, and ~/.claude only when none is named", () => {
+  const { body } = skill("find-solutions");
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /If your task names none, it's `~\/\.claude`/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
 });
 
 test("find-solutions: leaving a friction out doesn't stop the page's answers from being sent", () => {
@@ -693,7 +702,7 @@ for (const name of ["setup", "find-solutions"]) {
   test(`${name}: skips the sessions run from a temporary folder`, () => {
     const { body } = skill(name);
     for (const prefix of TEMPORARY_PROJECTS) assert.ok(body.includes(`\`${prefix}\``), `${prefix} isn't named`);
-    assert.match(body, /never `~\/\.claude\/projects\/` as a whole/);
+    assert.match(body, /never `(~\/\.claude|<config>)\/projects\/` as a whole/);
   });
 }
 
