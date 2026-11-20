@@ -24,7 +24,7 @@ Otherwise, before anything else, call `start_setup_run`. Use Quotient's tools fr
 - If any of these tools returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again. The one exception is the `submit_frictions` error the Friction section describes.
 - While its `nextCursor` isn't null, call it again with `cursor` set to that value, for the rest of `reportedFrictions`.
 
-Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).
+Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`, each with its stored `title`, `severity`, `impact`, `affectedSessionCount` and `frequency`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).
 
 !`echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"`
 
@@ -93,7 +93,7 @@ Skip the sessions and routine runs in the run's `reviewedSources`.
 
 The start message's counts already leave out every session you skip, so `reviewedSessionCount` is the same from the first friction you submit: never take the skipped sessions off it again.
 
-When a new finding is the same friction as one in the run's `frictionsInRun`, or one you've submitted since, send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total, instead of submitting another.
+When a new finding is the same friction as one in the run's `frictionsInRun`, or one you've submitted since, send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total, instead of submitting another. For a friction in `frictionsInRun`, its new `affectedSessionCount` is its stored `affectedSessionCount`, or the count at the start of its `frequency` when that is null, plus the sessions and routine runs this run has since found it in.
 
 Before submitting a friction, compare it with the run's `reportedFrictions`. Leave it out when it is clearly the same problem as one of them, even if you would word it differently: teammates are already looking for its fix. Record each one you leave out by its `id`. When you aren't sure it's the same problem, submit it.
 
@@ -168,7 +168,7 @@ If quotient refuses a call because its text holds one of these, rewrite that fie
 Call quotient's `setup_summary` tool once with these fields, then end your turn without writing anything else. Each piece of text it takes (every `working` item, every `top` description and `inCommon`) is at most 200 characters, counting an emoji as 2 or more:
 - `frictions`: `finish_setup_run`'s `newCount`.
 - `working`: up to three things the subagents reported working well, each backed by their evidence, as a list of text. Give fewer when that's all there is, and none when there's none.
-- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (the value you last sent in `submit_frictions` for that friction), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_frictions` for that friction), and `sessions` (the count from the start of its frequency).
+- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (the value you last sent in `submit_frictions` for that friction), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_frictions` for that friction), and `sessions` (the count from the start of its frequency). For a friction in `frictionsInRun` that this session hasn't sent, take each field from `frictionsInRun` instead: `severity` is its `severity`, or, when that is `other`, the level the Friction section's rule gives its `impact` and session count; `description` is its `title`, or its `description` when the title is null; `impact` is its `impact`; and `sessions` is its `affectedSessionCount`, or the count at the start of its `frequency` when that is null.
 - `remainingHigh`: the `counts` high number minus the high frictions in `top`, or 0 when `frictions` is 3 or fewer.
 - `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them. For example: "Two of your top three involve your CI and local setup. Whoever set those up has likely hit the same problems and solved them in their own Claude setup." Leave it out when `frictions` is 0, and when this setup checked your setup for fixes to teammates' frictions: quotient adds what that check found itself.
 
