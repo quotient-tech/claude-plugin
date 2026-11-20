@@ -468,7 +468,7 @@ function isSendTool(tool: string): boolean {
  */
 async function privateTextDenial($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<string | null> {
   if (!isSendTool(tool)) return null
-  const found = privateText(input, (await $.env.get('HOME')) ?? '/')
+  const found = privateText(input, (await $.env.get('HOME')) ?? '/', (await $.env.get('CLAUDE_CONFIG_DIR')) || undefined)
   return found === null
     ? null
     : `quotient: \`${found.field}\` holds ${found.kind}, which teammates would read. Rewrite that field without it and send the call again.`

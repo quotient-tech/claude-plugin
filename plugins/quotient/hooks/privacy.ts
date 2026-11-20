@@ -1,6 +1,6 @@
 // Teammates read every field quotient's skills send to Quotient but the ids.
 // The skills tell the agent what to keep out; these pure rules find what can
-// be found reliably, a home folder's path, an email address or a secret's
+// be found reliably, a home or config folder's path, an email address or a secret's
 // well-known shape, so guard.ts can refuse the call and the agent rewrites it.
 // Names, internal hosts and customer data have no reliable shape: only the
 // skills' rules keep those out.
@@ -10,6 +10,7 @@ import { EMAIL } from './state'
 /** What a field was found to hold, as the refusal names it. */
 export type PrivateKind =
   | 'an absolute path in a home folder'
+  | "the Claude Code config folder's path"
   | "a Claude Code project folder's name"
   | 'an email address'
   | 'a secret'
@@ -38,16 +39,16 @@ const SECRETS = [
 ]
 
 /**
- * Tells whether a text names the session's own home folder, as a path that
- * starts there, after any slashes as in `file:///root`, not one that merely
- * contains its name, like `src/root/`.
+ * Tells whether a text names a folder, as a path that starts there, after
+ * any slashes as in `file:///root`, not one that merely contains its name,
+ * like `src/root/`.
  *
  * @param text - The field's text
- * @param home - The session's home folder
+ * @param path - The folder, such as the session's home folder
  * @returns Whether the text holds it, followed by a path or nothing
  */
-function namesHome(text: string, home: string): boolean {
-  const folder = home.replace(/\/+$/, '')
+function namesFolder(text: string, path: string): boolean {
+  const folder = path.replace(/\/+$/, '')
   if (folder === '') return false
   const escaped = folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return new RegExp(`(?:^|[^\\w.~/-])/*${escaped}(?=/|$|[\\s'"\`])`).test(text)
@@ -86,11 +87,13 @@ function holdsEmail(text: string): boolean {
  *
  * @param text - The field's text
  * @param home - The session's home folder
+ * @param config - The session's Claude Code config folder, when it's set apart from the home folder's
  * @returns What it holds, or null
  */
-function kindOf(text: string, home: string): PrivateKind | null {
+function kindOf(text: string, home: string, config: string | undefined): PrivateKind | null {
   if (PROJECT_FOLDER.test(text) || namesHomeProject(text, home)) return "a Claude Code project folder's name"
-  if (HOME_PATH.test(text) || namesHome(text, home)) return 'an absolute path in a home folder'
+  if (HOME_PATH.test(text) || namesFolder(text, home)) return 'an absolute path in a home folder'
+  if (config !== undefined && namesFolder(text, config)) return "the Claude Code config folder's path"
   if (SECRETS.some(pattern => pattern.test(text))) return 'a secret'
   if (holdsEmail(text)) return 'an email address'
   return null
@@ -105,18 +108,23 @@ function kindOf(text: string, home: string): PrivateKind | null {
  *
  * @param input - The call's input
  * @param home - The session's home folder
+ * @param config - The session's Claude Code config folder, when it's set apart from the home folder's
  * @returns The field and what it holds, without the text itself, or null when every field is clean
  */
-export function privateText(input: Record<string, unknown>, home: string): { field: string; kind: PrivateKind } | null {
+export function privateText(
+  input: Record<string, unknown>,
+  home: string,
+  config?: string,
+): { field: string; kind: PrivateKind } | null {
   for (const [field, value] of Object.entries(input)) {
     if (UNCHECKED.has(field)) continue
     const items = Array.isArray(value) ? value : [value]
     for (const [index, item] of items.entries()) {
       if (typeof item === 'string') {
-        const kind = kindOf(item, home)
+        const kind = kindOf(item, home, config)
         if (kind !== null) return { field, kind }
       } else if (Array.isArray(value) && typeof item === 'object' && item !== null) {
-        const found = privateText(item as Record<string, unknown>, home)
+        const found = privateText(item as Record<string, unknown>, home, config)
         if (found !== null) return { field: `${field}[${index}].${found.field}`, kind: found.kind }
       }
     }

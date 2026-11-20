@@ -17,8 +17,8 @@ const AGEX = 'mcp__plugin_quotient_agex__'
  *
  * @param on - The test's `on`
  * @param opts - The daily run's kind, if any, the subagents running, whether the folder lookup fails,
- *   the exit code of the check for teammates' text by transcript (1, none, when not given), and
- *   paths that can't be resolved
+ *   the exit code of the check for teammates' text by transcript (1, none, when not given),
+ *   paths that can't be resolved, and variables set over the home folder
  * @returns What the guard asked for
  */
 function engine(on: On, opts: {
@@ -29,9 +29,10 @@ function engine(on: On, opts: {
     missing?: string[]
     below?: Awaited<ReturnType<Engine['tool']['check']>>
     links?: Record<string, string>
+    env?: Record<string, string>
   } = {}) {
   const seen = { lookups: 0 }
-  mock.env(on, opts.kind === undefined ? { HOME: '/home/op' } : { HOME: '/home/op', QUOTIENT_DAILY_RUN_KIND: opts.kind })
+  mock.env(on, { HOME: '/home/op', ...(opts.kind === undefined ? {} : { QUOTIENT_DAILY_RUN_KIND: opts.kind }), ...opts.env })
   on('session.cwd', () => {
     if (opts.cwdFails) throw new Error('no folder')
     return { value: RUNS }
@@ -298,6 +299,19 @@ test('the teammate-check subagent may send a clean answer, never one with privat
 
   expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit ~/.claude/settings.json' }, 'a1')).toBe('allow')
   expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /home/op/.claude/settings.json' }, 'a1')).toBe('deny')
+})
+
+test("a send naming the config folder CLAUDE_CONFIG_DIR sets is refused, even outside the home folder", async ($, on) => {
+  engine(on, { env: { CLAUDE_CONFIG_DIR: '/cfg' } })
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg/settings.json' })).toBe('deny')
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit the Claude Code user settings' })).toBe('allow')
+})
+
+test('without CLAUDE_CONFIG_DIR, a path outside the home folder is left to the checks beneath', async ($, on) => {
+  engine(on)
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg/settings.json' })).toBe('allow')
 })
 
 test('clean sends, other Quotient tools and other tools are left to the checks beneath', async ($, on) => {

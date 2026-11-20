@@ -26,6 +26,14 @@ test("the session's own home folder is found wherever it is", () => {
   })
 })
 
+test("the session's Claude Code config folder is found wherever it is, and only when it's given", () => {
+  const kind = "the Claude Code config folder's path"
+  expect(privateText({ prompt: 'Edit /cfg/settings.json' }, HOME, '/cfg')).toEqual({ field: 'prompt', kind })
+  expect(privateText({ prompt: 'Grep /cfg' }, HOME, '/cfg/')).toEqual({ field: 'prompt', kind })
+  expect(privateText({ prompt: 'Edit /cfg/settings.json' }, HOME)).toBe(null)
+  expect(privateText({ prompt: 'Edit /cfgx/settings.json or src/cfg/a.ts' }, HOME, '/cfg')).toBe(null)
+})
+
 test('an email address is found', () => {
   expect(privateText({ title: 'Ask jane.doe@example.com about CI' }, HOME)).toEqual({
     field: 'title',
