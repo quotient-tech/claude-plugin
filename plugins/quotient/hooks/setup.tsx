@@ -168,6 +168,9 @@ let answeredWhileAway = false
 let isSummaryTurn = false
 // Whether a Quotient tool returned an error to the main agent in this run.
 let hasQuotientError = false
+// The setup_start and setup_summary calls quotient refused in this run, by
+// tool. Their rows show until a later call of the same tool is accepted.
+const refusedCalls = new Map<string, string[]>()
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -1602,6 +1605,36 @@ async function answerTeammateCall<R extends { text?: string }>(
 }
 
 /**
+ * Keeps track of quotient's refusals of a setup_start or setup_summary call.
+ * A refusal's row and error show until the model's retry is accepted, then
+ * they're hidden with setup's other rows, so a refusal the model never gets
+ * past stays in sight.
+ *
+ * @param $ - The engine
+ * @param tool - The setup tool called
+ * @param toolUseId - The call's id
+ * @param answer - What quotient answered
+ * @returns The answer, unchanged
+ */
+async function settleRefusals<A extends { deny: string } | { result: string }>(
+  $: Api,
+  tool: string,
+  toolUseId: string | undefined,
+  answer: A,
+): Promise<A> {
+  const refused = refusedCalls.get(tool) ?? []
+  if ('deny' in answer) {
+    if (toolUseId !== undefined) refusedCalls.set(tool, [...refused, toolUseId])
+    return answer
+  }
+  if (refused.length > 0) {
+    refusedCalls.delete(tool)
+    await update($, run, latest => ({ ...latest, toolUseIds: [...latest.toolUseIds, ...refused] }))
+  }
+  return answer
+}
+
+/**
  * Starts a setup run: its progress, folders and teammate-check record start
  * over, and the earlier runs' rows stay hidden.
  *
@@ -1610,6 +1643,7 @@ async function answerTeammateCall<R extends { text?: string }>(
 async function startSetupRun($: Api): Promise<void> {
   isSummaryTurn = false
   hasQuotientError = false
+  refusedCalls.clear()
   await update($, run, current => ({
     ...NO_RUN,
     isRunning: true,
@@ -1674,10 +1708,10 @@ export const registerSetup: Register = on => {
   // No .catch: falling back to next(e) after the call ran would run it again.
   on('tool.call', async ($, e, next) => {
     if ((e.tool as string) === START_TOOL) {
-      return answerStart($, e as unknown as Record<string, unknown>, e.tool_use_id)
+      return settleRefusals($, START_TOOL, e.tool_use_id, await answerStart($, e as unknown as Record<string, unknown>, e.tool_use_id))
     }
     if ((e.tool as string) === SUMMARY_TOOL) {
-      return answerSummary($, e as unknown as Record<string, unknown>, e.tool_use_id)
+      return settleRefusals($, SUMMARY_TOOL, e.tool_use_id, await answerSummary($, e as unknown as Record<string, unknown>, e.tool_use_id))
     }
     if ((e.tool as string) === DIGEST_TOOL) {
       return answerDigest($, e as unknown as Record<string, unknown>)

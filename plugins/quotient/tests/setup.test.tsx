@@ -1619,6 +1619,29 @@ test('a refused summary call draws the engine row, with its error', async ($, on
   expect(texts.map(text => text.text)).toEqual(["the engine's row"])
 })
 
+test('once a retried summary call is accepted, the refused call and its error are drawn as nothing', async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await callTool($, SUMMARY_TOOL, 'toolu_refused', { ...SAVED, frictions: -1 })
+  await drawSummary($, SAVED)
+  const refusedRow = {
+    tool_use_id: 'toolu_refused',
+    tool: SUMMARY_TOOL,
+    input: { ...SAVED, frictions: -1 },
+    isRunning: false,
+    isErrored: true,
+    isInterrupted: false,
+    isExpanded: false,
+  }
+
+  expect(await row($, 'ToolUse', refusedRow, 'toolu_refused')).toBe('')
+  expect(
+    await row($, 'ToolResult', { tool_use_id: 'toolu_refused', tool: SUMMARY_TOOL, output: 'frictions: must be a whole number of at least 0', isErrored: true, isExpanded: false }, 'toolu_refused'),
+  ).toBe('')
+  expect(await row($, 'ToolUse', { ...refusedRow, isExpanded: true }, 'toolu_refused')).toBe("the engine's row")
+})
+
 test('a summary call that is still running draws nothing, not its raw input', async ($, on) => {
   engine(on)
   engineRows(on)
