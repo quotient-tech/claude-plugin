@@ -56,7 +56,21 @@ function engine(on: On, opts: {
     const kind = /\.\w+$/.test(path) ? 'file' : 'dir'
     return { value: { kind, size: 1, mtimeMs: 0, isLink: path !== e.path, realPath: path } }
   })
-  on('agent.list', () => ({ value: (opts.agents ?? []).map(agent => ({ ...agent, description: '', status: 'running' })) }))
+  on('agent.list', () => ({
+    value: (opts.agents ?? []).map(agent => ({
+      ...agent,
+      description: '',
+      status: 'running',
+      kind: 'local_agent',
+      taskStatus: 'running',
+      label: '',
+      startTime: 0,
+      cwd: REPO,
+      tokenCount: 0,
+      tokenSamples: [0],
+      hasRow: true,
+    })),
+  }))
   on('command.run', () => ({ text: 'ran' }))
   on('session.surfaces', () => ({ value: [] }))
   on('turn.complete', (_, e) => ({ text: e.answer }))
