@@ -666,8 +666,10 @@ test("setup: counts the sessions each friction appeared in against every source 
 test("setup: resumes an unfinished run from the progress Quotient recorded", () => {
   const { body } = skill("setup");
   assert.match(body, /`reviewedSources`/);
-  assert.match(body, /`frictionsInRun`/);
+  assert.match(body, /`frictionsInRun`, each with its stored `title`, `severity`, `impact`, `affectedSessionCount` and `frequency`/);
   assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity/);
+  // A resumed session never saw the count it sent before, so it adds to the stored one.
+  assert.ok(body.includes("For a friction in `frictionsInRun`, its new `affectedSessionCount` is its stored `affectedSessionCount`, or the count at the start of its `frequency` when that is null, plus the sessions and routine runs this run has since found it in."));
   assert.match(body, /call `record_setup_progress` with the run's `runId`, its `sources`/);
   // A source setup_digest refused wasn't reviewed, so recording it would skip it on resume.
   assert.match(body, /its `sources` except any the reviewer skipped because `setup_digest` refused them, so a resumed run tries those again/);
@@ -887,7 +889,10 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /`impact` \(the value you sent in `submit_frictions` for that friction\)/);
   // An update may change a friction's severity, and remainingHigh counts the stored values.
   assert.match(section, /`severity` \(the value you last sent in `submit_frictions` for that friction\)/);
-  assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
+  // A resumed session didn't send the frictions found before the resume, so it shows what Quotient stored.
+  assert.ok(section.includes("For a friction in `frictionsInRun` that this session hasn't sent, take each field from `frictionsInRun` instead: `severity` is its `severity`, or, when that is `other`, the level the Friction section's rule gives its `impact` and session count; `description` is its `title`, or its `description` when the title is null; `impact` is its `impact`; and `sessions` is its `affectedSessionCount`, or the count at the start of its `frequency` when that is null."));
+  // counts holds stored severities, so a friction rated high from a stored `other` was never in it.
+  assert.match(section, /- `remainingHigh`: the `counts` high number minus the frictions in `top` that Quotient stored as high, never one whose stored `severity` is `other`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });
 
