@@ -144,7 +144,7 @@ const OPERATOR_RULES = [
 const TEAMMATE_RULES = [
   "## What teammates see",
   "Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:",
-  "- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.",
+  "- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Name a file in the Claude Code config folder by what it is, such as \"the Claude Code user settings (`settings.json` in the config folder)\", never by the config folder's path. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.",
   "- Refer to Claude Code's project folders, and the transcripts and auto-memories in them, in general terms, such as \"this repo's auto-memory\". Never write a project folder's name or its path.",
   "- Describe the app's own code by what it does, such as \"the billing API's request handler\", never by its class, function, table or other names.",
   "- Never write anyone's name, username, email or handle: not the operator's, not a teammate's, not anyone a session mentions.",
