@@ -2168,6 +2168,18 @@ test("the text the agent writes after the summary, in the summary's turn, is hid
   expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
 })
 
+test("the summary turn's last text stays hidden when it's first drawn after the turn ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
 test("after a Quotient tool error, the agent's text shows, so the error it must show is seen", async ($, on) => {
   engine(on, { agents: REVIEWER_RUNNING, failing: 'submit_frictions' })
   engineRows(on)

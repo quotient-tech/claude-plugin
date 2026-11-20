@@ -1810,6 +1810,8 @@ export const registerSetup: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
     if (e.agentId !== undefined) return next(e)
+    // The turn's last text is drawn only after it completes.
+    if (isSummaryTurn && e.answer !== '') hiddenNow.add(messageKey('main', e.answer))
     await keepHidden($)
     isSummaryTurn = false
     // The summary's own turn is the only one that asks; any other ending drops it.
