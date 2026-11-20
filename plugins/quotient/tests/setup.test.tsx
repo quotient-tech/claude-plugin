@@ -60,6 +60,7 @@ const SAVED = {
  * @param opts.share - The answer to "Copy to share", or null when it's dismissed
  * @param opts.isAway - Whether that answer came while the operator was away
  * @param opts.isCopied - Whether the copy reaches the clipboard, true when absent
+ * @param opts.config - The Claude Code config folder the folder lookup prints, `CONFIG` when absent
  * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
@@ -90,6 +91,7 @@ function engine(
     connected?: { isConnected: false; reason: string }
     share?: string | null
     isAway?: boolean
+    config?: string
     isCopied?: boolean
   } = {},
 ) {
@@ -235,7 +237,7 @@ function engine(
     return {
       value: {
         exitCode: 0,
-        stdout: `${CONFIG}\n/home/op\n/home/op/.local/share/quotient\n`,
+        stdout: `${opts.config ?? CONFIG}\n/home/op\n/home/op/.local/share/quotient\n`,
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -812,9 +814,21 @@ test("setup's teammate check is told the project folders with a session in setup
   expect(seen.spawned).toEqual([
     {
       subagentType: 'quotient:teammate-check',
-      prompt: `${CHECK_PROMPT}\n\nThe project folders with a session from the last two weeks, under \`~/.claude/projects/\`: -repo`,
+      prompt: `${CHECK_PROMPT}\n\nYour Claude Code config folder: \`${CONFIG}\`\n\nThe project folders with a session from the last two weeks, under its \`projects/\`: -repo`,
     },
   ])
+})
+
+// CLAUDE_CONFIG_DIR can move the config folder away from ~/.claude, and the
+// sandbox reads only the real one.
+test("setup's teammate check is told the config folder CLAUDE_CONFIG_DIR names", async ($, on) => {
+  const seen = engine(on, { config: '/cfg' })
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
+
+  expect(seen.spawned.at(-1)?.prompt).toContain('\n\nYour Claude Code config folder: `/cfg`\n\n')
 })
 
 test("a setup pinned to a window tells its teammate check the folders from that window", async ($, on) => {
@@ -839,14 +853,21 @@ test("setup's other subagents start with their prompts as written", async ($, on
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' }])
 })
 
-test("a teammate check whose sessions can't be listed starts with its prompt as written", async ($, on) => {
-  const seen = engine(on, { findExit: 1 })
-  await $.command.run(TYPED_SETUP)
+for (const [name, opts] of [
+  ["sessions can't be listed", { findExit: 1 }],
+  ['has no sessions in the window', { transcripts: [] }],
+] as const) {
+  test(`a teammate check whose setup ${name} is told only the config folder`, async ($, on) => {
+    const seen = engine(on, opts)
+    await $.command.run(TYPED_SETUP)
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
+    await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
-  expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
-})
+    expect(seen.spawned).toEqual([
+      { subagentType: 'quotient:teammate-check', prompt: `${CHECK_PROMPT}\n\nYour Claude Code config folder: \`${CONFIG}\`` },
+    ])
+  })
+}
 
 test("an invited operator's summary opens with setup being done and leaves out the pitch, sample, waiting line and hint", async ($, on) => {
   engine(on)

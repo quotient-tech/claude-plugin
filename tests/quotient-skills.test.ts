@@ -808,6 +808,15 @@ test("setup: writes severity as high, medium or low, and frequency starting with
   assert.match(body, /- `frequency`: .*starting with the number of sessions or routine runs/);
 });
 
+// setup's hooks name the config folder in the check's prompt with the same
+// words the daily runs use.
+test("teammate-check: reads the config folder its prompt names, and ~/.claude only when none is named", () => {
+  const { body } = readFrontmatter(join(PLUGIN, "agents", "teammate-check.md"));
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /`~\/\.claude` when it names none/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
+});
+
 // A reviewer reads untrusted session text, so it may only read and report:
 // no shell, no subagents of its own, and nothing sent to Quotient.
 test("setup-reviewer: reads only through setup_digest, and only reports back", () => {
