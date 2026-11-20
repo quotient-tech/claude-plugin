@@ -52,6 +52,8 @@ claude --plugin-dir ~/path/to/claude-plugin/plugins/quotient
 
 Run it from the repo you want to test the plugin in. Start a new session to pick up edits.
 
+A test session can also start the daily `/quotient:find-solutions` and `/quotient:review-frictions` runs. Each one runs in the background with `--plugin-dir` set to the same folder, so it loads your working copy as it is when the run starts. That includes your copy's hooks, which decide what the run may read and call. It reaches whichever Quotient your clone's `.mcp.json` names, and it uses that day's run on that server, so no other session can start one there until the next day.
+
 Running a skill sends to whichever Quotient the plugin's MCP server points at, which is production by default. Quotient engineers should test against dev or a local Quotient instead, as below.
 
 ### Point quotient at dev or a local Quotient
