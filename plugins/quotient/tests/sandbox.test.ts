@@ -227,7 +227,7 @@ test('only a stat that failed because nothing is there counts as absent', () => 
 })
 
 test('a missing path is placed by the real path of its nearest existing folder, and an unreadable folder stops the walk', async () => {
-  const lookUp = (answers: Record<string, string | typeof ABSENT | undefined>) => async (path: string) => {
+  const lookUp = (answers: Record<string, string | typeof ABSENT | { realPath?: string } | undefined>) => async (path: string) => {
     const answer = path in answers ? answers[path] : path
     return typeof answer === 'string' && answer !== ABSENT ? { realPath: answer } : answer
   }
@@ -240,6 +240,15 @@ test('a missing path is placed by the real path of its nearest existing folder, 
     await realOfMissing(lookUp({ '/home/op/cfg-link/agents': ABSENT, '/home/op/cfg-link': CONFIG }), '/home/op/cfg-link/agents'),
   ).toBe(`${CONFIG}/agents`)
   expect(await realOfMissing(lookUp({ [`${CONFIG}/agents/x`]: ABSENT, [`${CONFIG}/agents`]: undefined }), `${CONFIG}/agents/x`)).toBe(undefined)
+  // Two missing folders above the target: the walk climbs past both to the
+  // config folder and places the path there.
+  expect(await realOfMissing(lookUp({ [`${CONFIG}/a/b`]: ABSENT, [`${CONFIG}/a`]: ABSENT }), `${CONFIG}/a/b/c`)).toBe(`${CONFIG}/a/b/c`)
+  // A missing parent under a folder that can't be read: the walk stops there.
+  expect(await realOfMissing(lookUp({ [`${CONFIG}/x/y`]: ABSENT, [`${CONFIG}/x`]: undefined }), `${CONFIG}/x/y/z`)).toBe(undefined)
+  // A broken link stats as itself, with no real path, as the engine answers
+  // it: the walk stops there rather than placing the path under the config
+  // folder, so the reply doesn't depend on whether the link's target exists.
+  expect(await realOfMissing(lookUp({ [`${CONFIG}/skills/ln`]: {} }), `${CONFIG}/skills/ln/x`)).toBe(undefined)
 })
 
 // Nothing is under a missing path, so it's judged as a single read: a missing
