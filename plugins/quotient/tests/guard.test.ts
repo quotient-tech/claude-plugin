@@ -517,6 +517,37 @@ test("a sandboxed read of a missing path it may read says nothing is there; a mi
   expect(await reason('Read', { file_path: '/home/op/.ssh/none' })).toBe("quotient's sandbox: outside what this agent may read")
 })
 
+// A missing path has no real path of its own, so it's judged by where its
+// nearest existing folder really is: a link can't make a missing file under
+// ~/.ssh read as "nothing is there", which would tell that it doesn't exist.
+test('a missing path is judged by where its nearest existing folder really is', async ($, on) => {
+  engine(on, {
+    kind: 'find-solutions',
+    links: { [`${CONFIG}/skills/ln`]: '/home/op/.ssh', '/home/op/cfg-link': CONFIG },
+    missing: [`${CONFIG}/skills/ln/none`, '/home/op/cfg-link/agents'],
+  })
+  const reason = async (tool: string, input: Record<string, unknown>) => {
+    const verdict = await $.tool.check({ tool, input } as Parameters<Engine['tool']['check']>[0])
+    return verdict.decision === 'deny' ? verdict.reason : verdict.decision
+  }
+
+  expect(await reason('Read', { file_path: `${CONFIG}/skills/ln/none` })).toBe("quotient's sandbox: outside what this agent may read")
+  expect(await reason('Glob', { pattern: '*', path: `${CONFIG}/skills/ln/none` })).toBe("quotient's sandbox: outside what this agent may read")
+  expect(await reason('Grep', { pattern: 'x', path: '/home/op/cfg-link/agents' })).toBe(
+    "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched",
+  )
+})
+
+test("a whole read of the user settings is pointed at Grep without naming ~/.claude", async ($, on) => {
+  engine(on, { kind: 'find-solutions' })
+
+  const verdict = await $.tool.check({ tool: 'Read', input: { file_path: `${CONFIG}/settings.json` } } as Parameters<Engine['tool']['check']>[0])
+  expect(verdict.decision).toBe('deny')
+  expect(verdict.decision === 'deny' ? verdict.reason : '').toBe(
+    "quotient's sandbox: search settings.json in your Claude Code config folder with Grep for what you need, never read it whole",
+  )
+})
+
 test("once a review holds transcripts back, a read whose check fails is refused", async ($, on) => {
   engine(on, { cwdFails: true })
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })

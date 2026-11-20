@@ -52,7 +52,7 @@ const DENIED_READ = "quotient's sandbox: outside what this agent may read"
 // missing folder, such as an operator's absent `agents/`, counts as searched
 // rather than as a search that couldn't run.
 const DENIED_MISSING = "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched"
-const DENIED_SETTINGS = "quotient's sandbox: search ~/.claude/settings.json with Grep for what you need, never read it whole"
+const DENIED_SETTINGS = "quotient's sandbox: search settings.json in your Claude Code config folder with Grep for what you need, never read it whole"
 // A background task's output file, or the folder that holds them, under
 // Claude Code's temporary folder (`/tmp/claude-<uid>/…/tasks/<id>.output`).
 const TASK_OUTPUT = /\/claude-\d+\/\S*\/tasks(\/|$|\b)|\/tasks\/[^/\s'"]+\.output\b/i
@@ -181,10 +181,32 @@ async function scopeOf($: EngineInterface, agentId: string | undefined): Promise
 }
 
 /**
+ * Finds where a missing path would really be: the real path of its nearest
+ * folder that exists, with the missing rest added back, so a link above it
+ * counts as it would for a path that exists.
+ *
+ * @param real - Resolves a path that exists, or gives undefined
+ * @param full - An absolute path from fullPath that doesn't exist
+ * @returns Where it would be, or undefined when no folder above it resolves
+ */
+async function realOfMissing(
+  real: (path: string) => Promise<{ realPath?: string } | undefined>,
+  full: string,
+): Promise<string | undefined> {
+  const segments = full.split('/').filter(segment => segment !== '')
+  for (let kept = segments.length - 1; kept >= 0; kept -= 1) {
+    const above = await real(`/${segments.slice(0, kept).join('/')}`)
+    if (above?.realPath !== undefined) return `${above.realPath.replace(/\/+$/, '')}/${segments.slice(kept).join('/')}`
+  }
+  return undefined
+}
+
+/**
  * Says why a sandboxed agent's read is refused: Read and Grep by the real
  * path they reach, a Grep of a folder as reading everything in it, and Glob
  * by the folder it lists from. The user settings file may only be searched.
- * A missing path the agent could otherwise read is refused as empty.
+ * A missing path the agent could otherwise read, judged by where its nearest
+ * existing folder really is, is refused as empty.
  *
  * @param $ - The engine
  * @param tool - Read, Grep or Glob
@@ -198,12 +220,18 @@ async function readDenial($: EngineInterface, tool: string, input: Record<string
   if (tool === 'Glob') {
     const root = globRoot(input, where.dirs, cwd)
     const stat = root === null ? undefined : await real(root)
-    if (stat?.realPath === undefined) return root !== null && isGlobAllowed(root, where, input.pattern) ? DENIED_MISSING : DENIED_READ
+    if (stat?.realPath === undefined) {
+      const missing = root === null ? undefined : await realOfMissing(real, root)
+      return missing !== undefined && isGlobAllowed(missing, where, input.pattern) ? DENIED_MISSING : DENIED_READ
+    }
     return isGlobAllowed(stat.realPath, where, input.pattern) ? null : DENIED_READ
   }
   const full = fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
   const stat = full === null ? undefined : await real(full)
-  if (stat?.realPath === undefined) return full !== null && isReadAllowed(full, where, tool === 'Grep') ? DENIED_MISSING : DENIED_READ
+  if (stat?.realPath === undefined) {
+    const missing = full === null ? undefined : await realOfMissing(real, full)
+    return missing !== undefined && isReadAllowed(missing, where, tool === 'Grep') ? DENIED_MISSING : DENIED_READ
+  }
   // Through a link, the settings may live elsewhere, such as a dotfiles repo,
   // so both the path as written and the file the link leads to count.
   if (tool === 'Read' && full !== null) {
