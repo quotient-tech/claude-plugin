@@ -1135,37 +1135,51 @@ test("escape sequences and control characters in a teammate's text are drawn as 
   expect(shown.includes('\u001b')).toBe(false)
 })
 
-test('each answer the teammate check sends gets a row of its own, without its friction id', async ($, on) => {
+test("the teammate check's answers add no transcript rows, and the band and status line count them", async ($, on) => {
   const seen = engine(on)
-  await checkTeammates($, [['t1', FIXES[0]], ['t2', null], ['t3', 'See fr-20261029-5.']])
+  engineRows(on)
+  const answers = Array.from({ length: 50 }, (_, i): [string, string | null] => [`t${i}`, i % 5 === 0 ? FIXES[0] : null])
+  await checkTeammates($, answers)
 
-  expect(seen.logs).toEqual([
-    `Sent a teammate a fix: ${FIXES[0]}`,
-    "Checked a teammate's friction: no fix found in your setup.",
-    'Sent a teammate a fix.',
-  ])
+  expect(seen.logs).toEqual([])
+  expect(await band($)).toBe('0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
+  expect(seen.status.at(-1)).toBe('setup · 0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
 })
 
-test('each answer in a batch the teammate check sends gets a row of its own, and only those Quotient stored count', async ($, on) => {
+test("the debug log gets a line per answer, without a teammate's friction or fix", async ($, on) => {
+  const seen = engine(on)
+  await checkTeammates($, [['t1', FIXES[0]], ['t2', null]])
+
+  const debug = seen.debug.join('\n')
+  expect(debug).not.toContain(FIXES[0])
+  expect(debug).not.toContain('t1')
+  expect(seen.debug.filter(line => line.startsWith('quotient setup: teammate check'))).toHaveLength(2)
+})
+
+test("an answer Quotient refused counts toward neither the band nor the summary", async ($, on) => {
   const seen = engine(on, { refused: ['t3'] })
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', null], ['t3', FIXES[2]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 1 fix sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain(FIXES[2])
 })
 
 test('a batch whose reply cannot be read still counts every answer it sent', async ($, on) => {
   const seen = engine(on)
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', FIXES[1]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 2 fixes sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
 })
 
@@ -1603,6 +1617,29 @@ test('a refused summary call draws the engine row, with its error', async ($, on
   await ui.unmount()
 
   expect(texts.map(text => text.text)).toEqual(["the engine's row"])
+})
+
+test('once a retried summary call is accepted, the refused call and its error are drawn as nothing', async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await callTool($, SUMMARY_TOOL, 'toolu_refused', { ...SAVED, frictions: -1 })
+  await drawSummary($, SAVED)
+  const refusedRow = {
+    tool_use_id: 'toolu_refused',
+    tool: SUMMARY_TOOL,
+    input: { ...SAVED, frictions: -1 },
+    isRunning: false,
+    isErrored: true,
+    isInterrupted: false,
+    isExpanded: false,
+  }
+
+  expect(await row($, 'ToolUse', refusedRow, 'toolu_refused')).toBe('')
+  expect(
+    await row($, 'ToolResult', { tool_use_id: 'toolu_refused', tool: SUMMARY_TOOL, output: 'frictions: must be a whole number of at least 0', isErrored: true, isExpanded: false }, 'toolu_refused'),
+  ).toBe('')
+  expect(await row($, 'ToolUse', { ...refusedRow, isExpanded: true }, 'toolu_refused')).toBe("the engine's row")
 })
 
 test('a summary call that is still running draws nothing, not its raw input', async ($, on) => {
@@ -2093,9 +2130,11 @@ test("during setup, a RemoteTrigger reply that isn't a routine list is left alon
 
 const STATUS = { text: "Both review batches are still running. I'll write the summary once they report back.", isFirstOfReply: true }
 const REVIEWER_RUNNING = [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'running' as const }]
+const NO_AGENTS: { id: string; type: string; status: 'running' | 'completed' }[] = []
+const SAID_DONE = { text: 'Setup is done.', isFirstOfReply: true }
 
-test("while setup's reviewers run, the agent's text is drawn as nothing", async ($, on) => {
-  engine(on, { agents: REVIEWER_RUNNING })
+test("from the start message on, the agent's text is drawn as nothing, with or without a reviewer running", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
@@ -2103,13 +2142,72 @@ test("while setup's reviewers run, the agent's text is drawn as nothing", async 
   expect(await row($, 'AssistantMessage', STATUS)).toBe('')
 })
 
-test("once setup's reviewers have reported, the agent's text shows, so an error it writes is seen", async ($, on) => {
-  engine(on, { agents: [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'completed' }] })
+test("the agent's text hidden during setup stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', STATUS)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
 
-  expect(await row($, 'AssistantMessage', STATUS)).toBe("the engine's row")
+  expect(during).toBe('')
+  expect(await row($, 'AssistantMessage', STATUS)).toBe('')
+})
+
+test('a reply drawn before setup shows when drawn again during the run and after it', async ($, on) => {
+  const earlier = { text: 'Here is the diff you asked for.', isFirstOfReply: true }
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  const before = await row($, 'AssistantMessage', earlier)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', earlier)
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(before).toBe("the engine's row")
+  expect(during).toBe("the engine's row")
+  expect(await row($, 'AssistantMessage', earlier)).toBe("the engine's row")
+})
+
+test("the text the agent writes after the summary, in the summary's turn, is hidden; a later turn's text shows", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  const afterSummary = await row($, 'AssistantMessage', SAID_DONE)
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(afterSummary).toBe('')
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
+test("the summary turn's last text stays hidden when it's first drawn after the turn ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
+test("after a Quotient tool error, the agent's text shows, so the error it must show is seen", async ($, on) => {
+  engine(on, { agents: REVIEWER_RUNNING, failing: 'submit_frictions' })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const before = await row($, 'AssistantMessage', STATUS)
+  await callQuotient($, 'submit_frictions', 'toolu_fail', { frictions: [] })
+
+  expect(before).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Quotient could not complete this request.', isFirstOfReply: true })).toBe(
+    "the engine's row",
+  )
 })
 
 test("outside setup, the agent's text shows even while a reviewer runs", async ($, on) => {
@@ -2626,6 +2724,30 @@ test("rows after the run ends aren't hidden, and setup's earlier rows stay hidde
 
   expect(await row($, 'ToolUse', bashRow('toolu_after'), 'toolu_after')).toBe("the engine's row")
   expect(await row($, 'ToolUse', bashRow('toolu_mine'), 'toolu_mine')).toBe('')
+})
+
+test("a setup subagent's report-back stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await runTool($, { tool: 'Agent', tool_use_id: 'toolu_rev', description: 'Review batch 1', prompt: 'Review', subagent_type: 'quotient:setup-reviewer' })
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+  const during = await row($, 'UserMessage', report)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
+
+  expect(during).toBe('')
+  expect(await row($, 'UserMessage', report)).toBe('')
+  expect(await row($, 'UserMessage', { ...report, isExpanded: true })).toBe("the engine's row")
+  // A later report from an agent of the same type, with other text, is the operator's own.
+  expect(await row($, 'UserMessage', { ...report, text: 'Done reviewing the PR.' })).toBe("the engine's row")
+})
+
+test("outside setup, a report-back no setup run hid shows, even with the same text as one that was", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+
+  expect(await row($, 'UserMessage', report)).toBe("the engine's row")
 })
 
 test("a setup subagent's report-back and finished rows are hidden, and others' aren't", async ($, on) => {
