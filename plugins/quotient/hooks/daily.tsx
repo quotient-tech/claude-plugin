@@ -72,7 +72,7 @@ function claimedRunId(result: McpToolResult): string | null {
  * @param kind - Which daily run
  * @param runId - The claimed run's id
  * @param projects - The project folders the prompt names after the run id
- * @param config - The Claude Code config folder the prompt names on its own line, or null for none
+ * @param config - The Claude Code config folder the prompt names on its own line
  * @returns The argument list for `$.process.run`
  */
 function launchArgs(
@@ -81,7 +81,7 @@ function launchArgs(
   kind: Kind,
   runId: string,
   projects: readonly string[],
-  config: string | null,
+  config: string,
 ): string[] {
   // Claude Code names a server's tools mcp__<server>__<tool>, with each
   // character other than a letter, digit, _ or - in the server's name as _.
@@ -95,7 +95,7 @@ function launchArgs(
     folder,
     'claude',
     '-p',
-    config === null ? named : `${named}\n\n${CONFIG_FOLDER} \`${config}\``,
+    `${named}\n\n${CONFIG_FOLDER} \`${config}\``,
     '--tools',
     'Read',
     'Grep',
@@ -157,7 +157,7 @@ async function startRun($: Api, folder: string, server: string, kind: Kind, runI
     // Marks the run's session as a background run, so its requests aren't
     // counted as the operator's own, and names its kind, so guard.ts holds
     // it to that kind's tools and reads.
-    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects, kind === 'find-solutions' ? config : null), {
+    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects, config), {
       env: { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: kind },
     })
     if (launched.exitCode === 0) return true

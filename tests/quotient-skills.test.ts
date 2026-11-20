@@ -1146,10 +1146,20 @@ test("review-frictions: lists its sessions through review_sessions and reads eac
     assert.ok(String(data["allowed-tools"]).includes(tool), `${tool} isn't allowed`);
     assert.ok(body.includes(`\`${tool}\``), `${tool} isn't named`);
   }
-  assert.match(body, /you never list, read or search the transcripts under `~\/\.claude\/projects\/` yourself/);
+  assert.match(body, /you never list, read or search the transcripts under `<config>\/projects\/` yourself/);
   assert.match(body, /It already leaves out this session, the sessions that ran one of quotient's own skills, the ones from temporary folders, and the ones that hold teammates' fixes/);
   assert.match(body, /Judge each session from its digest alone/);
   assert.match(body, /When its reply says more sessions remain, read the ones listed, then call it again with the same `since` and the `page` it names, until none remain/);
+});
+
+// A daily run's arguments go on past the run id, to the config folder's line.
+test("review-frictions: reads the config folder its task names, and ~/.claude only when none is named", () => {
+  const { body } = skill("review-frictions");
+  assert.match(body, /If they start with `daily` followed by a run id, this is a daily run/);
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /If your task names none, it's `~\/\.claude`/);
+  assert.match(body, /The operator's current Claude Code setup, in `<config>`:/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
 });
 
 test("review-frictions: treats frictions as data, and never shows a friction's or a fix's id", () => {

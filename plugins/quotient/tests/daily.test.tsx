@@ -40,7 +40,7 @@ function due(runId: string): string {
  * @param tools - The Quotient tools the run may call, by their full names
  * @param folder - Where the run starts
  * @param projects - The project folders the prompt names after the run id
- * @param config - The Claude Code config folder the prompt names on its own line, or null for none
+ * @param config - The Claude Code config folder the prompt names on its own line
  * @returns What `$.process.run` should receive
  */
 function launch(
@@ -49,7 +49,7 @@ function launch(
   tools: string[],
   folder = '/home/op/.local/share/quotient',
   projects: string[] = [],
-  config: string | null = kind === 'find-solutions' ? '/home/op/.claude' : null,
+  config = '/home/op/.claude',
 ): string[] {
   const named = [`/quotient:${kind} daily ${runId}`, ...projects].join(' ')
   return [
@@ -60,7 +60,7 @@ function launch(
     folder,
     'claude',
     '-p',
-    config === null ? named : `${named}\n\nYour Claude Code config folder: \`${config}\``,
+    `${named}\n\nYour Claude Code config folder: \`${config}\``,
     '--tools',
     'Read',
     'Grep',
@@ -597,6 +597,16 @@ test('the transcripts are looked up under CLAUDE_CONFIG_DIR when it is set', asy
 
   expect(seen.found.map(argv => argv[1])).toEqual(['/cfg/projects'])
   expect(seen.launched).toEqual([launch('find-solutions', 'run-1', FIND_TOOLS, undefined, [], '/cfg')])
+})
+
+test("a review-frictions run's prompt names the config folder CLAUDE_CONFIG_DIR sets", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'review-frictions': due('run-2') }, env: { CLAUDE_CONFIG_DIR: '/cfg' } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.launched).toEqual([launch('review-frictions', 'run-2', REVIEW_TOOLS, undefined, [], '/cfg')])
 })
 
 test('a review-frictions run lists its own sessions, so its prompt names no folders', async ($, on) => {
