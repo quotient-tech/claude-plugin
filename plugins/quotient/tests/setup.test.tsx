@@ -131,6 +131,14 @@ function engine(
     value: (opts.agents ?? [{ id: TEAMMATE_AGENT, type: 'quotient:teammate-check', status: 'running' }]).map(agent => ({
       ...agent,
       description: 'check',
+      kind: 'local_agent',
+      taskStatus: agent.status,
+      label: 'check',
+      startTime: 0,
+      cwd: '/repo',
+      tokenCount: 0,
+      tokenSamples: [0],
+      hasRow: true,
     })),
   }))
   on('mcp.connect', () => ({ value: opts.connected ?? { isConnected: true, server: 'plugin:quotient:agex' } }) as never)
