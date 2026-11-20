@@ -32,12 +32,8 @@ const SETUP_COMMAND = 'quotient:setup'
 const SUMMARY_TOOL = 'mcp__quotient__setup_summary'
 const START_TOOL = 'mcp__quotient__setup_start'
 const DIGEST_TOOL = 'mcp__quotient__setup_digest'
-// The subagent setup reviews each batch with.
-const REVIEWER_AGENT = 'quotient:setup-reviewer'
 const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
 const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under `~/.claude/projects/`:'
-// A subagent that hasn't reported back yet.
-const ACTIVE: readonly string[] = ['pending', 'running', 'waiting']
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
 const DAY = /^[A-Z][a-z]{2} [1-9]\d?$/
 const TEAMMATES_CLAUSE = ", and checking your setup for fixes to your teammates' frictions"
@@ -168,6 +164,10 @@ const SOLVED_CARD = {
 // whether that question was answered for the operator while they were away.
 let inviteRowId: string | null = null
 let answeredWhileAway = false
+// Whether the summary's turn is still going, after the run has ended.
+let isSummaryTurn = false
+// Whether a Quotient tool returned an error to the main agent in this run.
+let hasQuotientError = false
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -1554,6 +1554,7 @@ async function answerSummary(
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary: { ...summary, invite } } }))
   }
   inviteRowId = invite === null || toolUseId === undefined ? null : toolUseId
+  isSummaryTurn = true
   await endRun($)
   const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0 && invite === null
   return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
@@ -1607,6 +1608,8 @@ async function answerTeammateCall<R extends { text?: string }>(
  * @param $ - The engine
  */
 async function startSetupRun($: Api): Promise<void> {
+  isSummaryTurn = false
+  hasQuotientError = false
   await update($, run, current => ({
     ...NO_RUN,
     isRunning: true,
@@ -1703,6 +1706,7 @@ export const registerSetup: Register = on => {
       }))
     }
     const called = await next(e)
+    if (e.agentId === undefined && called.isError === true && quotientTool(e.tool as string) !== undefined) hasQuotientError = true
     const name = setupRunTool(e.tool as string)
     if (name !== undefined && called.deny === undefined && called.isError !== true && (await read($, run)).isRunning) {
       const sources = reviewedFrom(name, e as unknown as Record<string, unknown>, called.text)
@@ -1735,15 +1739,18 @@ export const registerSetup: Register = on => {
     return <Box />
   }).catch(($, e, next) => next(e))
 
-  // While setup's reviewers run, the main agent ends turns to wait on them,
-  // and Claude Code asks it for visible text when a turn ends with none, so
-  // it writes status lines the skill can't stop. They're drawn as nothing
-  // until the reviewers have reported; ctrl+o still shows them.
+  // Setup's main agent ends turns to wait on its subagents, and Claude Code
+  // asks it for visible text when a turn ends with none, the summary's turn
+  // too, so it writes status lines the skill can't stop. From the start
+  // message to the end of the summary's turn they're drawn as nothing, and
+  // stay so on every later draw; ctrl+o still shows them. After a Quotient
+  // error, text shows, since the skill has the agent show that error.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const current = await read($, run)
-    if (!current.isRunning || current.start === null) return next(e)
-    const agents = await $.agent.list()
-    if (!agents.some(agent => agent.type === REVIEWER_AGENT && ACTIVE.includes(agent.status))) return next(e)
+    const key = messageKey('main', e.props.text)
+    const isQuiet = (current.isRunning && current.start !== null && !hasQuotientError) || isSummaryTurn
+    if (isQuiet) hiddenNow.add(key)
+    if (!isQuiet && !(await wasHidden($, key))) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   }).catch(($, e, next) => next(e))
@@ -1770,6 +1777,7 @@ export const registerSetup: Register = on => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
     if (e.agentId !== undefined) return next(e)
     await keepHidden($)
+    isSummaryTurn = false
     // The summary's own turn is the only one that asks; any other ending drops it.
     const rowId = inviteRowId
     inviteRowId = null
@@ -1790,6 +1798,7 @@ export const registerSetup: Register = on => {
 
   on('session.end', async ($, e, next) => {
     inviteRowId = null
+    isSummaryTurn = false
     await endRun($)
     hiddenNow.clear()
     return next(e)

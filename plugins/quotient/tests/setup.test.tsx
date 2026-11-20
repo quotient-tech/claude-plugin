@@ -2107,9 +2107,11 @@ test("during setup, a RemoteTrigger reply that isn't a routine list is left alon
 
 const STATUS = { text: "Both review batches are still running. I'll write the summary once they report back.", isFirstOfReply: true }
 const REVIEWER_RUNNING = [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'running' as const }]
+const NO_AGENTS: { id: string; type: string; status: 'running' | 'completed' }[] = []
+const SAID_DONE = { text: 'Setup is done.', isFirstOfReply: true }
 
-test("while setup's reviewers run, the agent's text is drawn as nothing", async ($, on) => {
-  engine(on, { agents: REVIEWER_RUNNING })
+test("from the start message on, the agent's text is drawn as nothing, with or without a reviewer running", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
@@ -2117,13 +2119,44 @@ test("while setup's reviewers run, the agent's text is drawn as nothing", async 
   expect(await row($, 'AssistantMessage', STATUS)).toBe('')
 })
 
-test("once setup's reviewers have reported, the agent's text shows, so an error it writes is seen", async ($, on) => {
-  engine(on, { agents: [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'completed' }] })
+test("the agent's text hidden during setup stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', STATUS)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
 
-  expect(await row($, 'AssistantMessage', STATUS)).toBe("the engine's row")
+  expect(during).toBe('')
+  expect(await row($, 'AssistantMessage', STATUS)).toBe('')
+})
+
+test("the text the agent writes after the summary, in the summary's turn, is hidden; a later turn's text shows", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  const afterSummary = await row($, 'AssistantMessage', SAID_DONE)
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(afterSummary).toBe('')
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
+test("after a Quotient tool error, the agent's text shows, so the error it must show is seen", async ($, on) => {
+  engine(on, { agents: REVIEWER_RUNNING, failing: 'submit_frictions' })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const before = await row($, 'AssistantMessage', STATUS)
+  await callQuotient($, 'submit_frictions', 'toolu_fail', { frictions: [] })
+
+  expect(before).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Quotient could not complete this request.', isFirstOfReply: true })).toBe(
+    "the engine's row",
+  )
 })
 
 test("outside setup, the agent's text shows even while a reviewer runs", async ($, on) => {
