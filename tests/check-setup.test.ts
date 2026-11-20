@@ -142,3 +142,34 @@ test("a summary whose top rows were all sent after the resume says the resume wa
   const second = [...submitted("f2", [NODE], [{ status: "new", frictionId: "node" }]), ...summarized(row(NODE))];
   assert.deepEqual(topFailures(first, second), ["no friction found before the resume reached the summary's top rows, so their stored values weren't checked"]);
 });
+
+test("a top row whose impact differs from the stored friction fails", () => {
+  const first = submitted("f1", [LINT], [{ status: "new", frictionId: "lint" }]);
+  const second = summarized({ ...row(LINT), impact: "TIME" });
+  assert.deepEqual(topFailures(first, second), [`the summary shows impact TIME for "${LINT.title}", where Quotient stored QUALITY`]);
+});
+
+test("a reply given as a plain string is read like one given as text blocks", () => {
+  const first: Line[] = [
+    said(use("f1", SUBMIT, { runId: "run", frictions: [LINT] })),
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "f1", content: JSON.stringify({ frictions: [{ status: "new", frictionId: "lint" }] }) }] } },
+  ];
+  assert.deepEqual(topFailures(first, summarized(row(LINT))), []);
+});
+
+test("a reply that isn't JSON stores nothing", () => {
+  const first: Line[] = [
+    said(use("f1", SUBMIT, { runId: "run", frictions: [LINT] })),
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "f1", content: "Quotient is unavailable" }] } },
+  ];
+  assert.deepEqual(topFailures(first, summarized(row(LINT))), [
+    `the summary's top row "${LINT.title}" matches no friction the runs stored`,
+    "no friction found before the resume reached the summary's top rows, so their stored values weren't checked",
+  ]);
+});
+
+test("only the last summary that came back is checked, not one the tool refused", () => {
+  const first = submitted("f1", [LINT], [{ status: "new", frictionId: "lint" }]);
+  const second = [said(use("bad", SUMMARY, { top: [{ ...row(LINT), sessions: 99 }] })), replied("bad", true), ...summarized(row(LINT))];
+  assert.deepEqual(topFailures(first, second), []);
+});

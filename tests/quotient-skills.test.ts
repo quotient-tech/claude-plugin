@@ -891,7 +891,8 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /`severity` \(the value you last sent in `submit_frictions` for that friction\)/);
   // A resumed session didn't send the frictions found before the resume, so it shows what Quotient stored.
   assert.ok(section.includes("For a friction in `frictionsInRun` that this session hasn't sent, take each field from `frictionsInRun` instead: `severity` is its `severity`, or, when that is `other`, the level the Friction section's rule gives its `impact` and session count; `description` is its `title`, or its `description` when the title is null; `impact` is its `impact`; and `sessions` is its `affectedSessionCount`, or the count at the start of its `frequency` when that is null."));
-  assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
+  // counts holds stored severities, so a friction rated high from a stored `other` was never in it.
+  assert.match(section, /- `remainingHigh`: the `counts` high number minus the frictions in `top` that Quotient stored as high, never one whose stored `severity` is `other`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });
 
