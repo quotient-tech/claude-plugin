@@ -829,7 +829,7 @@ test("setup's teammate check is told the project folders with a session in setup
 
 // CLAUDE_CONFIG_DIR can move the config folder away from ~/.claude, and the
 // sandbox reads only the real one.
-test("setup's teammate check is told the config folder CLAUDE_CONFIG_DIR names", async ($, on) => {
+test('setup looks up the config folder from CLAUDE_CONFIG_DIR and tells its teammate check the folder it found', async ($, on) => {
   const seen = engine(on, { config: '/cfg' })
   await $.command.run(TYPED_SETUP)
   await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
@@ -837,6 +837,10 @@ test("setup's teammate check is told the config folder CLAUDE_CONFIG_DIR names",
   await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
   expect(seen.spawned.at(-1)?.prompt).toContain('\n\nYour Claude Code config folder: `/cfg`\n\n')
+  // The kit runs no shell, so the lookup is checked by its command: the
+  // folder the mock answers stands for what it would print.
+  const lookup = seen.argv.find(argv => argv[0] === 'sh' && (argv[2] ?? '').startsWith('printf'))
+  expect(lookup?.[2]).toContain('"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"')
 })
 
 test("a setup pinned to a window tells its teammate check the folders from that window", async ($, on) => {
