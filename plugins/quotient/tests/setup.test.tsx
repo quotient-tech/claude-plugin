@@ -2154,6 +2154,22 @@ test("the agent's text hidden during setup stays hidden when it's drawn again af
   expect(await row($, 'AssistantMessage', STATUS)).toBe('')
 })
 
+test('a reply drawn before setup shows when drawn again during the run and after it', async ($, on) => {
+  const earlier = { text: 'Here is the diff you asked for.', isFirstOfReply: true }
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  const before = await row($, 'AssistantMessage', earlier)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', earlier)
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(before).toBe("the engine's row")
+  expect(during).toBe("the engine's row")
+  expect(await row($, 'AssistantMessage', earlier)).toBe("the engine's row")
+})
+
 test("the text the agent writes after the summary, in the summary's turn, is hidden; a later turn's text shows", async ($, on) => {
   engine(on, { agents: NO_AGENTS })
   engineRows(on)

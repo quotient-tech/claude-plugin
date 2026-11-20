@@ -197,6 +197,9 @@ const run = atom({ plugin: 'quotient', key: 'setupRun' } as const, NO_RUN, { sha
 // keep its keys in hiddenMessages, which outlives a reload.
 const hiddenMessages = atom({ plugin: 'quotient', key: 'setupHiddenMessages' } as const, [] as string[], { shape: 'hidden-1' })
 const hiddenNow = new Set<string>()
+// The agent's text drawn outside setup's quiet window. Earlier replies are
+// drawn again on every frame, so the window never takes them for setup's own.
+const shownOutside = new Set<string>()
 
 /**
  * Names a message row by what it shows, since message rows carry no id.
@@ -1783,8 +1786,12 @@ export const registerSetup: Register = on => {
     const current = await read($, run)
     const key = messageKey('main', e.props.text)
     const isQuiet = (current.isRunning && current.start !== null && !hasQuotientError) || isSummaryTurn
-    if (isQuiet) hiddenNow.add(key)
-    if (!isQuiet && !(await wasHidden($, key))) return next(e)
+    const isSetupText = isQuiet && !shownOutside.has(key)
+    if (isSetupText) hiddenNow.add(key)
+    if (!isSetupText && !(await wasHidden($, key))) {
+      shownOutside.add(key)
+      return next(e)
+    }
     const { Box } = $.ui.resolve(e)
     return <Box />
   }).catch(($, e, next) => next(e))
@@ -1837,6 +1844,7 @@ export const registerSetup: Register = on => {
     isSummaryTurn = false
     await endRun($)
     hiddenNow.clear()
+    shownOutside.clear()
     return next(e)
   }).catch(($, e, next) => next(e))
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
