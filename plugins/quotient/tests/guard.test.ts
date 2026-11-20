@@ -308,6 +308,13 @@ test("a send naming the config folder CLAUDE_CONFIG_DIR sets is refused, even ou
   expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit the Claude Code user settings' })).toBe('allow')
 })
 
+test('a send naming the real folder a linked CLAUDE_CONFIG_DIR leads to is refused, as is one naming the link', async ($, on) => {
+  engine(on, { env: { CLAUDE_CONFIG_DIR: '/cfg-link' }, links: { '/cfg-link': '/srv/operator-profile' } })
+
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /srv/operator-profile/settings.json' })).toBe('deny')
+  expect(await check($, `${AGEX}submit_solution`, { frictionId: 'f1', prompt: 'Edit /cfg-link/settings.json' })).toBe('deny')
+})
+
 test('without CLAUDE_CONFIG_DIR, a path outside the home folder is left to the checks beneath', async ($, on) => {
   engine(on)
 
@@ -494,48 +501,6 @@ test("a transcript that can't be checked for teammates' fixes is refused", async
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })
 
   expect(await check($, 'Read', { file_path: PLAIN })).toBe('deny')
-})
-
-// Most operators have no agents or commands folder, and many no user-level
-// CLAUDE.md. A refusal there reads as a search that couldn't run, and the
-// skill then holds back every answer, so it says nothing is there instead.
-test("a sandboxed read of a missing path it may read says nothing is there; a missing path elsewhere is refused as before", async ($, on) => {
-  engine(on, {
-    kind: 'find-solutions',
-    missing: [`${CONFIG}/CLAUDE.md`, `${CONFIG}/agents`, `${CONFIG}/commands`, `${CONFIG}/projects`, '/home/op/.ssh/none'],
-  })
-  const reason = async (tool: string, input: Record<string, unknown>) => {
-    const verdict = await $.tool.check({ tool, input } as Parameters<Engine['tool']['check']>[0])
-    return verdict.decision === 'deny' ? verdict.reason : verdict.decision
-  }
-  const missing = "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched"
-
-  expect(await reason('Read', { file_path: `${CONFIG}/CLAUDE.md` })).toBe(missing)
-  expect(await reason('Grep', { pattern: 'x', path: `${CONFIG}/agents` })).toBe(missing)
-  expect(await reason('Glob', { pattern: '*', path: `${CONFIG}/commands` })).toBe(missing)
-  expect(await reason('Grep', { pattern: 'x', path: `${CONFIG}/projects` })).toBe("quotient's sandbox: outside what this agent may read")
-  expect(await reason('Read', { file_path: '/home/op/.ssh/none' })).toBe("quotient's sandbox: outside what this agent may read")
-})
-
-// A missing path has no real path of its own, so it's judged by where its
-// nearest existing folder really is: a link can't make a missing file under
-// ~/.ssh read as "nothing is there", which would tell that it doesn't exist.
-test('a missing path is judged by where its nearest existing folder really is', async ($, on) => {
-  engine(on, {
-    kind: 'find-solutions',
-    links: { [`${CONFIG}/skills/ln`]: '/home/op/.ssh', '/home/op/cfg-link': CONFIG },
-    missing: [`${CONFIG}/skills/ln/none`, '/home/op/cfg-link/agents'],
-  })
-  const reason = async (tool: string, input: Record<string, unknown>) => {
-    const verdict = await $.tool.check({ tool, input } as Parameters<Engine['tool']['check']>[0])
-    return verdict.decision === 'deny' ? verdict.reason : verdict.decision
-  }
-
-  expect(await reason('Read', { file_path: `${CONFIG}/skills/ln/none` })).toBe("quotient's sandbox: outside what this agent may read")
-  expect(await reason('Glob', { pattern: '*', path: `${CONFIG}/skills/ln/none` })).toBe("quotient's sandbox: outside what this agent may read")
-  expect(await reason('Grep', { pattern: 'x', path: '/home/op/cfg-link/agents' })).toBe(
-    "quotient's sandbox: nothing is there, so there's nothing to search: count it as searched",
-  )
 })
 
 test("a whole read of the user settings is pointed at Grep without naming ~/.claude", async ($, on) => {

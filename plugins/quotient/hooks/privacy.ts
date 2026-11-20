@@ -51,7 +51,9 @@ function namesFolder(text: string, path: string): boolean {
   const folder = path.replace(/\/+$/, '')
   if (folder === '') return false
   const escaped = folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`(?:^|[^\\w.~/-])/*${escaped}(?=/|$|[\\s'"\`])`).test(text)
+  // Sentence punctuation after the folder still ends it, unless more of a
+  // name follows, as in `/cfg.d`.
+  return new RegExp(`(?:^|[^\\w.~/-])/*${escaped}(?=/|$|[\\s'"\`]|[.,;:!?)\\]](?:$|[\\s'"\`]))`).test(text)
 }
 
 /**
@@ -87,13 +89,13 @@ function holdsEmail(text: string): boolean {
  *
  * @param text - The field's text
  * @param home - The session's home folder
- * @param config - The session's Claude Code config folder, when it's set apart from the home folder's
+ * @param configs - The session's Claude Code config folder, as configured and where it really is, when it's set apart from the home folder's
  * @returns What it holds, or null
  */
-function kindOf(text: string, home: string, config: string | undefined): PrivateKind | null {
+function kindOf(text: string, home: string, configs: readonly string[]): PrivateKind | null {
   if (PROJECT_FOLDER.test(text) || namesHomeProject(text, home)) return "a Claude Code project folder's name"
   if (HOME_PATH.test(text) || namesFolder(text, home)) return 'an absolute path in a home folder'
-  if (config !== undefined && namesFolder(text, config)) return "the Claude Code config folder's path"
+  if (configs.some(config => namesFolder(text, config))) return "the Claude Code config folder's path"
   if (SECRETS.some(pattern => pattern.test(text))) return 'a secret'
   if (holdsEmail(text)) return 'an email address'
   return null
@@ -108,23 +110,23 @@ function kindOf(text: string, home: string, config: string | undefined): Private
  *
  * @param input - The call's input
  * @param home - The session's home folder
- * @param config - The session's Claude Code config folder, when it's set apart from the home folder's
+ * @param configs - The session's Claude Code config folder, as configured and where it really is, when it's set apart from the home folder's
  * @returns The field and what it holds, without the text itself, or null when every field is clean
  */
 export function privateText(
   input: Record<string, unknown>,
   home: string,
-  config?: string,
+  configs: readonly string[] = [],
 ): { field: string; kind: PrivateKind } | null {
   for (const [field, value] of Object.entries(input)) {
     if (UNCHECKED.has(field)) continue
     const items = Array.isArray(value) ? value : [value]
     for (const [index, item] of items.entries()) {
       if (typeof item === 'string') {
-        const kind = kindOf(item, home, config)
+        const kind = kindOf(item, home, configs)
         if (kind !== null) return { field, kind }
       } else if (Array.isArray(value) && typeof item === 'object' && item !== null) {
-        const found = privateText(item as Record<string, unknown>, home, config)
+        const found = privateText(item as Record<string, unknown>, home, configs)
         if (found !== null) return { field: `${field}[${index}].${found.field}`, kind: found.kind }
       }
     }

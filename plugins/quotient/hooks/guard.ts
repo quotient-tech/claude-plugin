@@ -13,15 +13,19 @@ import type { SandboxReach, TeammateTextMode } from '../types'
 import { KINDS, OWN_TOOLS, TOOLS } from './daily'
 import type { Kind } from './daily'
 import {
+  ABSENT,
   fullPath,
   globRoot,
+  isAbsent,
   isGlobAllowed,
+  isMissingReadable,
   isQuotientSkill,
   isQuotientTool,
   isReadAllowed,
   isSettingsFile,
   isSkippedProject,
   QUOTIENT_PREFIXES,
+  realOfMissing,
   safeRepos,
   TEAMMATE_TOOL_USE,
 } from './sandbox'
@@ -181,32 +185,12 @@ async function scopeOf($: EngineInterface, agentId: string | undefined): Promise
 }
 
 /**
- * Finds where a missing path would really be: the real path of its nearest
- * folder that exists, with the missing rest added back, so a link above it
- * counts as it would for a path that exists.
- *
- * @param real - Resolves a path that exists, or gives undefined
- * @param full - An absolute path from fullPath that doesn't exist
- * @returns Where it would be, or undefined when no folder above it resolves
- */
-async function realOfMissing(
-  real: (path: string) => Promise<{ realPath?: string } | undefined>,
-  full: string,
-): Promise<string | undefined> {
-  const segments = full.split('/').filter(segment => segment !== '')
-  for (let kept = segments.length - 1; kept >= 0; kept -= 1) {
-    const above = await real(`/${segments.slice(0, kept).join('/')}`)
-    if (above?.realPath !== undefined) return `${above.realPath.replace(/\/+$/, '')}/${segments.slice(kept).join('/')}`
-  }
-  return undefined
-}
-
-/**
  * Says why a sandboxed agent's read is refused: Read and Grep by the real
  * path they reach, a Grep of a folder as reading everything in it, and Glob
  * by the folder it lists from. The user settings file may only be searched.
  * A missing path the agent could otherwise read, judged by where its nearest
- * existing folder really is, is refused as empty.
+ * existing folder really is, is refused as empty; a path that can't be looked
+ * up for any other reason is refused as out of reach.
  *
  * @param $ - The engine
  * @param tool - Read, Grep or Glob
@@ -216,22 +200,29 @@ async function realOfMissing(
  */
 async function readDenial($: EngineInterface, tool: string, input: Record<string, unknown>, where: SandboxReach): Promise<string | null> {
   const cwd = await $.session.cwd()
-  const real = async (path: string) => $.fs.stat(path, { resolve: true }).catch(() => undefined)
+  const lookUp = async (path: string) =>
+    $.fs.stat(path, { resolve: true }).catch(error => (isAbsent(error) ? ABSENT : undefined))
+  const real = async (path: string) => {
+    const found = await lookUp(path)
+    return found === ABSENT ? undefined : found
+  }
   if (tool === 'Glob') {
     const root = globRoot(input, where.dirs, cwd)
-    const stat = root === null ? undefined : await real(root)
-    if (stat?.realPath === undefined) {
-      const missing = root === null ? undefined : await realOfMissing(real, root)
+    const stat = root === null ? undefined : await lookUp(root)
+    if (root !== null && stat === ABSENT) {
+      const missing = await realOfMissing(lookUp, root)
       return missing !== undefined && isGlobAllowed(missing, where, input.pattern) ? DENIED_MISSING : DENIED_READ
     }
+    if (stat === ABSENT || stat?.realPath === undefined) return DENIED_READ
     return isGlobAllowed(stat.realPath, where, input.pattern) ? null : DENIED_READ
   }
   const full = fullPath(tool === 'Read' ? input.file_path : (input.path ?? cwd), where.dirs, cwd)
-  const stat = full === null ? undefined : await real(full)
-  if (stat?.realPath === undefined) {
-    const missing = full === null ? undefined : await realOfMissing(real, full)
-    return missing !== undefined && isReadAllowed(missing, where, tool === 'Grep') ? DENIED_MISSING : DENIED_READ
+  const stat = full === null ? undefined : await lookUp(full)
+  if (full !== null && stat === ABSENT) {
+    const missing = await realOfMissing(lookUp, full)
+    return missing !== undefined && isMissingReadable(missing, where) ? DENIED_MISSING : DENIED_READ
   }
+  if (stat === ABSENT || stat?.realPath === undefined) return DENIED_READ
   // Through a link, the settings may live elsewhere, such as a dotfiles repo,
   // so both the path as written and the file the link leads to count.
   if (tool === 'Read' && full !== null) {
@@ -502,7 +493,12 @@ function isSendTool(tool: string): boolean {
  */
 async function privateTextDenial($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<string | null> {
   if (!isSendTool(tool)) return null
-  const found = privateText(input, (await $.env.get('HOME')) ?? '/', (await $.env.get('CLAUDE_CONFIG_DIR')) || undefined)
+  // A config folder reached through a link has two paths, and the agent may
+  // come across either: reads land on the real one.
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || undefined
+  const real = config === undefined ? undefined : (await $.fs.stat(config, { resolve: true }).catch(() => undefined))?.realPath
+  const configs = [config, real].filter((path): path is string => path !== undefined)
+  const found = privateText(input, (await $.env.get('HOME')) ?? '/', configs)
   return found === null
     ? null
     : `quotient: \`${found.field}\` holds ${found.kind}, which teammates would read. Rewrite that field without it and send the call again.`

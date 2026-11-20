@@ -1,9 +1,12 @@
 import { expect, test } from 'claude-code/testing'
 
 import {
+  ABSENT,
   fullPath,
   globRoot,
+  isAbsent,
   isGlobAllowed,
+  isMissingReadable,
   isQuotientSkill,
   isQuotientTool,
   isReadAllowed,
@@ -11,6 +14,7 @@ import {
   isSettingsFile,
   isSkippedProject,
   projectFolder,
+  realOfMissing,
   safeRepos,
 } from '../hooks/sandbox'
 import type { Reach } from '../hooks/sandbox'
@@ -210,4 +214,40 @@ test("a skill counts as quotient's only with its namespace, unless the check is 
   expect(isQuotientSkill('find-solutions', ['find-solutions'], true)).toBe(true)
   expect(isQuotientSkill('other:find-solutions', ['find-solutions'], true)).toBe(false)
   expect(isQuotientSkill(undefined, ['find-solutions'], true)).toBe(false)
+})
+
+// The engine's own rejections, as a measured $.fs.stat gave them: the test
+// kit can't raise these, since a mock that throws is skipped.
+test('only a stat that failed because nothing is there counts as absent', () => {
+  expect(isAbsent(new Error('HooksError: quotient: $.fs.stat(/a/b) failed: ENOENT'))).toBe(true)
+  expect(isAbsent(new Error('HooksError: quotient: $.fs.stat(/etc/hosts/x) failed: ENOTDIR'))).toBe(true)
+  expect(isAbsent(new Error('HooksError: quotient: $.fs.stat(/var/root/x) failed: EACCES'))).toBe(false)
+  expect(isAbsent(new Error('HooksError: no implementation for fs.stat'))).toBe(false)
+  expect(isAbsent(new Error('HooksError: quotient: $.fs.stat(/ENOENT/x) failed: EACCES'))).toBe(false)
+})
+
+test('a missing path is placed by the real path of its nearest existing folder, and an unreadable folder stops the walk', async () => {
+  const lookUp = (answers: Record<string, string | typeof ABSENT | undefined>) => async (path: string) => {
+    const answer = path in answers ? answers[path] : path
+    return typeof answer === 'string' && answer !== ABSENT ? { realPath: answer } : answer
+  }
+
+  expect(await realOfMissing(lookUp({ [`${CONFIG}/agents`]: ABSENT }), `${CONFIG}/agents`)).toBe(`${CONFIG}/agents`)
+  expect(
+    await realOfMissing(lookUp({ [`${CONFIG}/skills/ln/none`]: ABSENT, [`${CONFIG}/skills/ln`]: '/home/op/.ssh' }), `${CONFIG}/skills/ln/none`),
+  ).toBe('/home/op/.ssh/none')
+  expect(
+    await realOfMissing(lookUp({ '/home/op/cfg-link/agents': ABSENT, '/home/op/cfg-link': CONFIG }), '/home/op/cfg-link/agents'),
+  ).toBe(`${CONFIG}/agents`)
+  expect(await realOfMissing(lookUp({ [`${CONFIG}/agents/x`]: ABSENT, [`${CONFIG}/agents`]: undefined }), `${CONFIG}/agents/x`)).toBe(undefined)
+})
+
+// Nothing is under a missing path, so it's judged as a single read: a missing
+// repo file isn't refused as a whole-folder search would be.
+test('a missing path the agent could read as a single path counts as empty', () => {
+  expect(isMissingReadable(`${REPO}/package.json`, REACH)).toBe(true)
+  expect(isMissingReadable(`${CONFIG}/agents`, REACH)).toBe(true)
+  expect(isMissingReadable(`${REPO}/.env`, REACH)).toBe(false)
+  expect(isMissingReadable(`${CONFIG}/todos`, REACH)).toBe(false)
+  expect(isMissingReadable('/home/op/.ssh/none', REACH)).toBe(false)
 })
