@@ -855,7 +855,7 @@ test("setup's other subagents start with their prompts as written", async ($, on
 
 for (const [name, opts] of [
   ["sessions can't be listed", { findExit: 1 }],
-  ['has no sessions in the window', { transcripts: [] }],
+  ['has no sessions in the window', { transcripts: [] as string[] }],
 ] as const) {
   test(`a teammate check whose setup ${name} is told only the config folder`, async ($, on) => {
     const seen = engine(on, opts)
