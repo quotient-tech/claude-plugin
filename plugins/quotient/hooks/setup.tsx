@@ -188,6 +188,45 @@ const NO_RUN: SetupRun = {
 // The guard reads the run's state by its key, so it checks this tag itself.
 export const RUN_SHAPE = 'run-9'
 const run = atom({ plugin: 'quotient', key: 'setupRun' } as const, NO_RUN, { shape: RUN_SHAPE })
+// The messages setup hid during a run, by content: their rows carry no id, and
+// a row is drawn again on a resize or scroll, after the run has ended. A draw
+// can't write state, so a draw adds to hiddenNow, and hooks that can write
+// keep its keys in hiddenMessages, which outlives a reload.
+const hiddenMessages = atom({ plugin: 'quotient', key: 'setupHiddenMessages' } as const, [] as string[], { shape: 'hidden-1' })
+const hiddenNow = new Set<string>()
+
+/**
+ * Names a message row by what it shows, since message rows carry no id.
+ *
+ * @param sender - The agent that sent it, or `main` for the main agent's text
+ * @param text - The row's text
+ * @returns The key
+ */
+function messageKey(sender: string, text: string): string {
+  return `${sender}\u0000${text}`
+}
+
+/**
+ * Tells whether a message row was hidden before, in this session.
+ *
+ * @param $ - The engine
+ * @param key - The message's key
+ * @returns Whether it was
+ */
+async function wasHidden($: Api, key: string): Promise<boolean> {
+  return hiddenNow.has(key) || (await read($, hiddenMessages)).includes(key)
+}
+
+/**
+ * Keeps the messages hidden so far, so they stay hidden after a reload.
+ *
+ * @param $ - The engine
+ */
+async function keepHidden($: Api): Promise<void> {
+  if (hiddenNow.size === 0) return
+  await update($, hiddenMessages, current => [...new Set([...current, ...hiddenNow])])
+}
+
 // Shared with fix.tsx, which declares it with the same key.
 const statusParts = atom(
   { plugin: 'quotient', key: 'statusParts' } as const,
@@ -1106,6 +1145,7 @@ async function showStatus($: Api): Promise<void> {
  * @param $ - The engine
  */
 async function endRun($: Api): Promise<void> {
+  await keepHidden($)
   if (!(await read($, run)).isRunning) return
   await update($, run, current => ({ ...current, isRunning: false }))
   await showStatus($)
@@ -1729,6 +1769,7 @@ export const registerSetup: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
     if (e.agentId !== undefined) return next(e)
+    await keepHidden($)
     // The summary's own turn is the only one that asks; any other ending drops it.
     const rowId = inviteRowId
     inviteRowId = null
@@ -1750,9 +1791,9 @@ export const registerSetup: Register = on => {
   on('session.end', async ($, e, next) => {
     inviteRowId = null
     await endRun($)
+    hiddenNow.clear()
     return next(e)
   }).catch(($, e, next) => next(e))
-
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, run)
     if (!current.isRunning || e.props.hasSurvey) return next(e)
@@ -1773,8 +1814,8 @@ export const registerSetup: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // A setup subagent's finished line names its Agent call or its id. Its
-  // report-back names only its sender, so that row is matched by name, and
-  // only while the run goes on.
+  // report-back names only its sender, so that row is matched by name while
+  // the run goes on, and by its sender and text on every later draw.
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     if (e.props.isExpanded) return next(e)
     const current = await read($, run)
@@ -1783,9 +1824,10 @@ export const registerSetup: Register = on => {
       task !== undefined &&
       ((task.toolUseId !== undefined && current.toolUseIds.includes(task.toolUseId)) ||
         (task.id !== undefined && current.agentIds.includes(task.id)))
-    const isReport =
-      current.isRunning && e.props.origin.kind === 'peer' && from !== undefined && current.agentNames.includes(from.name)
-    if (!isFinished && !isReport) return next(e)
+    const key = from === undefined || e.props.origin.kind !== 'peer' ? null : messageKey(from.name, e.props.text)
+    const isReport = key !== null && current.isRunning && current.agentNames.includes(from?.name ?? '')
+    if (isReport) hiddenNow.add(key)
+    if (!isFinished && !isReport && !(key !== null && (await wasHidden($, key)))) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   }).catch(($, e, next) => next(e))

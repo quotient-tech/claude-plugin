@@ -191,6 +191,7 @@ declare module 'claude-code' {
       statusParts: StatusParts
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
+      setupHiddenMessages: Shaped<string[]>
       reviewRun: Shaped<ReviewRun>
       sandboxReach: Shaped<SandboxReach | null>
       sandboxedAgents: Shaped<string[]>

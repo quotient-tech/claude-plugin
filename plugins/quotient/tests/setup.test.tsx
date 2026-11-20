@@ -2642,6 +2642,30 @@ test("rows after the run ends aren't hidden, and setup's earlier rows stay hidde
   expect(await row($, 'ToolUse', bashRow('toolu_mine'), 'toolu_mine')).toBe('')
 })
 
+test("a setup subagent's report-back stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await runTool($, { tool: 'Agent', tool_use_id: 'toolu_rev', description: 'Review batch 1', prompt: 'Review', subagent_type: 'quotient:setup-reviewer' })
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+  const during = await row($, 'UserMessage', report)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
+
+  expect(during).toBe('')
+  expect(await row($, 'UserMessage', report)).toBe('')
+  expect(await row($, 'UserMessage', { ...report, isExpanded: true })).toBe("the engine's row")
+  // A later report from an agent of the same type, with other text, is the operator's own.
+  expect(await row($, 'UserMessage', { ...report, text: 'Done reviewing the PR.' })).toBe("the engine's row")
+})
+
+test("outside setup, a report-back no setup run hid shows, even with the same text as one that was", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+
+  expect(await row($, 'UserMessage', report)).toBe("the engine's row")
+})
+
 test("a setup subagent's report-back and finished rows are hidden, and others' aren't", async ($, on) => {
   engine(on)
   engineRows(on)
