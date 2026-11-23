@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { runTool } from './fixtures/run-tool'
+
 const SERVER = 'plugin:quotient:agex'
 const INTERACTIVE = { cwd: '/repo', surface: 'terminal', isInteractive: true } as const
 const FIFTEEN_MINUTES = 15 * 60 * 1000
@@ -132,6 +134,11 @@ function engine(
     seen.copied.push(e.text)
     return { value: opts.isCopied === false ? { isCopied: false, reason: 'no-clipboard' } : { isCopied: true } } as never
   })
+  on('tool.call', () =>
+    seen.ended
+      ? { result: 'failed', text: opts.refusal ?? ADMIN_REFUSAL, isError: true as const }
+      : { result: 'ran', text: '{"recorded":1}' },
+  )
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__quotient__${e.name}` } }))
@@ -383,4 +390,37 @@ test("a trial end kept by an earlier session doesn't block this session's comman
 
   expect(ran.text).toBe(SKILL_TEXT)
   expect(seen.opened).toEqual([])
+})
+
+for (const tool of ['mcp__plugin_quotient_agex__submit_solutions', 'mcp__claude_ai_Quotient__submit_solutions']) {
+  test(`a refusal of Claude's own call opens the trial-ended pane and passes on unchanged: ${tool}`, async ($, on) => {
+    const seen = engine(on)
+
+    const called = await runTool($, { tool, answers: [] })
+
+    expect(called.isError).toBe(true)
+    expect(called.text).toBe(ADMIN_REFUSAL)
+    expect(seen.opened.map(open => open.id)).toEqual(['trial-ended'])
+    expect(seen.status.at(-1)).toBe('trial ended')
+  })
+}
+
+test("Claude's quotient call that Quotient answers changes nothing", async ($, on) => {
+  const seen = engine(on)
+  seen.ended = false
+
+  const called = await runTool($, { tool: 'mcp__plugin_quotient_agex__submit_solutions', answers: [] })
+
+  expect(called.text).toBe('{"recorded":1}')
+  expect(seen.opened).toEqual([])
+  expect(seen.status).toEqual([])
+})
+
+test("another server's refusal in the same words is not a trial end", async ($, on) => {
+  const seen = engine(on)
+
+  await runTool($, { tool: 'mcp__other__submit_solutions', answers: [] })
+
+  expect(seen.opened).toEqual([])
+  expect(seen.status).toEqual([])
 })

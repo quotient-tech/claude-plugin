@@ -19,6 +19,9 @@ type Els = Pick<Elements['terminal'] | Elements['desktop'], 'Box' | 'Text' | 'Bu
 type Ended = Exclude<TrialEndedRecord, null>
 
 const COMMANDS = ['setup', 'list-fixes', 'fix-friction', 'find-solutions', 'review-frictions'].map(name => `quotient:${name}`)
+// Quotient's tools under the plugin's own server and the connector a cloud
+// session reaches the same server through.
+const QUOTIENT_TOOLS = /^mcp__(plugin_quotient_agex|claude_ai_Quotient)__/
 const PANE = 'trial-ended'
 const TITLE = 'Quotient'
 // Asks for the widest dock; Claude Code caps a docked pane at 45% of the
@@ -200,6 +203,20 @@ export function registerTrialEnded(on: On): void {
     if (called.deny !== undefined) return called
     const ended = readTrialEnded(called.value)
     if (ended !== null) await record($, ended)
+    return called
+  }).catch(($, e, next) => next(e))
+
+  // Claude's own calls, as when it runs a quotient skill: the plugin's calls
+  // through `$.mcp.call` raise no tool.call. Each refusal opens the pane, or
+  // brings it back to the front, while the skill stops on its own words.
+  on('tool.call', { tool: QUOTIENT_TOOLS }, async ($, e, next) => {
+    const called = await next(e)
+    if (next.origin.plugin !== 'engine' || called.deny !== undefined || called.isError !== true) return called
+    const ended = readTrialEnded({ content: [{ type: 'text', text: called.text ?? '' }], isError: true })
+    if (ended === null) return called
+    await record($, ended)
+    const kept = await endedThisSession($)
+    if (kept !== null) await answerEnded($, kept)
     return called
   }).catch(($, e, next) => next(e))
 
