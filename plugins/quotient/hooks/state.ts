@@ -169,8 +169,37 @@ export function readPage(result: McpToolResult): RowsPage | null {
   }
 }
 
+// How Quotient starts every refusal once a company's trial has ended. An
+// admin's refusal ends with the Billing page's address; anyone else's names
+// no address.
+const TRIAL_ENDED = "Your company's Quotient free trial has ended, so the plugin has stopped working."
+const BILLING_URL = /https:\/\/\S+$/
+
+/** A company's ended trial, as a refusal tells it. */
+export type TrialEnded = { billingUrl: string | null }
+
 /**
- * The plugin's one status line: Claude Code keeps one per plugin, so a
+ * Tells a refusal for an ended trial apart from any other reply, and takes the
+ * Billing page's address from it when it holds a well-formed one. Nothing
+ * else of the refusal's text is kept.
+ *
+ * @param result - A Quotient tool's reply
+ * @returns The ended trial, its address null when the operator isn't an
+ *   admin or the address isn't an https link to the Billing page; null for
+ *   any other reply
+ */
+export function readTrialEnded(result: McpToolResult): TrialEnded | null {
+  const text = result.content.find(block => block.type === 'text')
+  if (!result.isError || text?.type !== 'text' || typeof text.text !== 'string') return null
+  if (!text.text.startsWith(TRIAL_ENDED)) return null
+  const found = text.text.trim().match(BILLING_URL)?.[0]
+  if (found === undefined || !URL.canParse(found)) return { billingUrl: null }
+  const url = new URL(found)
+  return { billingUrl: url.protocol === 'https:' && url.pathname === '/billing' ? url.href : null }
+}
+
+/**
+ * The plugin's one status line:Claude Code keeps one per plugin, so a
  * running setup's progress shows over the count of frictions with new
  * teammate fixes, which shows over the count of fixes implemented.
  * Claude Code puts "quotient:" in front of it, so no part names the plugin.
