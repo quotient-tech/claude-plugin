@@ -12,15 +12,17 @@ type Line = Record<string, unknown>;
  * Copies quotient's plugin to a new folder whose .mcp.json names the given
  * Quotient, so the committed .mcp.json keeps production's URL.
  * @param url - The Quotient MCP URL the copy reaches.
- * @returns The copy's folder, which the caller removes.
+ * @returns The copy's folder, to pass to `--plugin-dir`, and `remove`, which
+ *   the caller calls to delete the copy and the temporary folder that holds it.
  * @throws When the URL isn't on this machine.
  */
-export function pluginPointingAt(url: string): string {
+export function pluginPointingAt(url: string): { dir: string; remove: () => void } {
   if (!isLocalQuotient(url)) throw new Error(`the plugin copy reaches only a local Quotient, not ${url}`);
-  const copy = join(realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-plugin-"))), "quotient");
-  cpSync(PLUGIN, copy, { recursive: true });
-  writeFileSync(join(copy, ".mcp.json"), `${JSON.stringify({ mcpServers: { agex: { type: "http", url } } }, null, 2)}\n`);
-  return copy;
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-plugin-")));
+  const dir = join(root, "quotient");
+  cpSync(PLUGIN, dir, { recursive: true });
+  writeFileSync(join(dir, ".mcp.json"), `${JSON.stringify({ mcpServers: { agex: { type: "http", url } } }, null, 2)}\n`);
+  return { dir, remove: () => rmSync(root, { recursive: true, force: true }) };
 }
 
 /**

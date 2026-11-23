@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { pluginPointingAt, productionCalls, runEnv } from "../scripts/local-quotient.ts";
@@ -14,13 +14,19 @@ test("the plugin copy names the given Quotient, and the committed .mcp.json keep
   const before = readFileSync(COMMITTED_MCP, "utf8");
   const copy = pluginPointingAt("http://127.0.0.1:4321/mcp");
   try {
-    const config = JSON.parse(readFileSync(join(copy, ".mcp.json"), "utf8")) as { mcpServers: { agex: { type: string; url: string } } };
+    const config = JSON.parse(readFileSync(join(copy.dir, ".mcp.json"), "utf8")) as { mcpServers: { agex: { type: string; url: string } } };
     assert.deepEqual(config.mcpServers.agex, { type: "http", url: "http://127.0.0.1:4321/mcp" });
-    assert.ok(existsSync(join(copy, "skills/setup/SKILL.md")));
+    assert.ok(existsSync(join(copy.dir, "skills/setup/SKILL.md")));
     assert.equal(readFileSync(COMMITTED_MCP, "utf8"), before);
   } finally {
-    rmSync(copy, { recursive: true, force: true });
+    copy.remove();
   }
+});
+
+test("removing the plugin copy leaves no temporary folder behind", () => {
+  const copy = pluginPointingAt("http://127.0.0.1:4321/mcp");
+  copy.remove();
+  assert.ok(!existsSync(dirname(copy.dir)));
 });
 
 test("the plugin copy refuses any URL that isn't on this machine", () => {
@@ -40,6 +46,17 @@ test("a call to the claude.ai Quotient connector is found in any of the run's tr
   const reviewer = [calls("mcp__claude_ai_Quotient__list_teammate_frictions")];
   assert.deepEqual(productionCalls([main, reviewer]), ["mcp__claude_ai_Quotient__list_teammate_frictions"]);
 });
+
+/**
+ * Matches an error whose message names the given text, read literally, so a
+ * path's dots and other characters don't act as a pattern.
+ * @param text - The text the message must contain.
+ * @returns A validator for `assert.throws`.
+ */
+const messageNaming =
+  (text: string) =>
+  (error: unknown): boolean =>
+    error instanceof Error && error.message.includes(text);
 
 /**
  * Makes the checks' config folder in a sandbox, as the one-time sign-in leaves it.
@@ -124,7 +141,7 @@ test("a run empties the checks folder's transcripts and keeps its other files an
 test("a run refuses when the checks folder doesn't exist, since it can't be signed in", () => {
   const { root, env } = sandbox();
   try {
-    assert.throws(() => runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" }), new RegExp(`${env.XDG_CONFIG_HOME}/quotient/claude-checks`));
+    assert.throws(() => runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" }), messageNaming(`${env.XDG_CONFIG_HOME}/quotient/claude-checks`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -157,7 +174,7 @@ test("a run refuses to start without a token", () => {
   assert.throws(() => runEnv({ PATH: "/bin" }), /CLAUDE_CODE_OAUTH_TOKEN/);
   const { root, env } = sandbox();
   try {
-    assert.throws(() => runEnv(env), new RegExp(`${env.XDG_CONFIG_HOME}/quotient/check-token`));
+    assert.throws(() => runEnv(env), messageNaming(`${env.XDG_CONFIG_HOME}/quotient/check-token`));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
