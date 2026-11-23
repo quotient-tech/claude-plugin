@@ -35,7 +35,7 @@ Before anything else, call `list_teammate_frictions`. Use Quotient's tools from 
   > - In a Claude Code cloud session: connect the Quotient connector at claude.ai/customize/connectors.
   >
   > Then try again.
-- If the tool returns an error, show its text exactly and stop: don't explain it, retry, or look for the cause.
+- If the tool returns an error, show its text exactly, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: don't explain it, retry, or look for the cause.
 - Its reply is one page: `frictions`, your teammates' frictions you haven't answered yet, and `nextCursor`. If the first page has no frictions, say there are no teammates' frictions to check and stop.
 
 Work through the frictions one page at a time. Answer the frictions on the page and send the page's answers, as Answer says, before you read the next page. Then, while `nextCursor` isn't null, call `list_teammate_frictions` again with `cursor` set to that value, and work through that page the same way. Never read the next page early: a run cut short keeps the answers of every page it sent, and the frictions it didn't answer are offered again next time.
@@ -74,7 +74,7 @@ If you searched them all and weren't able to find a solution for a friction, sti
 
 When you've worked through every friction on the page, send all the page's answers in one call to `submit_solutions`, with the answers as `answers` and `source` set to `"local"`. It takes at most 100 answers, so a page with more goes in several calls of up to 100. If you don't have `submit_solutions`, send each of the page's answers with its own call to `submit_solution` instead, with the answer's fields and `source` set to `"local"`.
 
-Its reply has one entry per answer: `status` is `recorded` for a new answer, `alreadyRecorded` for one Quotient had, and `refused` for one it didn't store, with the `reason`. Don't send a refused answer again. If the call returns an error, show its text exactly and stop: the frictions you haven't answered are offered again next time.
+Its reply has one entry per answer: `status` is `recorded` for a new answer, `alreadyRecorded` for one Quotient had, and `refused` for one it didn't store, with the `reason`. Don't send a refused answer again. If the call returns an error, show its text exactly, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: the frictions you haven't answered are offered again next time.
 
 ## What teammates see
 Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:
