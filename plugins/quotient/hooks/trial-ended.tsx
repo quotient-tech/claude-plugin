@@ -10,7 +10,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { StatusParts, TrialEndedRecord } from '../types'
-import { readTrialEnded, statusLine } from './state'
+import { errorText, readTrialEnded, statusLine } from './state'
 import type { TrialEnded } from './state'
 
 type On = Parameters<Register>[0]
@@ -172,39 +172,66 @@ async function showStatus($: EngineInterface, text: string | null): Promise<void
  *
  * @param $ - The engine
  * @param ended - The ended trial, as a refusal told it
+ * @returns The trial end this session keeps
  */
-async function record($: EngineInterface, ended: TrialEnded): Promise<void> {
+async function record($: EngineInterface, ended: TrialEnded): Promise<Ended> {
   const sessionId = await $.session.id()
-  await update($, trialEnded, kept => (kept?.sessionId === sessionId ? kept : { sessionId, ...ended }))
+  const kept = await update($, trialEnded, current => (current?.sessionId === sessionId ? current : { sessionId, ...ended }))
   await showStatus($, STATUS)
+  return kept ?? { sessionId, ...ended }
 }
 
 /**
- * Adds the hooks that learn of an ended trial from Quotient's replies to the
- * plugin's own calls, and that clear a trial end an earlier session kept.
+ * Runs what a hook does once its call has gone out, so a fault there can
+ * never send the call again: it goes to the debug log only.
+ *
+ * @param $ - The engine
+ * @param what - What the hook was doing, for the log
+ * @param work - The work
+ */
+async function afterCall($: EngineInterface, what: string, work: () => Promise<void>): Promise<void> {
+  try {
+    await work()
+  } catch (error) {
+    try {
+      $.ui.log(`quotient trial ended: ${what} failed: ${errorText(error)}`, { to: 'debug' })
+    } catch {
+      // The engine went away, as when the session ends.
+    }
+  }
+}
+
+/**
+ * Adds the hooks that learn of an ended trial from Quotient's replies, keep
+ * the status line saying so, and answer every /quotient command with the pane.
  *
  * @param on - Adds the module's hooks
  */
 export function registerTrialEnded(on: On): void {
   // Only an interactive session draws the status line; elsewhere a kept trial
   // end from another session is told apart by its id when it's read. The
-  // session's id is asked for only when something was kept.
+  // session's id is asked for only when something was kept. A reload starts
+  // the same session again, and the line it drew may be gone.
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     const kept = await read($, trialEnded)
     if (kept !== null && kept.sessionId !== (await $.session.id())) {
       await update($, trialEnded, () => null)
       await showStatus($, null)
+    } else if (kept !== null) {
+      $.ui.status(statusLine(await read($, statusParts)))
     }
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // No .catch here or on the next two hooks: running the call or command again
+  // after it ran would send it twice. What runs after it can't throw.
   on('mcp.call', async ($, e, next) => {
     const called = await next(e)
     if (called.deny !== undefined) return called
     const ended = readTrialEnded(called.value)
-    if (ended !== null) await record($, ended)
+    if (ended !== null) await afterCall($, 'recording a refusal', async () => void (await record($, ended)))
     return called
-  }).catch(($, e, next) => next(e))
+  })
 
   // Claude's own calls, as when it runs a quotient skill: the plugin's calls
   // through `$.mcp.call` raise no tool.call. Each refusal opens the pane, or
@@ -214,22 +241,29 @@ export function registerTrialEnded(on: On): void {
     if (next.origin.plugin !== 'engine' || called.deny !== undefined || called.isError !== true) return called
     const ended = readTrialEnded({ content: [{ type: 'text', text: called.text ?? '' }], isError: true })
     if (ended === null) return called
-    await record($, ended)
-    const kept = await endedThisSession($)
-    if (kept !== null) await answerEnded($, kept)
+    await afterCall($, "showing Claude's refusal", async () => void (await answerEnded($, await record($, ended))))
     return called
-  }).catch(($, e, next) => next(e))
+  })
 
   // Added before every command's own hook, so it runs outside them. A trial
   // end the command's own calls find replaces what the command answered, such
-  // as list-fixes handing itself to its skill.
+  // as list-fixes handing itself to its skill. A fault before the command runs
+  // lets it run as usual.
   on('command.run', { command: COMMANDS }, async ($, e, next) => {
-    const ended = await endedThisSession($)
-    if (ended !== null) return answerEnded($, ended)
+    try {
+      const ended = await endedThisSession($)
+      if (ended !== null) return await answerEnded($, ended)
+    } catch {
+      // Falls through to the command.
+    }
     const ran = await next(e)
-    const endedNow = await endedThisSession($)
-    return endedNow === null ? ran : answerEnded($, endedNow)
-  }).catch(($, e, next) => next(e))
+    let answered: { text: string } | null = null
+    await afterCall($, 'checking after a command', async () => {
+      const endedNow = await endedThisSession($)
+      if (endedNow !== null) answered = await answerEnded($, endedNow)
+    })
+    return answered ?? ran
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)

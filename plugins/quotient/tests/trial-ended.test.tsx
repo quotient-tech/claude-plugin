@@ -58,6 +58,7 @@ function typed(command: string) {
  * @param opts.stored - Values an earlier session left in the plugin's state, by key
  * @param opts.isPlaced - Whether a pane opens
  * @param opts.isCopied - Whether a copy reaches the clipboard
+ * @param opts.callFails - Whether every call to Quotient rejects
  * @returns What the plugin did, and a switch for the trial
  */
 function engine(
@@ -69,6 +70,7 @@ function engine(
     stored?: Record<string, unknown>
     isPlaced?: boolean
     isCopied?: boolean
+    callFails?: boolean
   } = {},
 ) {
   const seen = {
@@ -86,6 +88,7 @@ function engine(
   on('mcp.connect', () => ({ value: { isConnected: true, server: SERVER } }))
   on('mcp.call', (_, e) => {
     seen.calls.push(e.tool)
+    if (opts.callFails) throw new Error('call failed')
     if (seen.ended) return { value: { content: [{ type: 'text', text: opts.refusal ?? ADMIN_REFUSAL }], isError: true } }
     const text = e.tool === 'list_my_frictions' ? (opts.page ?? EMPTY_PAGE) : '{}'
     return { value: { content: [{ type: 'text', text }], isError: false } }
@@ -423,4 +426,29 @@ test("another server's refusal in the same words is not a trial end", async ($, 
 
   expect(seen.opened).toEqual([])
   expect(seen.status).toEqual([])
+})
+
+test("after a reload, the status line still reads 'trial ended'", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    stored: {
+      trialEnded: { sessionId: 's1', billingUrl: null },
+      statusParts: { trialEnded: 'trial ended', setup: null, frictionsToFix: null, fixes: null },
+    },
+  })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.status.at(-1)).toBe('trial ended')
+})
+
+test('a call to Quotient that fails is sent once', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { callFails: true })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.calls.filter(tool => tool === 'list_my_frictions')).toEqual(['list_my_frictions'])
 })
