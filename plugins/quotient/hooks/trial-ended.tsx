@@ -258,9 +258,10 @@ export function registerTrialEnded(on: On): void {
   })
 
   // Added before every command's own hook, so it runs outside them. A trial
-  // end the command's own calls find replaces what the command answered, such
-  // as list-fixes handing itself to its skill. A fault before the command runs
-  // lets it run as usual.
+  // end the command's own calls find replaces what the command printed;
+  // Claude Code keeps a skill the command opened, so a command that calls
+  // Quotient answers a trial end itself rather than open its skill. A fault
+  // before the command runs lets it run as usual.
   on('command.run', { command: COMMANDS }, async ($, e, next) => {
     try {
       const ended = await endedThisSession($)

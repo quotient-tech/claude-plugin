@@ -384,6 +384,9 @@ test("a trial that ends mid-session is caught by the command's own call: the pan
   expect(ran.text).toBe(OPENED)
   expect(seen.opened.map(open => open.id)).toContain('trial-ended')
   expect(seen.status.at(-1)).toBe('trial ended')
+  // Claude Code drops an answer given after `next` once the command has
+  // opened its skill, so the skill must never be reached.
+  expect(seen.skills).toEqual([])
 })
 
 test("while the trial hasn't ended, a command runs as it always did", async ($, on) => {
