@@ -8,7 +8,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { FixCard, FixDrawn, FixInProgress, FrictionRow, StatusParts, ThanksDue } from '../types'
-import { callFailure, errorText, readPage, SERVER_KEY, serverFor, statusLine } from './state'
+import { SERVER_KEY, callFailure, errorText, readPage, readTrialEnded, serverFor, statusLine } from './state'
 import { plural, textError } from './text'
 
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -41,6 +41,9 @@ const DIVIDER_LENGTH = 500
 const CARD_SHOWN =
   'The card is shown to the operator. Now ask "Apply this fix?" with the AskUserQuestion tool, as the fix-friction skill says, and write nothing before it.'
 const SKIPPED_SHOWN = 'The operator sees that the fix was skipped. End your turn without writing anything else.'
+const TRIAL_ENDED_REASON = "your company's Quotient trial has ended"
+const TRIAL_ENDED_RESULT =
+  "The edit is in place, but Quotient didn't record it because your company's Quotient trial has ended. Tell the operator that in one line, then end your turn: don't retry or call any other quotient tool."
 const RECORDED_SHOWN =
   'The operator sees "Fix implemented" under your "✓ Applied." line. Now call fix_thanks with the same solutionId, and write nothing before it.'
 const THANKS_OVER = 'The operator has answered. End your turn now: write nothing else.'
@@ -222,6 +225,8 @@ async function callQuotient(
     const text = result.content.find(block => block.type === 'text')
     const reply = text?.type === 'text' ? text.text : undefined
     if (!result.isError) return { text: reply }
+    // An ended trial's refusal is told in the plugin's own words.
+    if (readTrialEnded(result) !== null) return { error: TRIAL_ENDED_REASON }
     // The reply is shown to the operator, who never sees an id.
     return { error: textError('reply', reply, [solutionId]) === undefined ? (reply as string) : 'Quotient refused it' }
   } catch (error) {
@@ -375,6 +380,10 @@ async function answerOutcome(
   }
 
   const recorded = await record($, solutionId)
+  if (typeof recorded === 'object' && recorded.error === TRIAL_ENDED_REASON) {
+    await show({ kind: 'notRecorded', error: recorded.error })
+    return { result: TRIAL_ENDED_RESULT }
+  }
   if (typeof recorded === 'object') {
     await show({ kind: 'notRecorded', error: recorded.error })
     return {
