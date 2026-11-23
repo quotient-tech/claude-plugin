@@ -128,6 +128,32 @@ export function assertLocalOnly(init: InitMessage, copy: string): void {
   }
 }
 
+/** The seed config the checks' database is seeded with, in Quotient's seed config format. */
+export const SEED_CONFIG = join(import.meta.dirname, "local-quotient.seed.json");
+
+/**
+ * The teammates whose names and emails the seed config plants in their
+ * frictions' descriptions. No skill's output may show either.
+ */
+export const PLANTED_PEOPLE = [
+  { name: "Priya Raman", email: "priya.raman@example.test" },
+  { name: "Tomás Okafor", email: "tomas.okafor@example.test" },
+  { name: "Wen Halvorsen", email: "wen.halvorsen@example.test" },
+] as const;
+
+// Quotient's ids are cuids: "c" and 24 lower-case letters and digits, which
+// always include a digit, so a long word starting with "c" doesn't match.
+const QUOTIENT_ID = /\bc(?=[a-z]*\d)[a-z0-9]{24}\b/g;
+
+/**
+ * Finds the Quotient ids in a skill's output, seeded or created by the run.
+ * @param text - The output.
+ * @returns Each id found, in order.
+ */
+export function quotientIds(text: string): string[] {
+  return text.match(QUOTIENT_ID) ?? [];
+}
+
 // The claude.ai Quotient connector always reaches production, whichever
 // Quotient the plugin's own server names.
 const CONNECTOR = /^mcp__claude_ai_Quotient__/;

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-import { assertLocalOnly, type InitMessage, pluginPointingAt, productionCalls, runEnv } from "../scripts/local-quotient.ts";
+import { assertLocalOnly, type InitMessage, PLANTED_PEOPLE, pluginPointingAt, productionCalls, quotientIds, runEnv, SEED_CONFIG } from "../scripts/local-quotient.ts";
 import { sandbox } from "./helpers/sandbox.ts";
 
 type Line = Record<string, unknown>;
@@ -252,4 +252,24 @@ test("a run is refused when a plugin other than the copy and the built-in mods l
 test("a run is refused when the copy didn't load, since a missing --plugin-dir starts claude anyway", () => {
   const noCopy = { ...LOCAL_RUN, plugins: LOCAL_RUN.plugins.filter(({ path }) => path === "builtin") };
   assert.throws(() => assertLocalOnly(noCopy, COPY), /copy/);
+});
+
+test("every teammate friction in the seed config plants one person's name and email, and every planted person is seeded", () => {
+  const config = JSON.parse(readFileSync(SEED_CONFIG, "utf8")) as { companies: { agex: { frictions: { owner: string; description: string }[] } }[] };
+  const teammates = config.companies.flatMap(({ agex }) => agex.frictions).filter(({ owner }) => owner === "teammate");
+  for (const { description } of teammates) {
+    const planted = PLANTED_PEOPLE.filter(({ name, email }) => description.includes(name) && description.includes(email));
+    assert.equal(planted.length, 1, description);
+  }
+  for (const { name } of PLANTED_PEOPLE) {
+    assert.ok(teammates.some(({ description }) => description.includes(name)), name);
+  }
+});
+
+test("a Quotient id is found in output, and UUIDs, git hashes and long words are not", () => {
+  const id = "cmh3k9x2p0001abcd1234efgh";
+  assert.deepEqual(quotientIds(`Fixed friction ${id}, see (${id}).`), [id, id]);
+  assert.deepEqual(quotientIds("session 0f6c2a1e-1234-4abc-9def-0123456789ab"), []);
+  assert.deepEqual(quotientIds("commit c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4"), []);
+  assert.deepEqual(quotientIds("counterrevolutionariesxyz and characteristically"), []);
 });

@@ -1,0 +1,26 @@
+{
+  "companies": [
+    {
+      "name": "Plugin Checks",
+      "products": ["agex"],
+      "featureFlags": ["claude_mcp"],
+      "teams": [
+        {
+          "members": { "total": 4, "contributors": 4, "myUser": { "role": "Manager", "contributor": true, "companyRole": "Admin" } },
+          "surveys": 0
+        }
+      ],
+      "agex": {
+        "trialEndsInDays": 30,
+        "inviteLink": { "emailDomain": "example.test" },
+        "frictions": [
+          { "owner": "myUser", "description": "The agent re-ran the whole test suite after every one-line change", "frequency": "5 of 30 sessions", "impact": "TIME", "severity": "medium" },
+          { "owner": "myUser", "description": "The agent asked for permission to read files it had already read", "frequency": "5 of 30 sessions", "impact": "OPERATOR_ATTENTION", "severity": "low" },
+          { "owner": "teammate", "title": "Lint ran only in CI", "description": "Priya Raman (priya.raman@example.test) saw the agent push code that failed lint, because no hook ran the linter before a commit.", "frequency": "4 of 20 sessions", "impact": "QUALITY", "severity": "medium" },
+          { "owner": "teammate", "title": "Permission prompts for read-only git commands", "description": "The agent stopped to ask before every git status and git diff. Reported by Tomás Okafor; contact tomas.okafor@example.test.", "frequency": "4 of 20 sessions", "impact": "TIME", "severity": "low" },
+          { "owner": "teammate", "title": "Tests ran without the project's filter", "description": "Per Wen Halvorsen <wen.halvorsen@example.test>, the agent ran the whole test suite when the change touched one package.", "frequency": "4 of 20 sessions", "impact": "TIME", "severity": "medium" }
+        ]
+      }
+    }
+  ]
+}
