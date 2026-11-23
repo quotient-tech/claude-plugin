@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
 import { CONFIG_FOLDER, LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
+import { SUPPORT } from "../plugins/quotient/hooks/text.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -609,7 +610,7 @@ test("setup: rates impact and severity itself, from what the reviewers report ea
 // batch's last call would leave that call's frictions unsent for good.
 test("setup: sends the batch's remaining calls, then records progress, when Quotient refuses every friction in a call, and stops on any other error", () => {
   const { body } = skill("setup");
-  assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, and stop/);
+  assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, then write .* on its own line, and stop/);
   assert.match(body, /The one exception is the `submit_frictions` error the Friction section describes/);
   const section = body.slice(body.indexOf("## Friction"), body.indexOf("## What teammates see"));
   assert.match(
@@ -783,7 +784,7 @@ test("setup: finishes the run only once every source is recorded, and takes its 
 
 test("setup: on a tool error, shows it and stops, and running setup again resumes", () => {
   const { body } = skill("setup");
-  assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, and stop/);
+  assert.match(body, /If any of these tools returns an error, show its text exactly apart from any id, then write .* on its own line, and stop/);
   assert.match(body, /Running `\/quotient:setup` again resumes this run without reviewing a recorded source again/);
 });
 
@@ -961,7 +962,7 @@ test("list-fixes: asks for the table before anything else", () => {
 });
 
 test("list-fixes: shows a tool error exactly and stops", () => {
-  assert.match(skill("list-fixes").body, /If the tool returns an error, show its text exactly and stop/);
+  assert.match(skill("list-fixes").body, /If the tool returns an error, show its text exactly, then write .* on its own line, and stop/);
 });
 
 test("list-fixes: never shows the row ids it reads a picked number's friction from", () => {
@@ -1321,4 +1322,48 @@ test("review-frictions: a daily run counts the reviews it sent and those recordi
     skill("review-frictions").body,
     /`sent`: how many reviews you sent; `withFix`: how many of those were `fixed`\./,
   );
+});
+
+// The sentence the operator sees after an error from Quotient, as a skill writes it.
+const SUPPORT_LINE = `then write "${SUPPORT}" on its own line`;
+
+for (const name of readdirSync(join(PLUGIN, "skills"))) {
+  test(`${name}: every error from Quotient it shows is followed by the support sentence`, () => {
+    const shown = [...skill(name).body.matchAll(/show its text exactly( apart from any id)?(.{0,200})/g)];
+    for (const [step, , after] of shown) {
+      assert.ok(after!.startsWith(`, ${SUPPORT_LINE}`), `no support sentence after: ${step}`);
+    }
+  });
+}
+
+test("fix-friction: a failed send_thank_you is followed by the support sentence", () => {
+  assert.match(skill("fix-friction").body, /say "The thanks couldn't be sent\." with its text exactly apart from any id, then write ".*" on its own line,/);
+});
+
+test("fix-friction: the fix_outcome and fix_thanks answers leave the support sentence to the hook that drew it", () => {
+  const body = skill("fix-friction").body;
+  const fromHooks = [
+    /If it answers that Quotient may not have recorded the fix, [^.]*\./,
+    /If it answers that the thanks couldn't be sent, [^.]*\./,
+  ];
+  for (const answer of fromHooks) {
+    const sentence = body.match(answer)?.[0];
+    assert.ok(sentence !== undefined, `missing: ${answer}`);
+    assert.ok(!sentence.includes("support@"), sentence);
+  }
+});
+
+for (const name of ["find-solutions", "review-frictions"]) {
+  test(`${name}: a daily run's failure, which nobody sees, has no support sentence`, () => {
+    const failed = skill(name).body.match(/If a Quotient tool returns an error, call `complete_daily_run`[^\n]*/)?.[0];
+    assert.ok(failed !== undefined);
+    assert.ok(!failed.includes("support@"), failed);
+  });
+}
+
+test("the skills write the support sentence in every step the spec lists", () => {
+  const counts = Object.fromEntries(
+    readdirSync(join(PLUGIN, "skills")).map((name) => [name, skill(name).body.split(SUPPORT_LINE).length - 1]),
+  );
+  assert.deepEqual(counts, { "find-solutions": 2, "fix-friction": 3, "list-fixes": 1, "review-frictions": 4, setup: 1 });
 });

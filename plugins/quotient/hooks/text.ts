@@ -1,12 +1,18 @@
 // Checks and wording that the plugin's drawings share: text the operator
-// sees must hold no id or email, and counts read naturally.
+// sees must hold no id or email, apart from Quotient's support address in
+// SUPPORT, and counts read naturally.
 
 export const MAX_TEXT = 200
 
 // Where the README explains why Claude Code may deny the plugin's calls to Quotient.
 export const DENIED_HELP = 'https://github.com/quotient-tech/claude-plugin#if-claude-code-denies-quotients-calls'
 
-// A friction id, a UUID (session ids), or an email: never shown to the operator.
+// Where the operator gets help when Quotient keeps failing. Skills can't
+// import it, so they repeat it word for word.
+export const SUPPORT = 'If this keeps happening, email support@getquotient.com.'
+
+// A friction id, a UUID (session ids), or an email: never shown to the
+// operator. The plugin's own constants, such as SUPPORT, aren't checked.
 export const FORBIDDEN = [
   /\bfr-\d{8}-\d+/,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,

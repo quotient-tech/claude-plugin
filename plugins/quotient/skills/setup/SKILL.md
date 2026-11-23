@@ -21,7 +21,7 @@ Otherwise, before anything else, call `start_setup_run`. Use Quotient's tools fr
   > - In a Claude Code cloud session: connect the Quotient connector at claude.ai/customize/connectors.
   >
   > Then try again.
-- If any of these tools returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again. The one exception is the `submit_frictions` error the Friction section describes.
+- If any of these tools returns an error, show its text exactly apart from any id, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again. The one exception is the `submit_frictions` error the Friction section describes.
 - While its `nextCursor` isn't null, call it again with `cursor` set to that value, for the rest of `reportedFrictions`.
 
 Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`, each with its stored `title`, `severity`, `impact`, `affectedSessionCount` and `frequency`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).

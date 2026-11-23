@@ -35,7 +35,7 @@ Before anything else, call `list_my_frictions` with `format: "json"` and `status
   > - In a Claude Code cloud session: connect the Quotient connector at claude.ai/customize/connectors.
   >
   > Then try again.
-- If the tool returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause.
+- If the tool returns an error, show its text exactly apart from any id, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: don't explain it, retry, or look for the cause.
 - While its `nextCursor` isn't null, call it again with `cursor` set to that value. All the pages' `frictions` together are every friction the operator has reported.
 
 A friction is open when none of its `solutions` has an `implementedAt`, and resolved otherwise. A teammate's fix, a solution whose `isOwn` is false, shows only `isOwn` and `implementedAt`: this review never reads what teammates' fixes say.
@@ -89,7 +89,7 @@ For each friction left, call `submit_friction` with these fields:
 
 Leave out `runId` and `repository`.
 
-Its reply's `status` is `new`, `updated`, or `alreadyReported` for a friction the operator already reported with the same description, which isn't stored again. If it returns an error, show its text exactly apart from any id, and stop: the next run reads these sessions again.
+Its reply's `status` is `new`, `updated`, or `alreadyReported` for a friction the operator already reported with the same description, which isn't stored again. If it returns an error, show its text exactly apart from any id, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: the next run reads these sessions again.
 
 ## Agent Experiences
 Check for the following categories for friction or room for improvement in the agent's experience:
@@ -107,7 +107,7 @@ _Use when_ the reviewer agent failed to catch a mistake.
 
 ## Open frictions
 
-Once the new frictions are sent, call `list_my_frictions` again with `format: "json"`, `status: "open"`, `notReviewedToday: true` and `source: "local"`, so it includes the frictions you just submitted and leaves out the ones already reviewed today. If it returns an error, show its text exactly apart from any id, and stop. While its `nextCursor` isn't null, call it again with `cursor` set to that value. All the pages' `frictions` together are the operator's frictions that Quotient still lists as unresolved and that weren't reviewed today. If there are none, go to the Summary.
+Once the new frictions are sent, call `list_my_frictions` again with `format: "json"`, `status: "open"`, `notReviewedToday: true` and `source: "local"`, so it includes the frictions you just submitted and leaves out the ones already reviewed today. If it returns an error, show its text exactly apart from any id, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop. While its `nextCursor` isn't null, call it again with `cursor` set to that value. All the pages' `frictions` together are the operator's frictions that Quotient still lists as unresolved and that weren't reviewed today. If there are none, go to the Summary.
 
 ## Goal
 Some of these frictions were fixed in a later session without being recorded, for example when the operator asked for a fix in conversation instead of running `/quotient:fix-friction`. Find those and record them, so they stop showing as open to the operator and to every teammate looking for fixes.
@@ -132,7 +132,7 @@ For each friction, write one review with these fields:
 - `description`: for `fixed`, what was changed and where, in 1-2 sentences; for `no-longer-applies`, why it can't happen any more; for `open`, leave it out. Teammates and the operator read it: write it as What teammates see says
 - `source`: `"local"`
 
-When you finish a friction, call `submit_review` with its review before starting the next friction. Its reply has the review's `outcome`. If it returns an error, show its text exactly apart from any id, and stop: the frictions you haven't reviewed are offered again in the next run.
+When you finish a friction, call `submit_review` with its review before starting the next friction. Its reply has the review's `outcome`. If it returns an error, show its text exactly apart from any id, then write "If this keeps happening, email support@getquotient.com." on its own line, and stop: the frictions you haven't reviewed are offered again in the next run.
 
 ## What teammates see
 Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:

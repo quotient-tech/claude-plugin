@@ -50,8 +50,15 @@ export type FixDrawn = Record<
   | { kind: 'card'; card: FixCard }
   | { kind: 'implemented' }
   | { kind: 'skipped' }
-  | { kind: 'notRecorded'; error: string }
-  | { kind: 'thanks'; isRetry: boolean; error: string | null; isNoteSent: boolean; closing: string | null }
+  | { kind: 'notRecorded'; error: string; hasSupport: boolean }
+  | {
+      kind: 'thanks'
+      isRetry: boolean
+      error: string | null
+      hasSupport: boolean
+      isNoteSent: boolean
+      closing: string | null
+    }
 >
 
 /**
