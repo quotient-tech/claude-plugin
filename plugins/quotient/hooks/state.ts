@@ -171,9 +171,11 @@ export function readPage(result: McpToolResult): RowsPage | null {
 
 // How Quotient starts every refusal once a company's trial has ended. An
 // admin's refusal ends with the Billing page's address; anyone else's names
-// no address.
+// no address. Only an address on Quotient's own domain is kept, so a reply
+// can't put another site behind the pane's Billing link.
 const TRIAL_ENDED = "Your company's Quotient free trial has ended, so the plugin has stopped working."
 const BILLING_URL = /https:\/\/\S+$/
+const QUOTIENT_DOMAIN = 'getquotient.com'
 
 /** A company's ended trial, as a refusal tells it. */
 export type TrialEnded = { billingUrl: string | null }
@@ -185,8 +187,8 @@ export type TrialEnded = { billingUrl: string | null }
  *
  * @param result - A Quotient tool's reply
  * @returns The ended trial, its address null when the operator isn't an
- *   admin or the address isn't an https link to the Billing page; null for
- *   any other reply
+ *   admin or the address isn't an https link to the Billing page on
+ *   Quotient's domain; null for any other reply
  */
 export function readTrialEnded(result: McpToolResult): TrialEnded | null {
   const text = result.content.find(block => block.type === 'text')
@@ -195,7 +197,8 @@ export function readTrialEnded(result: McpToolResult): TrialEnded | null {
   const found = text.text.trim().match(BILLING_URL)?.[0]
   if (found === undefined || !URL.canParse(found)) return { billingUrl: null }
   const url = new URL(found)
-  return { billingUrl: url.protocol === 'https:' && url.pathname === '/billing' ? url.href : null }
+  const isQuotient = url.hostname === QUOTIENT_DOMAIN || url.hostname.endsWith(`.${QUOTIENT_DOMAIN}`)
+  return { billingUrl: url.protocol === 'https:' && isQuotient && url.pathname === '/billing' ? url.href : null }
 }
 
 /**

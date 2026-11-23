@@ -149,3 +149,18 @@ test('a refusal with no text is not a trial end', () => {
 test('the trial-ended words anywhere but the start are not a trial end', () => {
   expect(readTrialEnded(textReply(`None of these frictions was recorded. ${ENDED}`))).toBeNull()
 })
+
+test("a billing link on Quotient's dev host is taken", () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: https://dev.getquotient.com/billing`)
+  expect(readTrialEnded(result)).toEqual({ billingUrl: 'https://dev.getquotient.com/billing' })
+})
+
+test("a billing link on any host outside Quotient's domain is not taken", () => {
+  for (const url of [
+    'https://evil.example/billing',
+    'https://getquotient.com.evil.example/billing',
+    'https://evilgetquotient.com/billing',
+  ]) {
+    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ billingUrl: null })
+  }
+})
