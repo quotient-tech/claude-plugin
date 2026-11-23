@@ -8,13 +8,16 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { FixCard, FixDrawn, FixInProgress, FrictionRow, StatusParts, ThanksDue } from '../types'
-import { SERVER_KEY, callFailure, errorText, readPage, readTrialEnded, serverFor, statusLine } from './state'
-import { plural, textError } from './text'
+import { callFailure, errorText, readPage, readTrialEnded, SERVER_KEY, serverFor, statusLine } from './state'
+import { SUPPORT, plural, textError } from './text'
 
 // The elements the drawings use, which the terminal and the desktop app share.
 type Els = Pick<Elements['terminal'] | Elements['desktop'], 'Box' | 'Text'>
 type Checked<T> = { value: T; error?: undefined } | { error: string; value?: undefined }
 type Answer = { deny: string } | { result: string }
+// Why a call to Quotient failed, and whether support can help: not when
+// Claude Code denied it or the operator isn't signed in.
+type Failure = { error: string; hasSupport: boolean }
 
 const FIX_COMMAND = 'quotient:fix-friction'
 const CARD_TOOL = 'mcp__quotient__fix_card'
@@ -103,7 +106,7 @@ const THANKS_SCHEMA = {
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
-const drawn = atom({ plugin: 'quotient', key: 'fixDrawn' } as const, {} as FixDrawn, { shape: 'fix-drawn-3' })
+const drawn = atom({ plugin: 'quotient', key: 'fixDrawn' } as const, {} as FixDrawn, { shape: 'fix-drawn-4' })
 const implemented = atom({ plugin: 'quotient', key: 'fixesImplemented' } as const, 0)
 // Set only when a fix is recorded, and cleared once the operator answers, so
 // a thank-you is offered once and only for a fix Quotient has recorded.
@@ -209,7 +212,8 @@ async function findServer($: EngineInterface): Promise<string | null> {
  * @param args - The tool's arguments
  * @param solutionId - The fix's id, which a reason shown to the operator must not hold
  * @returns The reply's text, or why the call failed, in words the operator
- *   can read. A failed call may still have taken effect, as when it times out
+ *   can read, and whether the failure is on Quotient's side, where support can
+ *   help. A failed call may still have taken effect, as when it times out
  *   after Quotient stored it.
  */
 async function callQuotient(
@@ -217,22 +221,25 @@ async function callQuotient(
   tool: string,
   args: Record<string, unknown>,
   solutionId: string,
-): Promise<{ text: string | undefined } | { error: string }> {
+): Promise<{ text: string | undefined } | Failure> {
   try {
     const server = await findServer($)
-    if (server === null) return { error: "you aren't signed in to Quotient" }
+    if (server === null) return { error: "you aren't signed in to Quotient", hasSupport: false }
     const result = await $.mcp.call(server, tool, args)
     const text = result.content.find(block => block.type === 'text')
     const reply = text?.type === 'text' ? text.text : undefined
     if (!result.isError) return { text: reply }
     // An ended trial's refusal is told in the plugin's own words.
-    if (readTrialEnded(result) !== null) return { error: TRIAL_ENDED_REASON }
+    if (readTrialEnded(result) !== null) return { error: TRIAL_ENDED_REASON, hasSupport: false }
     // The reply is shown to the operator, who never sees an id.
-    return { error: textError('reply', reply, [solutionId]) === undefined ? (reply as string) : 'Quotient refused it' }
+    const error = textError('reply', reply, [solutionId]) === undefined ? (reply as string) : 'Quotient refused it'
+    return { error, hasSupport: true }
   } catch (error) {
     const failure = callFailure(error)
     $.ui.log(`quotient fix: ${tool} ${failure}: ${errorText(error)}`, { to: 'debug' })
-    return { error: failure === 'denied' ? 'Claude Code denied the call to Quotient' : "Quotient couldn't be reached" }
+    return failure === 'denied'
+      ? { error: 'Claude Code denied the call to Quotient', hasSupport: false }
+      : { error: "Quotient couldn't be reached", hasSupport: true }
   }
 }
 
@@ -243,7 +250,7 @@ async function callQuotient(
  * @param solutionId - The solution's id
  * @returns `recorded`, or why the call failed
  */
-async function record($: EngineInterface, solutionId: string): Promise<'recorded' | { error: string }> {
+async function record($: EngineInterface, solutionId: string): Promise<'recorded' | Failure> {
   const reply = await callQuotient($, 'mark_solution_implemented', { solutionId }, solutionId)
   return 'error' in reply ? reply : 'recorded'
 }
@@ -276,11 +283,11 @@ async function sendThanks(
   $: EngineInterface,
   solutionId: string,
   message: string | null,
-): Promise<'sent' | { error: string }> {
+): Promise<'sent' | Failure> {
   const args = message === null ? { solutionId } : { solutionId, message }
   const reply = await callQuotient($, 'send_thank_you', args, solutionId)
   if ('error' in reply) return reply
-  return isThanked(reply.text) ? 'sent' : { error: "Quotient's reply couldn't be read" }
+  return isThanked(reply.text) ? 'sent' : { error: "Quotient's reply couldn't be read", hasSupport: true }
 }
 
 /**
@@ -381,11 +388,11 @@ async function answerOutcome(
 
   const recorded = await record($, solutionId)
   if (typeof recorded === 'object' && recorded.error === TRIAL_ENDED_REASON) {
-    await show({ kind: 'notRecorded', error: recorded.error })
+    await show({ kind: 'notRecorded', error: recorded.error, hasSupport: false })
     return { result: TRIAL_ENDED_RESULT }
   }
   if (typeof recorded === 'object') {
-    await show({ kind: 'notRecorded', error: recorded.error })
+    await show({ kind: 'notRecorded', error: recorded.error, hasSupport: recorded.hasSupport })
     return {
       result: `Quotient may not have recorded the fix: ${recorded.error}. Tell the operator the edit is in place but may not be recorded, so the fix will be offered again if it wasn't, and offer to retry. On yes, call fix_outcome again with the same solution.`,
     }
@@ -486,12 +493,13 @@ async function answerThanks(
   }
   // A retry resends the choice the operator already made.
   const isRetry = due.message !== undefined
-  const show = async (shown: { error?: string; isNoteSent?: boolean; closing?: string | null } = {}) => {
+  const show = async (shown: { failure?: Failure; isNoteSent?: boolean; closing?: string | null } = {}) => {
     if (toolUseId === undefined) return
     const row = {
       kind: 'thanks',
       isRetry,
-      error: shown.error ?? null,
+      error: shown.failure?.error ?? null,
+      hasSupport: shown.failure?.hasSupport ?? false,
       isNoteSent: shown.isNoteSent ?? false,
       closing: shown.closing ?? null,
     } as const
@@ -512,7 +520,7 @@ async function answerThanks(
   const sent = await sendThanks($, solutionId, message)
   if (sent !== 'sent') {
     await update($, thanksDue, () => ({ solutionId, message }))
-    await show({ error: sent.error })
+    await show({ failure: sent })
     return {
       result: `The thanks couldn't be sent: ${sent.error}. Tell the operator, and offer to retry. On yes, call fix_thanks again with the same solutionId.`,
     }
@@ -541,6 +549,7 @@ function thanksTree({ Box, Text }: Els, shown: Extract<FixDrawn[string], { kind:
       )}
       {!shown.isRetry && <Text dimColor>  They'll see it the next time they send Claude a prompt.</Text>}
       {shown.error !== null && <Text color="warning">{`  The thanks couldn't be sent: ${shown.error}`}</Text>}
+      {shown.hasSupport && <Text dimColor>{`  ${SUPPORT}`}</Text>}
       {shown.isNoteSent && (
         <Text>
           {'  '}
@@ -613,6 +622,7 @@ function outcomeTree({ Box, Text }: Els, shown: Exclude<FixDrawn[string], { kind
           <Text color="warning">●</Text> <Text bold>Fix applied, may not be recorded</Text>
         </Text>
         <Text dimColor>{`  ${shown.error}`}</Text>
+        {shown.hasSupport && <Text dimColor>{`  ${SUPPORT}`}</Text>}
       </Box>
     )
   }

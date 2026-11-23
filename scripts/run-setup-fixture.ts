@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { FIXTURE_ROOT, PROJECT } from "./build-setup-fixture.ts";
 import { measureSetup, readSession } from "./measure-setup.ts";
 
-const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
+export const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 const WINDOW_END = "2020-01-15";
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//;
 const AGEX = "mcp__plugin_quotient_agex__";

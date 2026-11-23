@@ -148,6 +148,44 @@ export function isSecretPath(segments: readonly string[]): boolean {
   return lower.some(one => SECRET_FOLDERS.includes(one)) || SECRET_FILES.some(pattern => pattern.test(name))
 }
 
+// What looking up a path answers when nothing is there.
+export const ABSENT = 'absent'
+
+/**
+ * Tells whether a failed stat failed because nothing is at the path. The
+ * engine's error ends with the system's code, such as `failed: ENOENT`.
+ *
+ * @param error - What `$.fs.stat` rejected with
+ * @returns Whether the path, or a folder above it, doesn't exist
+ */
+export function isAbsent(error: unknown): boolean {
+  return /: (ENOENT|ENOTDIR)$/.test(String(error))
+}
+
+/**
+ * Finds where a missing path would really be: the real path of its nearest
+ * folder that exists, with the missing rest added back, so a link above it
+ * counts as it would for a path that exists.
+ *
+ * @param lookUp - Resolves a path, or answers ABSENT when nothing is there and undefined on any other failure
+ * @param full - An absolute path from fullPath that doesn't exist
+ * @returns Where it would be, or undefined when a folder above it can't be looked up for another reason than absence
+ */
+export async function realOfMissing(
+  lookUp: (path: string) => Promise<{ realPath?: string } | typeof ABSENT | undefined>,
+  full: string,
+): Promise<string | undefined> {
+  const segments = full.split('/').filter(segment => segment !== '')
+  for (let kept = segments.length - 1; kept >= 0; kept -= 1) {
+    const above = await lookUp(`/${segments.slice(0, kept).join('/')}`)
+    if (above === ABSENT) continue
+    // A folder that can't be read, such as one without permission, isn't
+    // empty: the walk stops there rather than judging by a folder above it.
+    return above?.realPath === undefined ? undefined : `${above.realPath.replace(/\/+$/, '')}/${segments.slice(kept).join('/')}`
+  }
+  return undefined
+}
+
 /**
  * Tells whether a sandboxed agent may read a path.
  *
@@ -166,6 +204,19 @@ export function isReadAllowed(full: string, reach: Reach, isWhole: boolean): boo
     const segments = under(full, repo)
     return segments !== null && segments.length > 0 && !isSecretPath(segments)
   })
+}
+
+/**
+ * Tells whether a missing path is one a sandboxed agent could read if it
+ * existed. Nothing is under a missing path, so it's judged as a single read,
+ * never as a search of everything in a folder.
+ *
+ * @param missing - Where the missing path would really be, from realOfMissing
+ * @param reach - Where the agent may read
+ * @returns Whether it counts as an empty part of what the agent may read
+ */
+export function isMissingReadable(missing: string, reach: Reach): boolean {
+  return isReadAllowed(missing, reach, false)
 }
 
 /**

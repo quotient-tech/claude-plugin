@@ -45,6 +45,7 @@ Issues in Quotient's hosted service can be reported to the same address.
     - ids.
 - **quotient checks the text before it leaves your machine.** It refuses to send a friction, review or fix whose text holds any of these:
   - a full path in a home folder;
+  - the path of your Claude Code config folder, when `CLAUDE_CONFIG_DIR` sets one;
   - the name of a Claude Code project folder;
   - an email address;
   - a common secret format, such as a GitHub, AWS or Slack token, a private key, or an `sk-` API key.

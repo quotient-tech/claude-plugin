@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { SUPPORT } from '../hooks/text'
 import type { FrictionRow } from '../types'
 import { denial } from './fixtures/denial'
 import { runTool } from './fixtures/run-tool'
@@ -84,7 +85,7 @@ function engine(
     // One answer per time the thanks question is asked; null dismisses it.
     thanks?: string | null | (string | null)[]
     isAway?: boolean
-    sent?: ({ text: string; isError: boolean } | 'throw')[]
+    sent?: ({ text: string; isError: boolean } | 'throw' | 'deny')[]
     openPanes?: string[]
     isNoneLeft?: boolean
     isAllDoneAfter?: boolean
@@ -154,6 +155,7 @@ function engine(
       seen.thanks.push(e.args)
       const reply = sends.shift() ?? { text: SENT_REPLY, isError: false }
       if (reply === 'throw') throw new Error('socket hang up')
+      if (reply === 'deny') return { deny: denial(e.server, e.tool) }
       return { value: { content: [{ type: 'text', text: reply.text }], isError: reply.isError } }
     }
     // The fix-status part reads the same tool as json on its own, and the
@@ -584,6 +586,8 @@ test("a failed record says the fix may not be recorded, asks the model to offer 
   expect(called.result).toMatch(/^Quotient may not have recorded the fix: Quotient couldn't complete this request/)
   expect(called.result).toMatch(/offer to retry/)
   expect(shown).toContain('Fix applied, may not be recorded')
+  expect(shown).toContain(SUPPORT)
+  expect(called.result).not.toContain('support@')
   expect(shown).not.toContain('Fix implemented')
   expect(seen.status).toEqual([])
   // The row stays outlined until the fix is recorded or skipped.
@@ -599,6 +603,7 @@ test("a failed record whose reply names the fix's id shows no id", async ($, on)
   expect(called.result).not.toContain('s-1')
   expect(shown).not.toContain('s-1')
   expect(shown).toContain('Quotient refused it')
+  expect(shown).toContain(SUPPORT)
 })
 
 test("a record refused because the trial ended says so in the plugin's own words, and offers no retry", async ($, on) => {
@@ -623,6 +628,7 @@ test('a record Claude Code denied says so in the row, and the debug log has the 
   const shown = await drawRow($, 'ToolUse', OUTCOME_TOOL, 'toolu_denied')
 
   expect(shown).toContain('Claude Code denied the call to Quotient')
+  expect(shown).not.toContain('support@')
   expect(called.result).toMatch(/^Quotient may not have recorded the fix: Claude Code denied the call to Quotient/)
   expect(shown).not.toContain('refused:')
   expect(String(called.result)).not.toContain('refused:')
@@ -636,6 +642,7 @@ test("a record that rejects otherwise says Quotient couldn't be reached, and the
   const shown = await drawRow($, 'ToolUse', OUTCOME_TOOL, 'toolu_failed')
 
   expect(shown).toContain("Quotient couldn't be reached")
+  expect(shown).toContain(SUPPORT)
   expect(seen.debugged.filter(line => line.startsWith('quotient fix: mark_solution_implemented failed: '))).toHaveLength(1)
 })
 
@@ -856,23 +863,37 @@ test('a fix already thanked counts as sent', async ($, on) => {
   expect(seen.toasts).toEqual(['High-five sent'])
 })
 
-const FAILED_SENDS: { name: string; sent?: { text: string; isError: boolean } | 'throw'; signedOutAfter?: boolean; reason: string }[] = [
+const FAILED_SENDS: {
+  name: string
+  sent?: { text: string; isError: boolean } | 'throw' | 'deny'
+  signedOutAfter?: boolean
+  reason: string
+  hasSupport: boolean
+}[] = [
   {
     name: 'an error reply',
     sent: { text: "Quotient couldn't complete this request right now.", isError: true },
     reason: "Quotient couldn't complete this request right now.",
+    hasSupport: true,
   },
   {
     name: "an error reply naming the fix's id",
     sent: { text: "None of your frictions has a teammate's fix with the id s-1.", isError: true },
     reason: 'Quotient refused it',
+    hasSupport: true,
   },
-  { name: 'a call that throws', sent: 'throw', reason: "Quotient couldn't be reached" },
-  { name: 'a reply that cannot be read', sent: { text: 'ok', isError: false }, reason: "Quotient's reply couldn't be read" },
-  { name: 'being signed out', signedOutAfter: true, reason: "you aren't signed in to Quotient" },
+  { name: 'a call that throws', sent: 'throw', reason: "Quotient couldn't be reached", hasSupport: true },
+  {
+    name: 'a reply that cannot be read',
+    sent: { text: 'ok', isError: false },
+    reason: "Quotient's reply couldn't be read",
+    hasSupport: true,
+  },
+  { name: 'a call Claude Code denied', sent: 'deny', reason: 'Claude Code denied the call to Quotient', hasSupport: false },
+  { name: 'being signed out', signedOutAfter: true, reason: "you aren't signed in to Quotient", hasSupport: false },
 ]
 
-for (const { name, sent, signedOutAfter, reason } of FAILED_SENDS) {
+for (const { name, sent, signedOutAfter, reason, hasSupport } of FAILED_SENDS) {
   test(`after ${name}, the thanks isn't confirmed, no id is shown, and the model offers a retry`, async ($, on) => {
     const seen = engine(on, { thanks: HIGH_FIVE, ...(sent === undefined ? {} : { sent: [sent] }) })
     await recordFix($)
@@ -888,6 +909,10 @@ for (const { name, sent, signedOutAfter, reason } of FAILED_SENDS) {
     expect(called.result).not.toContain('s-1')
     expect(shown).toContain(`The thanks couldn't be sent: ${reason}`)
     expect(shown).not.toContain('s-1')
+    // Only a failure on Quotient's side points to support, and only once: the
+    // row shows it, so the model isn't asked to repeat it.
+    expect(shown.includes(SUPPORT)).toBe(hasSupport)
+    expect(called.result).not.toContain('support@')
     expect(seen.toasts).toEqual([])
   })
 }

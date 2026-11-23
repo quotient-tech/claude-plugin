@@ -5,7 +5,7 @@
 import type { Hook, McpToolResult, Register } from 'claude-code'
 
 import { isSkippedProject } from './sandbox'
-import { projectFolders, transcriptFindArgs } from './sessions'
+import { CONFIG_FOLDER, projectFolders, transcriptFindArgs } from './sessions'
 import { callFailure, errorText, SERVER_KEY, serverFor } from './state'
 import { DENIED_HELP } from './text'
 
@@ -86,6 +86,7 @@ export function sideLoadedRoot(root: string, config: string): string | null {
  * @param kind - Which daily run
  * @param runId - The claimed run's id
  * @param projects - The project folders the prompt names after the run id
+ * @param config - The Claude Code config folder the prompt names on its own line
  * @param pluginDir - The plugin folder the run loads with `--plugin-dir`, or
  *   null to load the installed plugin
  * @returns The argument list for `$.process.run`
@@ -96,11 +97,13 @@ export function launchArgs(
   kind: Kind,
   runId: string,
   projects: readonly string[],
+  config: string,
   pluginDir: string | null,
 ): string[] {
   // Claude Code names a server's tools mcp__<server>__<tool>, with each
   // character other than a letter, digit, _ or - in the server's name as _.
   const prefix = `mcp__${server.replace(/[^A-Za-z0-9_-]/g, '_')}__`
+  const named = [`/quotient:${kind} daily ${runId}`, ...projects].join(' ')
   return [
     'sh',
     '-c',
@@ -109,7 +112,7 @@ export function launchArgs(
     folder,
     'claude',
     '-p',
-    [`/quotient:${kind} daily ${runId}`, ...projects].join(' '),
+    `${named}\n\n${CONFIG_FOLDER} \`${config}\``,
     '--tools',
     'Read',
     'Grep',
@@ -137,12 +140,12 @@ export function launchArgs(
  * can't find these itself.
  *
  * @param $ - The engine
+ * @param config - The operator's Claude Code config folder
  * @param home - The operator's home folder
  * @param runs - The daily runs' own folder
  * @returns The folders' names under `projects/`, sorted, or none when they can't be listed
  */
-async function recentProjects($: Api, home: string, runs: string): Promise<string[]> {
-  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`
+async function recentProjects($: Api, config: string, home: string, runs: string): Promise<string[]> {
   const dirs = { config, home, runs }
   try {
     const found = await $.process.run(transcriptFindArgs(`${config}/projects`, { days: RECENT_DAYS }), { timeoutMs: 30_000 })
@@ -173,14 +176,15 @@ async function startRun(
   kind: Kind,
   runId: string,
   home: string,
+  config: string,
   pluginDir: string | null,
 ): Promise<boolean> {
   try {
-    const projects = kind === 'find-solutions' ? await recentProjects($, home, folder) : []
+    const projects = kind === 'find-solutions' ? await recentProjects($, config, home, folder) : []
     // Marks the run's session as a background run, so its requests aren't
     // counted as the operator's own, and names its kind, so guard.ts holds
     // it to that kind's tools and reads.
-    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects, pluginDir), {
+    const launched = await $.process.run(launchArgs(folder, server, kind, runId, projects, config, pluginDir), {
       env: { QUOTIENT_DAILY_RUN: '1', QUOTIENT_DAILY_RUN_KIND: kind },
     })
     if (launched.exitCode === 0) return true
@@ -216,7 +220,8 @@ async function claimRuns($: Api): Promise<void> {
   }
   const server = serverFor(connected)
   if (server === null) return
-  const pluginDir = sideLoadedRoot($.plugin.root, (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`)
+  const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${home}/.claude`
+  const pluginDir = sideLoadedRoot($.plugin.root, config)
 
   // Both claims go out at once, so both are sent while the session's start
   // still waits, and each run starts as soon as its own claim returns, so a
@@ -234,7 +239,7 @@ async function claimRuns($: Api): Promise<void> {
         if (failure === 'denied') isDenied = true
         return { kind, isStarted: false }
       }
-      return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId, home, pluginDir)) }
+      return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId, home, config, pluginDir)) }
     }),
   )
   const started: Kind[] = claims.filter(claim => claim.isStarted).map(claim => claim.kind)
