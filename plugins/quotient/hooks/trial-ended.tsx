@@ -77,7 +77,7 @@ async function endedThisSession($: EngineInterface): Promise<Ended | null> {
  * @returns The lines, joined
  */
 function endedText(ended: Ended): string {
-  const next = ended.billingUrl === null ? [MEMBER_NEXT, MEMBER_NOTE] : [`${ADMIN_NEXT} ${ended.billingUrl}`]
+  const next = !ended.isAdmin ? [MEMBER_NEXT, MEMBER_NOTE] : [ended.billingUrl === null ? ADMIN_NEXT : `${ADMIN_NEXT} ${ended.billingUrl}`]
   return [`${HEADING}.`, STOPPED, KEPT, ...next].join(' ')
 }
 
@@ -282,6 +282,7 @@ export function registerTrialEnded(on: On): void {
     const { Box, Text, Link } = els
     const columns = e.props.bodyColumns
     const ended = await read($, trialEnded)
+    const isAdmin = ended?.isAdmin ?? false
     const billingUrl = ended?.billingUrl ?? null
     const wasCopied = await read($, copied)
     const close = async () => {
@@ -306,8 +307,8 @@ export function registerTrialEnded(on: On): void {
           <Text dimColor>{KEPT}</Text>
         </Box>
         <Box flexDirection="column" marginTop={1}>
-          <Text>{billingUrl === null ? MEMBER_NEXT : ADMIN_NEXT}</Text>
-          {billingUrl === null && <Text dimColor>{MEMBER_NOTE}</Text>}
+          <Text>{isAdmin ? ADMIN_NEXT : MEMBER_NEXT}</Text>
+          {!isAdmin && <Text dimColor>{MEMBER_NOTE}</Text>}
         </Box>
         <Box flexDirection="column" marginTop={1} flexGrow={1}>
           {billingUrl !== null &&

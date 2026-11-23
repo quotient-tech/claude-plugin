@@ -111,27 +111,27 @@ function textReply(text: string, isError = true) {
 
 test("an admin's trial-ended refusal gives the billing link", () => {
   const result = textReply(`${ENDED} Upgrade your plan to use it again: https://app.getquotient.com/billing`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: 'https://app.getquotient.com/billing' })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: 'https://app.getquotient.com/billing' })
 })
 
 test("a non-admin's trial-ended refusal gives no billing link", () => {
   const result = textReply(`${ENDED} Ask a Quotient admin at your company to upgrade its plan.`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: null })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: false, billingUrl: null })
 })
 
-test('a billing link over plain http is not taken', () => {
+test("a billing link over plain http is not taken, and the refusal is still an admin's", () => {
   const result = textReply(`${ENDED} Upgrade your plan to use it again: http://app.getquotient.com/billing`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: null })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
 })
 
 test('a link to any page but billing is not taken', () => {
   const result = textReply(`${ENDED} Upgrade your plan to use it again: https://app.getquotient.com/frictions`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: null })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
 })
 
 test('a malformed link is not taken', () => {
   const result = textReply(`${ENDED} Upgrade your plan to use it again: https://`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: null })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
 })
 
 test('a successful reply that starts with the same words is not a trial end', () => {
@@ -152,7 +152,7 @@ test('the trial-ended words anywhere but the start are not a trial end', () => {
 
 test("a billing link on Quotient's dev host is taken", () => {
   const result = textReply(`${ENDED} Upgrade your plan to use it again: https://dev.getquotient.com/billing`)
-  expect(readTrialEnded(result)).toEqual({ billingUrl: 'https://dev.getquotient.com/billing' })
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: 'https://dev.getquotient.com/billing' })
 })
 
 test("a billing link on any host outside Quotient's domain is not taken", () => {
@@ -161,6 +161,21 @@ test("a billing link on any host outside Quotient's domain is not taken", () => 
     'https://getquotient.com.evil.example/billing',
     'https://evilgetquotient.com/billing',
   ]) {
-    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ billingUrl: null })
+    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ isAdmin: true, billingUrl: null })
   }
+})
+
+test("a billing link on this machine is taken, so a local Quotient's admin gets one", () => {
+  for (const url of ['http://localhost:3000/billing', 'http://127.0.0.1:3000/billing', 'https://localhost/billing']) {
+    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ isAdmin: true, billingUrl: url })
+  }
+})
+
+test('a host that only starts like this machine is not taken', () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: http://localhost.evil.example/billing`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
+})
+
+test("a trial end that ends in neither way is not an admin's", () => {
+  expect(readTrialEnded(textReply(ENDED))).toEqual({ isAdmin: false, billingUrl: null })
 })

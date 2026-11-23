@@ -212,7 +212,7 @@ test("a trial end an earlier session saw doesn't carry over: the next session cl
     sessionId: 's2',
     page: ONE_FIX_PAGE,
     stored: {
-      trialEnded: { sessionId: 's1', billingUrl: null },
+      trialEnded: { sessionId: 's1', isAdmin: false, billingUrl: null },
       statusParts: { trialEnded: 'trial ended', setup: null, frictionsToFix: null, fixes: null },
     },
   })
@@ -313,6 +313,20 @@ test("anyone else's pane says to ask a company admin, and offers only Close", as
   expect(shown).not.toContain('↑↓')
 })
 
+test("an admin whose Billing link isn't Quotient's keeps the admin's words, and is offered only Close", async ($, on) => {
+  await endedSession($, on, { refusal: `${ENDED} Upgrade your plan to use it again: https://evil.example/billing` })
+  await $.command.run(typed('quotient:list-fixes'))
+
+  const { shown } = await drawPane($)
+
+  expect(shown).toContain('Upgrade on the Billing page to turn it back on.')
+  expect(shown).toContain('1. Close')
+  expect(shown).toContain('Enter select · Esc close')
+  expect(shown).not.toContain('Ask a company admin')
+  expect(shown).not.toContain('Open Billing')
+  expect(shown).not.toContain('evil.example')
+})
+
 test("Enter on Open Billing copies the Billing page's address and says so", async ($, on) => {
   const seen = await endedSession($, on)
   await $.command.run(typed('quotient:list-fixes'))
@@ -387,7 +401,7 @@ test("while the trial hasn't ended, a command runs as it always did", async ($, 
 })
 
 test("a trial end kept by an earlier session doesn't block this session's commands", async ($, on) => {
-  const seen = engine(on, { sessionId: 's2', stored: { trialEnded: { sessionId: 's1', billingUrl: null } } })
+  const seen = engine(on, { sessionId: 's2', stored: { trialEnded: { sessionId: 's1', isAdmin: false, billingUrl: null } } })
   seen.ended = false
 
   const ran = await $.command.run(typed('quotient:find-solutions'))
@@ -433,7 +447,7 @@ test("after a reload, the status line still reads 'trial ended'", async ($, on) 
   const clock = mock.clock(on)
   const seen = engine(on, {
     stored: {
-      trialEnded: { sessionId: 's1', billingUrl: null },
+      trialEnded: { sessionId: 's1', isAdmin: false, billingUrl: null },
       statusParts: { trialEnded: 'trial ended', setup: null, frictionsToFix: null, fixes: null },
     },
   })

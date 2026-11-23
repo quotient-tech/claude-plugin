@@ -82,10 +82,11 @@ export type StatusParts = {
 
 /**
  * The session in which Quotient first refused a call because the company's
- * trial had ended, and the Billing page's address when the operator is an
- * admin; null when no session has seen it.
+ * trial had ended, whether the operator is an admin, and the Billing page's
+ * address when the refusal held one the pane may link to; null when no
+ * session has seen it.
  */
-export type TrialEndedRecord = { sessionId: string; billingUrl: string | null } | null
+export type TrialEndedRecord = { sessionId: string; isAdmin: boolean; billingUrl: string | null } | null
 
 /** The kind of harm a friction did, as Quotient stores it. */
 export type FrictionImpact = 'SAFETY' | 'QUALITY' | 'BLOCKED' | 'OPERATOR_ATTENTION' | 'COST' | 'TIME'
