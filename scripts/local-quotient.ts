@@ -101,7 +101,7 @@ function savedToken(base: NodeJS.ProcessEnv): string {
 export type InitMessage = {
   type: "system";
   subtype: "init";
-  mcp_servers: { name: string; status: string }[];
+  mcp_servers: { name: string; status: string; source?: string }[];
   plugins: { name: string; path: string }[];
 };
 
@@ -112,13 +112,18 @@ const BUILT_IN = "builtin";
  * Fails a check whose run could have reached anything but the local Quotient.
  * @param init - The run's init message.
  * @param copy - The plugin copy's folder, as `--plugin-dir` named it.
- * @throws When a claude.ai server loaded, a plugin other than the copy and
+ * @throws When a claude.ai server or one no plugin brought loaded, a plugin other than the copy and
  *   Claude Code's built-in mods loaded, the copy didn't load, or
  *   `plugin:quotient:agex` isn't connected.
  */
 export function assertLocalOnly(init: InitMessage, copy: string): void {
   const connector = init.mcp_servers.find(({ name }) => name.startsWith("claude.ai"));
   if (connector) throw new Error(`the run loaded ${connector.name}, which reaches production`);
+  // Plugins are limited to the copy and the built-in mods below, so a server
+  // that came any other way, such as one set up in the config folder, could
+  // reach anywhere.
+  const direct = init.mcp_servers.filter(({ source }) => source !== "plugin");
+  if (direct.length > 0) throw new Error(`the run loaded MCP servers no plugin brought: ${direct.map(({ name }) => name).join(", ")}`);
   const others = init.plugins.filter(({ path }) => path !== copy && path !== BUILT_IN);
   if (others.length > 0) throw new Error(`the run loaded plugins beside the copy: ${others.map(({ name, path }) => `${name} (${path})`).join(", ")}`);
   if (!init.plugins.some(({ path }) => path === copy)) throw new Error(`the plugin copy at ${copy} didn't load`);
@@ -143,7 +148,8 @@ export const PLANTED_PEOPLE = [
 
 // Quotient's ids are cuids: "c" and 24 lower-case letters and digits, which
 // always include a digit, so a long word starting with "c" doesn't match.
-const QUOTIENT_ID = /\bc(?=[a-z]*\d)[a-z0-9]{24}\b/g;
+// Any character but a letter or digit ends one, including Markdown's `_`.
+const QUOTIENT_ID = /(?<![A-Za-z0-9])c(?=[a-z]*\d)[a-z0-9]{24}(?![A-Za-z0-9])/g;
 
 /**
  * Finds the Quotient ids in a skill's output, seeded or created by the run.

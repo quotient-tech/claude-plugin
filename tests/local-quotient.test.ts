@@ -218,8 +218,8 @@ const LOCAL_RUN: InitMessage = {
   type: "system",
   subtype: "init",
   mcp_servers: [
-    { name: "plugin:quotient:agex", status: "connected" },
-    { name: "quotient", status: "connected" },
+    { name: "plugin:quotient:agex", status: "connected", source: "plugin" },
+    { name: "quotient", status: "connected", source: "plugin" },
   ],
   plugins: [
     { name: "quotient", path: COPY },
@@ -233,15 +233,20 @@ test("a run whose only Quotient is the plugin copy's local server is trusted", (
 });
 
 test("a run is refused when the copy's server didn't connect, as when the folder isn't signed in", () => {
-  const failed = { ...LOCAL_RUN, mcp_servers: [{ name: "plugin:quotient:agex", status: "failed" }] };
+  const failed = { ...LOCAL_RUN, mcp_servers: [{ name: "plugin:quotient:agex", status: "failed", source: "plugin" }] };
   assert.throws(() => assertLocalOnly(failed, COPY), /plugin:quotient:agex.*failed/);
-  const missing = { ...LOCAL_RUN, mcp_servers: [{ name: "quotient", status: "connected" }] };
+  const missing = { ...LOCAL_RUN, mcp_servers: [{ name: "quotient", status: "connected", source: "plugin" }] };
   assert.throws(() => assertLocalOnly(missing, COPY), /plugin:quotient:agex/);
 });
 
 test("a run is refused when a claude.ai server loaded, since the connector reaches production", () => {
   const withConnector = { ...LOCAL_RUN, mcp_servers: [...LOCAL_RUN.mcp_servers, { name: "claude.ai Quotient", status: "connected" }] };
   assert.throws(() => assertLocalOnly(withConnector, COPY), /claude\.ai Quotient/);
+});
+
+test("a run is refused when an MCP server loaded that no plugin brought, since it could reach anywhere", () => {
+  const configured = { ...LOCAL_RUN, mcp_servers: [...LOCAL_RUN.mcp_servers, { name: "quotient-prod", status: "connected", source: "user" }] };
+  assert.throws(() => assertLocalOnly(configured, COPY), /quotient-prod/);
 });
 
 test("a run is refused when a plugin other than the copy and the built-in mods loaded", () => {
@@ -269,6 +274,8 @@ test("every teammate friction in the seed config plants one person's name and em
 test("a Quotient id is found in output, and UUIDs, git hashes and long words are not", () => {
   const id = "cmh3k9x2p0001abcd1234efgh";
   assert.deepEqual(quotientIds(`Fixed friction ${id}, see (${id}).`), [id, id]);
+  assert.deepEqual(quotientIds(`_${id}_ and **${id}**`), [id, id]);
+  assert.deepEqual(quotientIds(`x${id} ${id}9`), []);
   assert.deepEqual(quotientIds("session 0f6c2a1e-1234-4abc-9def-0123456789ab"), []);
   assert.deepEqual(quotientIds("commit c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4"), []);
   assert.deepEqual(quotientIds("counterrevolutionariesxyz and characteristically"), []);
