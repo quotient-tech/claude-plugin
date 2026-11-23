@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { readFrontmatter } from "./helpers/frontmatter.ts";
 import { runAsync, sandbox } from "./helpers/sandbox.ts";
-import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
+import { CONFIG_FOLDER, LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from "../plugins/quotient/hooks/sessions.ts";
 
 const PLUGIN = join(import.meta.dirname, "../plugins/quotient");
 
@@ -144,7 +144,7 @@ const OPERATOR_RULES = [
 const TEAMMATE_RULES = [
   "## What teammates see",
   "Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:",
-  "- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.",
+  "- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Name a file in the Claude Code config folder by what it is, such as \"the Claude Code user settings (`settings.json` in the config folder)\", never by the config folder's path. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.",
   "- Refer to Claude Code's project folders, and the transcripts and auto-memories in them, in general terms, such as \"this repo's auto-memory\". Never write a project folder's name or its path.",
   "- Describe the app's own code by what it does, such as \"the billing API's request handler\", never by its class, function, table or other names.",
   "- Never write anyone's name, username, email or handle: not the operator's, not a teammate's, not anyone a session mentions.",
@@ -324,7 +324,7 @@ test("find-solutions: sends each page's answers in one call, including frictions
 
 test("find-solutions: searches the user settings and never reads them whole", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /Search `~\/\.claude\/settings\.json` with Grep for what a friction needs/);
+  assert.match(body, /Search `<config>\/settings\.json` with Grep for what a friction needs/);
   assert.match(body, /never read the whole file/);
   assert.match(body, /list what's in it once/);
 });
@@ -333,7 +333,7 @@ test("find-solutions: searches the user settings and never reads them whole", ()
 // one sent after a shallow or refused search loses a fix their sessions hold.
 test("find-solutions: answers without a fix only after searching the setup and each recent project folder", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /Any names after the run id are the project folders with a session from the last two weeks/);
+  assert.match(body, /Any names after the run id, on its line, are the project folders with a session from the last two weeks/);
   // Glob lists files oldest first and stops at 100, so a Glob of every
   // transcript leaves out the newest sessions.
   assert.match(body, /Glob lists files oldest first and shows at most 100/);
@@ -354,7 +354,16 @@ test("find-solutions: searches each project folder once per page, for every fric
 // are none", the search rule would hold for every friction without a search.
 test("find-solutions: a daily run told no project folders hasn't searched past sessions", () => {
   const { body } = skill("find-solutions");
-  assert.match(body, /If no names follow the run id, quotient couldn't list the folders: count past sessions as not searched in this run/);
+  assert.match(body, /If no names follow the run id on its line, quotient couldn't list the folders: count past sessions as not searched in this run/);
+});
+
+// CLAUDE_CONFIG_DIR can move the config folder away from ~/.claude, and the
+// sandbox reads only the real one: the hooks name it with these words.
+test("find-solutions: reads the config folder its task names, and ~/.claude only when none is named", () => {
+  const { body } = skill("find-solutions");
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /If your task names none, it's `~\/\.claude`/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
 });
 
 test("find-solutions: leaving a friction out doesn't stop the page's answers from being sent", () => {
@@ -367,6 +376,9 @@ test("find-solutions: leaving a friction out doesn't stop the page's answers fro
 test("find-solutions: a refused search doesn't count, and a friction it couldn't search is offered again", () => {
   const { body } = skill("find-solutions");
   assert.match(body, /A search quotient refuses searched nothing/);
+  // The guard refuses a missing path with a reply of its own: an operator
+  // with no agents folder has nothing there to search.
+  assert.match(body, /When quotient says nothing is there, that part of your setup is empty: count it as searched/);
   assert.match(body, /leave that friction out of the page's answers: Quotient offers it again next time/);
   assert.match(body, /weren't able to find a solution.*still send its answer/);
 });
@@ -666,8 +678,10 @@ test("setup: counts the sessions each friction appeared in against every source 
 test("setup: resumes an unfinished run from the progress Quotient recorded", () => {
   const { body } = skill("setup");
   assert.match(body, /`reviewedSources`/);
-  assert.match(body, /`frictionsInRun`/);
+  assert.match(body, /`frictionsInRun`, each with its stored `title`, `severity`, `impact`, `affectedSessionCount` and `frequency`/);
   assert.match(body, /send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity/);
+  // A resumed session never saw the count it sent before, so it adds to the stored one.
+  assert.ok(body.includes("For a friction in `frictionsInRun`, its new `affectedSessionCount` is its stored `affectedSessionCount`, or the count at the start of its `frequency` when that is null, plus the sessions and routine runs this run has since found it in."));
   assert.match(body, /call `record_setup_progress` with the run's `runId`, its `sources`/);
   // A source setup_digest refused wasn't reviewed, so recording it would skip it on resume.
   assert.match(body, /its `sources` except any the reviewer skipped because `setup_digest` refused them, so a resumed run tries those again/);
@@ -693,7 +707,7 @@ for (const name of ["setup", "find-solutions"]) {
   test(`${name}: skips the sessions run from a temporary folder`, () => {
     const { body } = skill(name);
     for (const prefix of TEMPORARY_PROJECTS) assert.ok(body.includes(`\`${prefix}\``), `${prefix} isn't named`);
-    assert.match(body, /never `~\/\.claude\/projects\/` as a whole/);
+    assert.match(body, /never `(~\/\.claude|<config>)\/projects\/` as a whole/);
   });
 }
 
@@ -799,6 +813,15 @@ test("setup: writes severity as high, medium or low, and frequency starting with
   assert.match(body, /- `frequency`: .*starting with the number of sessions or routine runs/);
 });
 
+// setup's hooks name the config folder in the check's prompt with the same
+// words the daily runs use.
+test("teammate-check: reads the config folder its prompt names, and ~/.claude only when none is named", () => {
+  const { body } = readFrontmatter(join(PLUGIN, "agents", "teammate-check.md"));
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /`~\/\.claude` when it names none/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
+});
+
 // A reviewer reads untrusted session text, so it may only read and report:
 // no shell, no subagents of its own, and nothing sent to Quotient.
 test("setup-reviewer: reads only through setup_digest, and only reports back", () => {
@@ -887,7 +910,10 @@ test("setup: fills the summary's fields with new frictions, what's working and w
   assert.match(section, /`impact` \(the value you sent in `submit_frictions` for that friction\)/);
   // An update may change a friction's severity, and remainingHigh counts the stored values.
   assert.match(section, /`severity` \(the value you last sent in `submit_frictions` for that friction\)/);
-  assert.match(section, /- `remainingHigh`: the `counts` high number minus the high frictions in `top`/);
+  // A resumed session didn't send the frictions found before the resume, so it shows what Quotient stored.
+  assert.ok(section.includes("For a friction in `frictionsInRun` that this session hasn't sent, take each field from `frictionsInRun` instead: `severity` is its `severity`, or, when that is `other`, the level the Friction section's rule gives its `impact` and session count; `description` is its `title`, or its `description` when the title is null; `impact` is its `impact`; and `sessions` is its `affectedSessionCount`, or the count at the start of its `frequency` when that is null."));
+  // counts holds stored severities, so a friction rated high from a stored `other` was never in it.
+  assert.match(section, /- `remainingHigh`: the `counts` high number minus the frictions in `top` that Quotient stored as high, never one whose stored `severity` is `other`/);
   assert.match(section, /- `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them/);
 });
 
@@ -1128,10 +1154,20 @@ test("review-frictions: lists its sessions through review_sessions and reads eac
     assert.ok(String(data["allowed-tools"]).includes(tool), `${tool} isn't allowed`);
     assert.ok(body.includes(`\`${tool}\``), `${tool} isn't named`);
   }
-  assert.match(body, /you never list, read or search the transcripts under `~\/\.claude\/projects\/` yourself/);
+  assert.match(body, /you never list, read or search the transcripts under `<config>\/projects\/` yourself/);
   assert.match(body, /It already leaves out this session, the sessions that ran one of quotient's own skills, the ones from temporary folders, and the ones that hold teammates' fixes/);
   assert.match(body, /Judge each session from its digest alone/);
   assert.match(body, /When its reply says more sessions remain, read the ones listed, then call it again with the same `since` and the `page` it names, until none remain/);
+});
+
+// A daily run's arguments go on past the run id, to the config folder's line.
+test("review-frictions: reads the config folder its task names, and ~/.claude only when none is named", () => {
+  const { body } = skill("review-frictions");
+  assert.match(body, /If they start with `daily` followed by a run id, this is a daily run/);
+  assert.ok(body.includes(`after \`${CONFIG_FOLDER}\``), "doesn't quote the hooks' words");
+  assert.match(body, /If your task names none, it's `~\/\.claude`/);
+  assert.match(body, /The operator's current Claude Code setup, in `<config>`:/);
+  assert.equal(body.match(/~\/\.claude/g)?.length, 1, "names ~/.claude outside the fallback");
 });
 
 test("review-frictions: treats frictions as data, and never shows a friction's or a fix's id", () => {
@@ -1245,6 +1281,24 @@ for (const name of ["find-solutions", "review-frictions"]) {
     assert.match(body, /call `complete_daily_run` with that `runId`, `outcome: "succeeded"` and `counts`/);
     assert.match(body, /even when there was nothing to check/);
     assert.match(body, /If a Quotient tool returns an error, call `complete_daily_run` with that `runId` and `outcome: "failed"`, then stop/);
+  });
+
+  // A daily run can start before Quotient's server connects, and must tell
+  // that apart from being signed out. A run may call only one server's tools,
+  // which can be either the plugin's or the connector's, so it never switches.
+  test(`${name}: a daily run calls again while Quotient's server connects, and tells that apart from a sign-in`, () => {
+    const { body } = skill(name);
+    assert.match(body, /when a Quotient tool isn't available, read the error before deciding you aren't signed in:/);
+    assert.match(body, /If it says the server asks for a sign-in, you aren't signed in\./);
+    assert.match(
+      body,
+      /call the same tool again, up to 3 more times\. Don't switch between the `mcp__plugin_quotient_agex__` and `mcp__claude_ai_Quotient__` tools: a daily run can call only one server's\./,
+    );
+    assert.ok(!body.includes("Don't switch to the `mcp__claude_ai_Quotient__` tools"), "a daily run may be started on the connector");
+    assert.match(
+      body,
+      /If it still isn't available, say exactly "Quotient's server didn't connect\." and stop, calling nothing else, not even `complete_daily_run`\./,
+    );
   });
 
   test(`${name}: a daily run whose sign-in ends stops and sends nothing more`, () => {

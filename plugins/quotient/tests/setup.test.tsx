@@ -60,6 +60,7 @@ const SAVED = {
  * @param opts.share - The answer to "Copy to share", or null when it's dismissed
  * @param opts.isAway - Whether that answer came while the operator was away
  * @param opts.isCopied - Whether the copy reaches the clipboard, true when absent
+ * @param opts.config - The Claude Code config folder the folder lookup prints, `CONFIG` when absent
  * @returns The tools the plugin registered, the commands it ran, and the subagents it started
  */
 function engine(
@@ -90,6 +91,7 @@ function engine(
     connected?: { isConnected: false; reason: string }
     share?: string | null
     isAway?: boolean
+    config?: string
     isCopied?: boolean
   } = {},
 ) {
@@ -129,6 +131,14 @@ function engine(
     value: (opts.agents ?? [{ id: TEAMMATE_AGENT, type: 'quotient:teammate-check', status: 'running' }]).map(agent => ({
       ...agent,
       description: 'check',
+      kind: 'local_agent',
+      taskStatus: agent.status,
+      label: 'check',
+      startTime: 0,
+      cwd: '/repo',
+      tokenCount: 0,
+      tokenSamples: [0],
+      hasRow: true,
     })),
   }))
   on('mcp.connect', () => ({ value: opts.connected ?? { isConnected: true, server: 'plugin:quotient:agex' } }) as never)
@@ -235,7 +245,7 @@ function engine(
     return {
       value: {
         exitCode: 0,
-        stdout: `${CONFIG}\n/home/op\n/home/op/.local/share/quotient\n`,
+        stdout: `${opts.config ?? CONFIG}\n/home/op\n/home/op/.local/share/quotient\n`,
         stderr: '',
         isStdoutTruncated: false,
         isStderrTruncated: false,
@@ -812,9 +822,25 @@ test("setup's teammate check is told the project folders with a session in setup
   expect(seen.spawned).toEqual([
     {
       subagentType: 'quotient:teammate-check',
-      prompt: `${CHECK_PROMPT}\n\nThe project folders with a session from the last two weeks, under \`~/.claude/projects/\`: -repo`,
+      prompt: `${CHECK_PROMPT}\n\nYour Claude Code config folder: \`${CONFIG}\`\n\nThe project folders with a session from the last two weeks, under its \`projects/\`: -repo`,
     },
   ])
+})
+
+// CLAUDE_CONFIG_DIR can move the config folder away from ~/.claude, and the
+// sandbox reads only the real one.
+test('setup looks up the config folder from CLAUDE_CONFIG_DIR and tells its teammate check the folder it found', async ($, on) => {
+  const seen = engine(on, { config: '/cfg' })
+  await $.command.run(TYPED_SETUP)
+  await callTool($, START_TOOL, 'toolu_start', { ...START, checksTeammates: true })
+
+  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
+
+  expect(seen.spawned.at(-1)?.prompt).toContain('\n\nYour Claude Code config folder: `/cfg`\n\n')
+  // The kit runs no shell, so the lookup is checked by its command: the
+  // folder the mock answers stands for what it would print.
+  const lookup = seen.argv.find(argv => argv[0] === 'sh' && (argv[2] ?? '').startsWith('printf'))
+  expect(lookup?.[2]).toContain('"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"')
 })
 
 test("a setup pinned to a window tells its teammate check the folders from that window", async ($, on) => {
@@ -839,14 +865,21 @@ test("setup's other subagents start with their prompts as written", async ($, on
   expect(seen.spawned).toEqual([{ subagentType: 'quotient:setup-reviewer', prompt: 'Review these sessions.' }])
 })
 
-test("a teammate check whose sessions can't be listed starts with its prompt as written", async ($, on) => {
-  const seen = engine(on, { findExit: 1 })
-  await $.command.run(TYPED_SETUP)
+for (const [name, opts] of [
+  ["sessions can't be listed", { findExit: 1 }],
+  ['has no sessions in the window', { transcripts: [] as string[] }],
+] as const) {
+  test(`a teammate check whose setup ${name} is told only the config folder`, async ($, on) => {
+    const seen = engine(on, opts)
+    await $.command.run(TYPED_SETUP)
 
-  await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
+    await $.agent.spawn({ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT } as Parameters<typeof $.agent.spawn>[0])
 
-  expect(seen.spawned).toEqual([{ subagentType: 'quotient:teammate-check', prompt: CHECK_PROMPT }])
-})
+    expect(seen.spawned).toEqual([
+      { subagentType: 'quotient:teammate-check', prompt: `${CHECK_PROMPT}\n\nYour Claude Code config folder: \`${CONFIG}\`` },
+    ])
+  })
+}
 
 test("an invited operator's summary opens with setup being done and leaves out the pitch, sample, waiting line and hint", async ($, on) => {
   engine(on)
@@ -1135,37 +1168,51 @@ test("escape sequences and control characters in a teammate's text are drawn as 
   expect(shown.includes('\u001b')).toBe(false)
 })
 
-test('each answer the teammate check sends gets a row of its own, without its friction id', async ($, on) => {
+test("the teammate check's answers add no transcript rows, and the band and status line count them", async ($, on) => {
   const seen = engine(on)
-  await checkTeammates($, [['t1', FIXES[0]], ['t2', null], ['t3', 'See fr-20261029-5.']])
+  engineRows(on)
+  const answers = Array.from({ length: 50 }, (_, i): [string, string | null] => [`t${i}`, i % 5 === 0 ? FIXES[0] : null])
+  await checkTeammates($, answers)
 
-  expect(seen.logs).toEqual([
-    `Sent a teammate a fix: ${FIXES[0]}`,
-    "Checked a teammate's friction: no fix found in your setup.",
-    'Sent a teammate a fix.',
-  ])
+  expect(seen.logs).toEqual([])
+  expect(await band($)).toBe('0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
+  expect(seen.status.at(-1)).toBe('setup · 0 of 77 sources reviewed · 50 teammate frictions checked, 10 fixes sent')
 })
 
-test('each answer in a batch the teammate check sends gets a row of its own, and only those Quotient stored count', async ($, on) => {
+test("the debug log gets a line per answer, without a teammate's friction or fix", async ($, on) => {
+  const seen = engine(on)
+  await checkTeammates($, [['t1', FIXES[0]], ['t2', null]])
+
+  const debug = seen.debug.join('\n')
+  expect(debug).not.toContain(FIXES[0])
+  expect(debug).not.toContain('t1')
+  expect(seen.debug.filter(line => line.startsWith('quotient setup: teammate check'))).toHaveLength(2)
+})
+
+test("an answer Quotient refused counts toward neither the band nor the summary", async ($, on) => {
   const seen = engine(on, { refused: ['t3'] })
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', null], ['t3', FIXES[2]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 1 fix sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, "Checked a teammate's friction: no fix found in your setup."])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 1 of your teammates' frictions.")
   expect(shown).not.toContain(FIXES[2])
 })
 
 test('a batch whose reply cannot be read still counts every answer it sent', async ($, on) => {
   const seen = engine(on)
+  engineRows(on)
   await startTeammateCheck($)
   await sendTeammateAnswers($, [['t1', FIXES[0]], ['t2', FIXES[1]]])
 
+  expect(await band($)).toBe('0 of 77 sources reviewed · 2 teammate frictions checked, 2 fixes sent')
   const { shown } = await drawSummary($, INVITED)
 
-  expect(seen.logs).toEqual([`Sent a teammate a fix: ${FIXES[0]}`, `Sent a teammate a fix: ${FIXES[1]}`])
+  expect(seen.logs).toEqual([])
   expect(shown).toContain("Your setup solves 2 of your teammates' frictions.")
 })
 
@@ -1603,6 +1650,29 @@ test('a refused summary call draws the engine row, with its error', async ($, on
   await ui.unmount()
 
   expect(texts.map(text => text.text)).toEqual(["the engine's row"])
+})
+
+test('once a retried summary call is accepted, the refused call and its error are drawn as nothing', async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await callTool($, SUMMARY_TOOL, 'toolu_refused', { ...SAVED, frictions: -1 })
+  await drawSummary($, SAVED)
+  const refusedRow = {
+    tool_use_id: 'toolu_refused',
+    tool: SUMMARY_TOOL,
+    input: { ...SAVED, frictions: -1 },
+    isRunning: false,
+    isErrored: true,
+    isInterrupted: false,
+    isExpanded: false,
+  }
+
+  expect(await row($, 'ToolUse', refusedRow, 'toolu_refused')).toBe('')
+  expect(
+    await row($, 'ToolResult', { tool_use_id: 'toolu_refused', tool: SUMMARY_TOOL, output: 'frictions: must be a whole number of at least 0', isErrored: true, isExpanded: false }, 'toolu_refused'),
+  ).toBe('')
+  expect(await row($, 'ToolUse', { ...refusedRow, isExpanded: true }, 'toolu_refused')).toBe("the engine's row")
 })
 
 test('a summary call that is still running draws nothing, not its raw input', async ($, on) => {
@@ -2093,9 +2163,11 @@ test("during setup, a RemoteTrigger reply that isn't a routine list is left alon
 
 const STATUS = { text: "Both review batches are still running. I'll write the summary once they report back.", isFirstOfReply: true }
 const REVIEWER_RUNNING = [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'running' as const }]
+const NO_AGENTS: { id: string; type: string; status: 'running' | 'completed' }[] = []
+const SAID_DONE = { text: 'Setup is done.', isFirstOfReply: true }
 
-test("while setup's reviewers run, the agent's text is drawn as nothing", async ($, on) => {
-  engine(on, { agents: REVIEWER_RUNNING })
+test("from the start message on, the agent's text is drawn as nothing, with or without a reviewer running", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
@@ -2103,13 +2175,72 @@ test("while setup's reviewers run, the agent's text is drawn as nothing", async 
   expect(await row($, 'AssistantMessage', STATUS)).toBe('')
 })
 
-test("once setup's reviewers have reported, the agent's text shows, so an error it writes is seen", async ($, on) => {
-  engine(on, { agents: [{ id: 'rev-1', type: 'quotient:setup-reviewer', status: 'completed' }] })
+test("the agent's text hidden during setup stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
   engineRows(on)
   await $.command.run(TYPED_SETUP)
   await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', STATUS)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
 
-  expect(await row($, 'AssistantMessage', STATUS)).toBe("the engine's row")
+  expect(during).toBe('')
+  expect(await row($, 'AssistantMessage', STATUS)).toBe('')
+})
+
+test('a reply drawn before setup shows when drawn again during the run and after it', async ($, on) => {
+  const earlier = { text: 'Here is the diff you asked for.', isFirstOfReply: true }
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  const before = await row($, 'AssistantMessage', earlier)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const during = await row($, 'AssistantMessage', earlier)
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(before).toBe("the engine's row")
+  expect(during).toBe("the engine's row")
+  expect(await row($, 'AssistantMessage', earlier)).toBe("the engine's row")
+})
+
+test("the text the agent writes after the summary, in the summary's turn, is hidden; a later turn's text shows", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  const afterSummary = await row($, 'AssistantMessage', SAID_DONE)
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(afterSummary).toBe('')
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
+test("the summary turn's last text stays hidden when it's first drawn after the turn ends", async ($, on) => {
+  engine(on, { agents: NO_AGENTS })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  await drawSummary($, { frictions: 0, working: [], top: [], remainingHigh: 0 })
+  await $.turn.complete({ answer: 'Setup is done.', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+  expect(await row($, 'AssistantMessage', SAID_DONE)).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Here is the diff you asked for.', isFirstOfReply: true })).toBe("the engine's row")
+})
+
+test("after a Quotient tool error, the agent's text shows, so the error it must show is seen", async ($, on) => {
+  engine(on, { agents: REVIEWER_RUNNING, failing: 'submit_frictions' })
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await drawStart($, { cloudRuns: 0, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+  const before = await row($, 'AssistantMessage', STATUS)
+  await callQuotient($, 'submit_frictions', 'toolu_fail', { frictions: [] })
+
+  expect(before).toBe('')
+  expect(await row($, 'AssistantMessage', { text: 'Quotient could not complete this request.', isFirstOfReply: true })).toBe(
+    "the engine's row",
+  )
 })
 
 test("outside setup, the agent's text shows even while a reviewer runs", async ($, on) => {
@@ -2626,6 +2757,30 @@ test("rows after the run ends aren't hidden, and setup's earlier rows stay hidde
 
   expect(await row($, 'ToolUse', bashRow('toolu_after'), 'toolu_after')).toBe("the engine's row")
   expect(await row($, 'ToolUse', bashRow('toolu_mine'), 'toolu_mine')).toBe('')
+})
+
+test("a setup subagent's report-back stays hidden when it's drawn again after the run ends", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  await $.command.run(TYPED_SETUP)
+  await runTool($, { tool: 'Agent', tool_use_id: 'toolu_rev', description: 'Review batch 1', prompt: 'Review', subagent_type: 'quotient:setup-reviewer' })
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+  const during = await row($, 'UserMessage', report)
+  await $.prompt.submit({ text: 'thanks', wait: false, origin: { kind: 'composer' } } as Parameters<typeof $.prompt.submit>[0])
+
+  expect(during).toBe('')
+  expect(await row($, 'UserMessage', report)).toBe('')
+  expect(await row($, 'UserMessage', { ...report, isExpanded: true })).toBe("the engine's row")
+  // A later report from an agent of the same type, with other text, is the operator's own.
+  expect(await row($, 'UserMessage', { ...report, text: 'Done reviewing the PR.' })).toBe("the engine's row")
+})
+
+test("outside setup, a report-back no setup run hid shows, even with the same text as one that was", async ($, on) => {
+  engine(on)
+  engineRows(on)
+  const report = { text: 'Batch 1 found two frictions.', isExpanded: false, origin: { kind: 'peer' }, from: { name: 'quotient:setup-reviewer' } }
+
+  expect(await row($, 'UserMessage', report)).toBe("the engine's row")
 })
 
 test("a setup subagent's report-back and finished rows are hidden, and others' aren't", async ($, on) => {

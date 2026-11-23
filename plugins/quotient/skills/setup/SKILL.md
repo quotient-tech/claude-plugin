@@ -24,7 +24,7 @@ Otherwise, before anything else, call `start_setup_run`. Use Quotient's tools fr
 - If any of these tools returns an error, show its text exactly apart from any id, and stop: don't explain it, retry, or look for the cause. Running `/quotient:setup` again resumes this run without reviewing a recorded source again. The one exception is the `submit_frictions` error the Friction section describes.
 - While its `nextCursor` isn't null, call it again with `cursor` set to that value, for the rest of `reportedFrictions`.
 
-Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).
+Its reply starts a new run or resumes one that was cut short, on any machine. It gives the run's `runId`, its `startedAt`, the sessions and routine runs already reviewed in it (`reviewedSources`), the frictions already submitted in it (`frictionsInRun`, each with its stored `title`, `severity`, `impact`, `affectedSessionCount` and `frequency`), and the frictions you have already reported to Quotient outside it (`reportedFrictions`).
 
 !`echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"`
 
@@ -37,7 +37,7 @@ When this setup checks your setup for fixes, start one subagent with the Agent t
 
 > Check my setup for fixes to my teammates' frictions.
 
-Only that agent type may read teammates' frictions, and it can read nothing but your Claude Code config folder. Review the sessions while it works. Wait for it to finish before the summary. It reports only how many answers it sent with a fix and how many without: quotient shows each answer as it's sent, and builds the summary's cards from them. If it fails, carry on: it found no fixes.
+Only that agent type may read teammates' frictions, and it can read nothing but your Claude Code config folder. Review the sessions while it works. Wait for it to finish before the summary. It reports only how many answers it sent with a fix and how many without: quotient counts each answer as it's sent, and builds the summary's cards from them. If it fails, carry on: it found no fixes.
 
 ## Goal
 Find me any unresolved frictions or room for improvement the agent experienced across all sessions over the two weeks before the run's `startedAt`.
@@ -93,7 +93,7 @@ Skip the sessions and routine runs in the run's `reviewedSources`.
 
 The start message's counts already leave out every session you skip, so `reviewedSessionCount` is the same from the first friction you submit: never take the skipped sessions off it again.
 
-When a new finding is the same friction as one in the run's `frictionsInRun`, or one you've submitted since, send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total, instead of submitting another.
+When a new finding is the same friction as one in the run's `frictionsInRun`, or one you've submitted since, send its `frictionId` with the new frequency, `affectedSessionCount`, impact and severity, and `reviewedSessionCount` set to this run's total, instead of submitting another. For a friction in `frictionsInRun`, its new `affectedSessionCount` is its stored `affectedSessionCount`, or the count at the start of its `frequency` when that is null, plus the sessions and routine runs this run has since found it in.
 
 Before submitting a friction, compare it with the run's `reportedFrictions`. Leave it out when it is clearly the same problem as one of them, even if you would word it differently: teammates are already looking for its fix. Record each one you leave out by its `id`. When you aren't sure it's the same problem, submit it.
 
@@ -148,7 +148,7 @@ If quotient refuses the call because a friction's text holds something teammates
 
 ## What teammates see
 Every teammate reads the text you send to Quotient: each field but the ids and the repository. Describe the problem or the fix, never who or where it came from:
-- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.
+- Name a config, tooling or docs file, such as a CI workflow, a lint config or a git hook, by its path relative to its repo, or, outside a repo, from `~/`. Name a file in the Claude Code config folder by what it is, such as "the Claude Code user settings (`settings.json` in the config folder)", never by the config folder's path. Describe a file of the app's own code by what it does, never by its path or name. Name a setting, tool, skill or plugin by its name. Never write an absolute path, a home folder or a username.
 - Refer to Claude Code's project folders, and the transcripts and auto-memories in them, in general terms, such as "this repo's auto-memory". Never write a project folder's name or its path.
 - Describe the app's own code by what it does, such as "the billing API's request handler", never by its class, function, table or other names.
 - Never write anyone's name, username, email or handle: not the operator's, not a teammate's, not anyone a session mentions.
@@ -168,8 +168,8 @@ If quotient refuses a call because its text holds one of these, rewrite that fie
 Call quotient's `setup_summary` tool once with these fields, then end your turn without writing anything else. Each piece of text it takes (every `working` item, every `top` description and `inCommon`) is at most 200 characters, counting an emoji as 2 or more:
 - `frictions`: `finish_setup_run`'s `newCount`.
 - `working`: up to three things the subagents reported working well, each backed by their evidence, as a list of text. Give fewer when that's all there is, and none when there's none.
-- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (the value you last sent in `submit_frictions` for that friction), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_frictions` for that friction), and `sessions` (the count from the start of its frequency).
-- `remainingHigh`: the `counts` high number minus the high frictions in `top`, or 0 when `frictions` is 3 or fewer.
+- `top`: one row for each of the three frictions submitted in this run that cost the agents the most time or happened most often, each with `severity` (the value you last sent in `submit_frictions` for that friction), `description` (the friction's `title`, or its `description` when it has none), `impact` (the value you sent in `submit_frictions` for that friction), and `sessions` (the count from the start of its frequency). For a friction in `frictionsInRun` that this session hasn't sent, take each field from `frictionsInRun` instead: `severity` is its `severity`, or, when that is `other`, the level the Friction section's rule gives its `impact` and session count; `description` is its `title`, or its `description` when the title is null; `impact` is its `impact`; and `sessions` is its `affectedSessionCount`, or the count at the start of its `frequency` when that is null.
+- `remainingHigh`: the `counts` high number minus the frictions in `top` that Quotient stored as high, never one whose stored `severity` is `other`, or 0 when `frictions` is 3 or fewer.
 - `inCommon`: one or two sentences on what the top frictions have in common, and only what's true of them. For example: "Two of your top three involve your CI and local setup. Whoever set those up has likely hit the same problems and solved them in their own Claude setup." Leave it out when `frictions` is 0, and when this setup checked your setup for fixes to teammates' frictions: quotient adds what that check found itself.
 
 The tool draws every section, including a sample fix whose teammate is made up. If it refuses a field, fix that field and call it again.

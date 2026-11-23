@@ -22,7 +22,15 @@ import { cleanText, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
-import { heldVerdict, holdsTeammateText, LINES_PER_READ, projectFolders, QUOTIENT_STARTED, transcriptFindArgs } from './sessions'
+import {
+  CONFIG_FOLDER,
+  heldVerdict,
+  holdsTeammateText,
+  LINES_PER_READ,
+  projectFolders,
+  QUOTIENT_STARTED,
+  transcriptFindArgs,
+} from './sessions'
 
 type Api = Parameters<Hook<'tool.call'>>[0]
 // The elements the drawings use, which the terminal and the desktop app share.
@@ -32,12 +40,8 @@ const SETUP_COMMAND = 'quotient:setup'
 const SUMMARY_TOOL = 'mcp__quotient__setup_summary'
 const START_TOOL = 'mcp__quotient__setup_start'
 const DIGEST_TOOL = 'mcp__quotient__setup_digest'
-// The subagent setup reviews each batch with.
-const REVIEWER_AGENT = 'quotient:setup-reviewer'
 const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
-const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under `~/.claude/projects/`:'
-// A subagent that hasn't reported back yet.
-const ACTIVE: readonly string[] = ['pending', 'running', 'waiting']
+const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under its `projects/`:';
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
 const DAY = /^[A-Z][a-z]{2} [1-9]\d?$/
 const TEAMMATES_CLAUSE = ", and checking your setup for fixes to your teammates' frictions"
@@ -168,6 +172,13 @@ const SOLVED_CARD = {
 // whether that question was answered for the operator while they were away.
 let inviteRowId: string | null = null
 let answeredWhileAway = false
+// Whether the summary's turn is still going, after the run has ended.
+let isSummaryTurn = false
+// Whether a Quotient tool returned an error to the main agent in this run.
+let hasQuotientError = false
+// The setup_start and setup_summary calls quotient refused in this run, by
+// tool. Their rows show until a later call of the same tool is accepted.
+const refusedCalls = new Map<string, string[]>()
 
 // Change a tag when its value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -188,6 +199,48 @@ const NO_RUN: SetupRun = {
 // The guard reads the run's state by its key, so it checks this tag itself.
 export const RUN_SHAPE = 'run-9'
 const run = atom({ plugin: 'quotient', key: 'setupRun' } as const, NO_RUN, { shape: RUN_SHAPE })
+// The messages setup hid during a run, by content: their rows carry no id, and
+// a row is drawn again on a resize or scroll, after the run has ended. A draw
+// can't write state, so a draw adds to hiddenNow, and hooks that can write
+// keep its keys in hiddenMessages, which outlives a reload.
+const hiddenMessages = atom({ plugin: 'quotient', key: 'setupHiddenMessages' } as const, [] as string[], { shape: 'hidden-1' })
+const hiddenNow = new Set<string>()
+// The agent's text drawn outside setup's quiet window. Earlier replies are
+// drawn again on every frame, so the window never takes them for setup's own.
+const shownOutside = new Set<string>()
+
+/**
+ * Names a message row by what it shows, since message rows carry no id.
+ *
+ * @param sender - The agent that sent it, or `main` for the main agent's text
+ * @param text - The row's text
+ * @returns The key
+ */
+function messageKey(sender: string, text: string): string {
+  return `${sender}\u0000${text}`
+}
+
+/**
+ * Tells whether a message row was hidden before, in this session.
+ *
+ * @param $ - The engine
+ * @param key - The message's key
+ * @returns Whether it was
+ */
+async function wasHidden($: Api, key: string): Promise<boolean> {
+  return hiddenNow.has(key) || (await read($, hiddenMessages)).includes(key)
+}
+
+/**
+ * Keeps the messages hidden so far, so they stay hidden after a reload.
+ *
+ * @param $ - The engine
+ */
+async function keepHidden($: Api): Promise<void> {
+  if (hiddenNow.size === 0) return
+  await update($, hiddenMessages, current => [...new Set([...current, ...hiddenNow])])
+}
+
 // Shared with fix.tsx, which declares it with the same key.
 const statusParts = atom(
   { plugin: 'quotient', key: 'statusParts' } as const,
@@ -1069,7 +1122,8 @@ function reviewedFrom(name: string, input: Record<string, unknown>, text: string
 
 /**
  * Says how far setup has got: getting ready until the start message is
- * shown, then how many of its sources it has recorded as reviewed.
+ * shown, then how many of its sources it has recorded as reviewed, and, once
+ * the teammate check has answered, how many teammate frictions it checked.
  *
  * @param current - The setup run
  * @returns The progress, without a "Quotient setup" prefix
@@ -1077,7 +1131,11 @@ function reviewedFrom(name: string, input: Record<string, unknown>, text: string
 function progress(current: SetupRun): string {
   if (current.start === null) return 'Quotient setup is getting ready…'
   const { sessions, automatedRuns, cloudRuns } = current.start
-  return `${current.reviewedIds.length} of ${sessions + automatedRuns + cloudRuns} sources reviewed`
+  const reviewed = `${current.reviewedIds.length} of ${sessions + automatedRuns + cloudRuns} sources reviewed`
+  const answers = current.teammateAnswers
+  if (answers.length === 0) return reviewed
+  const fixes = answers.filter(answer => answer.fix !== null).length
+  return `${reviewed} · ${plural(answers.length, 'teammate friction')} checked, ${plural(fixes, 'fix', 'fixes')} sent`
 }
 
 /**
@@ -1101,6 +1159,7 @@ async function showStatus($: Api): Promise<void> {
  * @param $ - The engine
  */
 async function endRun($: Api): Promise<void> {
+  await keepHidden($)
   if (!(await read($, run)).isRunning) return
   await update($, run, current => ({ ...current, isRunning: false }))
   await showStatus($)
@@ -1509,6 +1568,7 @@ async function answerSummary(
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'summary', summary: { ...summary, invite } } }))
   }
   inviteRowId = invite === null || toolUseId === undefined ? null : toolUseId
+  isSummaryTurn = true
   await endRun($)
   const endsWithHint = summary.teammateCheck === undefined && summary.frictions > 0 && invite === null
   return { result: endsWithHint ? END_TURN_WITH_HINT : END_TURN }
@@ -1519,8 +1579,8 @@ async function answerSummary(
  * session holds submit_frictions, so it learns only whether teammates have
  * frictions, never their text. The teammate-check subagent's calls are
  * recorded instead: each friction's title as Quotient listed it, and each
- * answer as it was sent, leaving out any Quotient refused, each with a log
- * line of its own.
+ * answer as it was sent, leaving out any Quotient refused. The answers are
+ * counted on the progress line, not written to the transcript one by one.
  *
  * @param $ - The engine
  * @param input - The call's input, with its tool
@@ -1545,19 +1605,44 @@ async function answerTeammateCall<R extends { text?: string }>(
     if (titles !== null) await update($, run, current => ({ ...current, teammateTitles: { ...current.teammateTitles, ...titles } }))
   }
   if (agentId === undefined) return called
-  for (const { frictionId, description } of sentAnswers(name, input, called.text)) {
+  const answers = sentAnswers(name, input, called.text)
+  for (const { frictionId, description } of answers) {
     const fix = cleanText(typeof description === 'string' ? description : null)
-    const current = await update($, run, latest => ({ ...latest, teammateAnswers: [...latest.teammateAnswers, { frictionId, fix }] }))
-    const shown = cardText(fix, current.reviewedIds)
-    $.ui.log(
-      fix === null
-        ? "Checked a teammate's friction: no fix found in your setup."
-        : shown === null
-          ? 'Sent a teammate a fix.'
-          : `Sent a teammate a fix: ${shown}`,
-    )
+    await update($, run, latest => ({ ...latest, teammateAnswers: [...latest.teammateAnswers, { frictionId, fix }] }))
+    $.ui.log(`quotient setup: teammate check answered ${fix === null ? 'without' : 'with'} a fix`, { to: 'debug' })
   }
+  if (answers.length > 0) await showStatus($)
   return called
+}
+
+/**
+ * Keeps track of quotient's refusals of a setup_start or setup_summary call.
+ * A refusal's row and error show until the model's retry is accepted, then
+ * they're hidden with setup's other rows, so a refusal the model never gets
+ * past stays in sight.
+ *
+ * @param $ - The engine
+ * @param tool - The setup tool called
+ * @param toolUseId - The call's id
+ * @param answer - What quotient answered
+ * @returns The answer, unchanged
+ */
+async function settleRefusals<A extends { deny: string } | { result: string }>(
+  $: Api,
+  tool: string,
+  toolUseId: string | undefined,
+  answer: A,
+): Promise<A> {
+  const refused = refusedCalls.get(tool) ?? []
+  if ('deny' in answer) {
+    if (toolUseId !== undefined) refusedCalls.set(tool, [...refused, toolUseId])
+    return answer
+  }
+  if (refused.length > 0) {
+    refusedCalls.delete(tool)
+    await update($, run, latest => ({ ...latest, toolUseIds: [...latest.toolUseIds, ...refused] }))
+  }
+  return answer
 }
 
 /**
@@ -1567,6 +1652,9 @@ async function answerTeammateCall<R extends { text?: string }>(
  * @param $ - The engine
  */
 async function startSetupRun($: Api): Promise<void> {
+  isSummaryTurn = false
+  hasQuotientError = false
+  refusedCalls.clear()
   await update($, run, current => ({
     ...NO_RUN,
     isRunning: true,
@@ -1614,16 +1702,20 @@ export const registerSetup: Register = on => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
-  // The teammate check reads with Read, Grep and Glob only, and Glob lists
-  // files oldest first and stops at 100, so it can't find the window's
-  // sessions itself: its prompt names their project folders.
+  // The teammate check's prompt names the config folder, which `~` can't
+  // when CLAUDE_CONFIG_DIR moves it. It reads with Read, Grep and Glob only,
+  // and Glob lists files oldest first and stops at 100, so it can't find the
+  // window's sessions itself: its prompt names their project folders too.
   on('agent.spawn', async ($, e, next) => {
     const current = await read($, run)
     if (e.subagentType !== TEAMMATE_CHECK_AGENT || !current.isRunning || current.dirs === null) return next(e)
     const window = pinnedWindow(await $.env.get('QUOTIENT_SETUP_WINDOW_END'))
     const dirs = current.dirs
-    const folders = projectFolders(await windowFiles($, dirs, window), name => isSkippedProject(name, dirs))
-    return folders.length === 0 ? next(e) : next({ ...e, prompt: `${e.prompt}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
+    const told = `${e.prompt}\n\n${CONFIG_FOLDER} \`${dirs.config}\``
+    const folders = await windowFiles($, dirs, window)
+      .then(files => projectFolders(files, name => isSkippedProject(name, dirs)))
+      .catch(() => [])
+    return next({ ...e, prompt: folders.length === 0 ? told : `${told}\n\n${RECENT_FOLDERS} ${folders.join(' ')}` })
   }).catch(($, e, next) => next(e))
 
   // One hook for every call: the summary tool's name isn't in the generated
@@ -1631,10 +1723,10 @@ export const registerSetup: Register = on => {
   // No .catch: falling back to next(e) after the call ran would run it again.
   on('tool.call', async ($, e, next) => {
     if ((e.tool as string) === START_TOOL) {
-      return answerStart($, e as unknown as Record<string, unknown>, e.tool_use_id)
+      return settleRefusals($, START_TOOL, e.tool_use_id, await answerStart($, e as unknown as Record<string, unknown>, e.tool_use_id))
     }
     if ((e.tool as string) === SUMMARY_TOOL) {
-      return answerSummary($, e as unknown as Record<string, unknown>, e.tool_use_id)
+      return settleRefusals($, SUMMARY_TOOL, e.tool_use_id, await answerSummary($, e as unknown as Record<string, unknown>, e.tool_use_id))
     }
     if ((e.tool as string) === DIGEST_TOOL) {
       return answerDigest($, e as unknown as Record<string, unknown>)
@@ -1663,6 +1755,7 @@ export const registerSetup: Register = on => {
       }))
     }
     const called = await next(e)
+    if (e.agentId === undefined && called.isError === true && quotientTool(e.tool as string) !== undefined) hasQuotientError = true
     const name = setupRunTool(e.tool as string)
     if (name !== undefined && called.deny === undefined && called.isError !== true && (await read($, run)).isRunning) {
       const sources = reviewedFrom(name, e as unknown as Record<string, unknown>, called.text)
@@ -1695,15 +1788,22 @@ export const registerSetup: Register = on => {
     return <Box />
   }).catch(($, e, next) => next(e))
 
-  // While setup's reviewers run, the main agent ends turns to wait on them,
-  // and Claude Code asks it for visible text when a turn ends with none, so
-  // it writes status lines the skill can't stop. They're drawn as nothing
-  // until the reviewers have reported; ctrl+o still shows them.
+  // Setup's main agent ends turns to wait on its subagents, and Claude Code
+  // asks it for visible text when a turn ends with none, the summary's turn
+  // too, so it writes status lines the skill can't stop. From the start
+  // message to the end of the summary's turn they're drawn as nothing, and
+  // stay so on every later draw; ctrl+o still shows them. After a Quotient
+  // error, text shows, since the skill has the agent show that error.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     const current = await read($, run)
-    if (!current.isRunning || current.start === null) return next(e)
-    const agents = await $.agent.list()
-    if (!agents.some(agent => agent.type === REVIEWER_AGENT && ACTIVE.includes(agent.status))) return next(e)
+    const key = messageKey('main', e.props.text)
+    const isQuiet = (current.isRunning && current.start !== null && !hasQuotientError) || isSummaryTurn
+    const isSetupText = isQuiet && !shownOutside.has(key)
+    if (isSetupText) hiddenNow.add(key)
+    if (!isSetupText && !(await wasHidden($, key))) {
+      shownOutside.add(key)
+      return next(e)
+    }
     const { Box } = $.ui.resolve(e)
     return <Box />
   }).catch(($, e, next) => next(e))
@@ -1729,6 +1829,10 @@ export const registerSetup: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.reason === 'aborted' && e.agentId === undefined) await endRun($)
     if (e.agentId !== undefined) return next(e)
+    // The turn's last text is drawn only after it completes.
+    if (isSummaryTurn && e.answer !== '') hiddenNow.add(messageKey('main', e.answer))
+    await keepHidden($)
+    isSummaryTurn = false
     // The summary's own turn is the only one that asks; any other ending drops it.
     const rowId = inviteRowId
     inviteRowId = null
@@ -1749,10 +1853,12 @@ export const registerSetup: Register = on => {
 
   on('session.end', async ($, e, next) => {
     inviteRowId = null
+    isSummaryTurn = false
     await endRun($)
+    hiddenNow.clear()
+    shownOutside.clear()
     return next(e)
   }).catch(($, e, next) => next(e))
-
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, run)
     if (!current.isRunning || e.props.hasSurvey) return next(e)
@@ -1773,8 +1879,8 @@ export const registerSetup: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // A setup subagent's finished line names its Agent call or its id. Its
-  // report-back names only its sender, so that row is matched by name, and
-  // only while the run goes on.
+  // report-back names only its sender, so that row is matched by name while
+  // the run goes on, and by its sender and text on every later draw.
   on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     if (e.props.isExpanded) return next(e)
     const current = await read($, run)
@@ -1783,9 +1889,10 @@ export const registerSetup: Register = on => {
       task !== undefined &&
       ((task.toolUseId !== undefined && current.toolUseIds.includes(task.toolUseId)) ||
         (task.id !== undefined && current.agentIds.includes(task.id)))
-    const isReport =
-      current.isRunning && e.props.origin.kind === 'peer' && from !== undefined && current.agentNames.includes(from.name)
-    if (!isFinished && !isReport) return next(e)
+    const key = from === undefined || e.props.origin.kind !== 'peer' ? null : messageKey(from.name, e.props.text)
+    const isReport = key !== null && current.isRunning && current.agentNames.includes(from?.name ?? '')
+    if (isReport) hiddenNow.add(key)
+    if (!isFinished && !isReport && !(key !== null && (await wasHidden($, key)))) return next(e)
     const { Box } = $.ui.resolve(e)
     return <Box />
   }).catch(($, e, next) => next(e))

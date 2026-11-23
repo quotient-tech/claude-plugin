@@ -293,6 +293,8 @@ test("a teammate check's notification keeps its ids and drops its report and out
   expect(kept).toContain('<task-id>a66abf</task-id>')
   expect(kept).toContain('<tool-use-id>toolu_check</tool-use-id>')
   expect(kept).toContain('The teammate check finished.')
+  // quotient counts the answers on the progress line; it doesn't show them one by one.
+  expect(kept).not.toContain('showed each answer')
   expect(kept.includes(PLANTED)).toBe(false)
   expect(kept.includes('output-file')).toBe(false)
   expect(checkNotice([{ type: 'text', text: NOTICE }], ['toolu_other'])).toBe(null)
