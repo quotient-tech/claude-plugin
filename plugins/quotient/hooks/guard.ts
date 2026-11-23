@@ -555,7 +555,7 @@ export function registerGuard(on: On): void {
     const where = async (): Promise<SandboxReach> => reachFor($, scope?.withRepos ?? false)
     // setup's teammate check searches the operator's sessions by design; it can't write or run a shell.
     const locked = scope?.tools === TEAMMATE_CHECK_TOOLS ? null : await lockedBy($)
-    const isCloud = (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
+    const isCloud = locked === 'setup' && (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
       (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? lockedToolDenial(e.tool, input, locked, isCloud)) ??
@@ -577,10 +577,12 @@ export function registerGuard(on: On): void {
     // While setup or a review runs, or when that can't be told, a read whose
     // check failed and any call outside their tools is refused.
     const locked = await lockedBy($).catch(() => 'review-frictions' as const)
-    const isCloud = await $.env
-      .get('CLAUDE_CODE_REMOTE')
-      .then(value => value === 'true')
-      .catch(() => true)
+    const isCloud =
+      locked === 'setup' &&
+      (await $.env
+        .get('CLAUDE_CODE_REMOTE')
+        .then(value => value === 'true')
+        .catch(() => true))
     if (locked !== null && (READ_TOOLS.includes(e.tool) || lockedToolDenial(e.tool, input, locked, isCloud) !== null)) {
       return { decision: 'deny', reason: FAILED }
     }
