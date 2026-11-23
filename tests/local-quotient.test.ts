@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -41,23 +41,119 @@ test("a call to the claude.ai Quotient connector is found in any of the run's tr
   assert.deepEqual(productionCalls([main, reviewer]), ["mcp__claude_ai_Quotient__list_teammate_frictions"]);
 });
 
-test("a run gets its own config folder that keeps old transcripts, keeps the token, and turns off claude.ai's servers", () => {
-  const { env, configDir } = runEnv({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "token" });
+/**
+ * Makes the checks' config folder in a sandbox, as the one-time sign-in leaves it.
+ * @param env - The sandbox's environment.
+ * @returns The folder.
+ */
+function checksFolder(env: NodeJS.ProcessEnv): string {
+  const folder = join(env.XDG_CONFIG_HOME!, "quotient", "claude-checks");
+  mkdirSync(join(folder, "plugins"), { recursive: true });
+  writeFileSync(join(folder, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: {} }));
+  return folder;
+}
+
+/**
+ * Saves a token where runEnv looks for one, in a sandbox's config folder.
+ * @param env - The sandbox's environment.
+ * @param text - The file's text.
+ * @param mode - The file's permissions, set after writing so the umask can't narrow them.
+ */
+function saveToken(env: NodeJS.ProcessEnv, text: string, mode: number): void {
+  const folder = join(env.XDG_CONFIG_HOME!, "quotient");
+  mkdirSync(folder, { recursive: true });
+  const file = join(folder, "check-token");
+  writeFileSync(file, text);
+  chmodSync(file, mode);
+}
+
+test("a run uses the checks folder, keeps old transcripts, keeps the token, and turns off claude.ai's servers", () => {
+  const { root, env } = sandbox();
+  const folder = checksFolder(env);
+  const { env: ran, cwd } = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" });
   try {
-    assert.equal(env.CLAUDE_CONFIG_DIR, configDir);
-    assert.deepEqual(readdirSync(configDir), ["settings.json"]);
-    const { cleanupPeriodDays } = JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")) as { cleanupPeriodDays: number };
+    assert.equal(ran.CLAUDE_CONFIG_DIR, folder);
+    const { cleanupPeriodDays } = JSON.parse(readFileSync(join(folder, "settings.json"), "utf8")) as { cleanupPeriodDays: number };
     const fixtureAgeDays = (Date.now() - Date.parse("2020-01-01")) / 86_400_000;
     assert.ok(cleanupPeriodDays > fixtureAgeDays * 2, "the fixture's 2020 sessions outlive Claude Code's startup cleanup for decades");
-    assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "token");
-    assert.equal(env.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
-    assert.equal(env.PATH, "/bin");
+    assert.equal(ran.CLAUDE_CODE_OAUTH_TOKEN, "token");
+    assert.equal(ran.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
+    assert.equal(ran.PATH, env.PATH);
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("a run refuses to start without a token, since a new config folder isn't signed in", () => {
+test("a run starts in a new empty folder, so no project's settings load plugins into it", () => {
+  const { root, env } = sandbox();
+  checksFolder(env);
+  const first = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" });
+  const second = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" });
+  try {
+    assert.deepEqual(readdirSync(first.cwd), []);
+    assert.notEqual(first.cwd, second.cwd);
+    assert.ok(!first.cwd.startsWith(join(import.meta.dirname, "..")));
+  } finally {
+    rmSync(first.cwd, { recursive: true, force: true });
+    rmSync(second.cwd, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run empties the checks folder's transcripts and keeps its other files and settings", () => {
+  const { root, env } = sandbox();
+  const folder = checksFolder(env);
+  mkdirSync(join(folder, "projects", "-earlier-run"), { recursive: true });
+  writeFileSync(join(folder, "projects", "-earlier-run", "session.jsonl"), "{}\n");
+  writeFileSync(join(folder, "settings.json"), JSON.stringify({ theme: "dark" }));
+  writeFileSync(join(folder, ".claude.json"), "{}");
+  const { cwd } = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" });
+  try {
+    assert.deepEqual(existsSync(join(folder, "projects")) ? readdirSync(join(folder, "projects")) : [], []);
+    assert.ok(existsSync(join(folder, ".claude.json")));
+    const settings = JSON.parse(readFileSync(join(folder, "settings.json"), "utf8")) as { theme: string; cleanupPeriodDays: number };
+    assert.equal(settings.theme, "dark");
+    assert.ok(settings.cleanupPeriodDays > 0);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run refuses when the checks folder doesn't exist, since it can't be signed in", () => {
+  const { root, env } = sandbox();
+  try {
+    assert.throws(() => runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" }), new RegExp(`${env.XDG_CONFIG_HOME}/quotient/claude-checks`));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run refuses a checks folder with an installed plugin, which could reach production", () => {
+  const { root, env } = sandbox();
+  const folder = checksFolder(env);
+  writeFileSync(join(folder, "plugins", "installed_plugins.json"), JSON.stringify({ version: 2, plugins: { "quotient@quotient": [{}] } }));
+  try {
+    assert.throws(() => runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token" }), /quotient@quotient/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run never uses the operator's own config folder", () => {
+  const { root, env } = sandbox();
+  const folder = checksFolder(env);
+  const { env: ran, cwd } = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "token", CLAUDE_CONFIG_DIR: "/home/op/.claude" });
+  try {
+    assert.equal(ran.CLAUDE_CONFIG_DIR, folder);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run refuses to start without a token", () => {
   assert.throws(() => runEnv({ PATH: "/bin" }), /CLAUDE_CODE_OAUTH_TOKEN/);
   const { root, env } = sandbox();
   try {
@@ -67,48 +163,30 @@ test("a run refuses to start without a token, since a new config folder isn't si
   }
 });
 
-/**
- * Saves a token where runEnv looks for one, in a sandbox's config folder.
- * @param env - The sandbox's environment.
- * @param text - The file's text.
- * @param mode - The file's permissions.
- */
-function saveToken(env: NodeJS.ProcessEnv, text: string, mode: number): void {
-  const folder = join(env.XDG_CONFIG_HOME!, "quotient");
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, "check-token"), text, { mode });
-}
-
 test("without the env var, a run signs in with the token saved in the config folder", () => {
   const { root, env } = sandbox();
+  checksFolder(env);
+  saveToken(env, "saved-token\n", 0o600);
+  const saved = runEnv(env);
+  const fromEnv = runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "env-token" });
   try {
-    saveToken(env, "saved-token\n", 0o600);
-    const { env: ran, configDir } = runEnv(env);
-    rmSync(configDir, { recursive: true, force: true });
-    assert.equal(ran.CLAUDE_CODE_OAUTH_TOKEN, "saved-token");
-    assert.equal(runEnv({ ...env, CLAUDE_CODE_OAUTH_TOKEN: "env-token" }).env.CLAUDE_CODE_OAUTH_TOKEN, "env-token");
+    assert.equal(saved.env.CLAUDE_CODE_OAUTH_TOKEN, "saved-token");
+    assert.equal(fromEnv.env.CLAUDE_CODE_OAUTH_TOKEN, "env-token");
   } finally {
+    rmSync(saved.cwd, { recursive: true, force: true });
+    rmSync(fromEnv.cwd, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("a run refuses a saved token that anyone else can read", () => {
   const { root, env } = sandbox();
+  checksFolder(env);
   try {
     saveToken(env, "saved-token\n", 0o644);
     assert.throws(() => runEnv(env), /chmod 600/);
   } finally {
     rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("a run never reuses the operator's config folder", () => {
-  const { configDir } = runEnv({ CLAUDE_CODE_OAUTH_TOKEN: "token", CLAUDE_CONFIG_DIR: "/home/op/.claude" });
-  try {
-    assert.notEqual(configDir, "/home/op/.claude");
-    assert.ok(existsSync(configDir));
-  } finally {
-    rmSync(configDir, { recursive: true, force: true });
   }
 });
 

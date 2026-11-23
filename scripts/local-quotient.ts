@@ -1,7 +1,7 @@
 // What the behavior checks need to run quotient's skills against a local
 // Quotient: a plugin copy that reaches it, the environment a run starts in,
 // and a check that no call went to production.
-import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isLocalQuotient, PLUGIN } from "./run-setup-fixture.ts";
@@ -24,25 +24,59 @@ export function pluginPointingAt(url: string): string {
 }
 
 /**
- * The environment a check runs `claude` in. A new config folder loads none of
- * the operator's plugins, so no installed quotient plugin reaches production
- * beside the copy under test, and no claude.ai server. Because the folder
- * holds no sign-in, the run signs in with a token from `claude setup-token`.
- * The env var turns claude.ai's servers off as well, in case the token's
- * account would otherwise bring them.
+ * The environment a check runs `claude` in. It uses the checks' own config
+ * folder, signed in once to the local Quotient, so no installed quotient
+ * plugin reaches production beside the copy under test. Its Quotient sign-in
+ * is kept where files can't show it, so whether it holds one shows only in a
+ * run's init message. The token from `claude setup-token` signs in to Claude
+ * itself, and the env var turns claude.ai's servers off.
  * @param base - The environment to start from, usually `process.env`.
- * @returns The run's environment, and its config folder, which the caller removes.
- * @throws When there's no token, or its saved file is readable by others.
+ * @returns The run's environment, its config folder, and a new empty folder to
+ *   start `claude` in, which the caller removes.
+ * @throws When there's no token or its saved file is readable by others, or the
+ *   checks folder is missing or has an installed plugin.
  */
-export function runEnv(base: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; configDir: string } {
+export function runEnv(base: NodeJS.ProcessEnv): { env: NodeJS.ProcessEnv; configDir: string; cwd: string } {
   const token = base.CLAUDE_CODE_OAUTH_TOKEN || savedToken(base);
-  // realpath: on macOS mkdtemp gives /var/..., but Claude Code reports /private/var/...
-  const configDir = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-config-")));
+  const configDir = join(configHome(base), "quotient", "claude-checks");
+  if (!existsSync(configDir)) throw new Error(`no checks folder at ${configDir}: sign in to the local Quotient there once first`);
+  const installed = installedPlugins(configDir);
+  if (installed.length > 0) throw new Error(`${configDir} has installed plugins, which could reach production: ${installed.join(", ")}`);
   // Claude Code deletes transcripts older than cleanupPeriodDays (30 unless
   // set) in the background as it starts, which would take the fixture's
   // dated sessions before setup lists them.
-  writeFileSync(join(configDir, "settings.json"), JSON.stringify({ cleanupPeriodDays: 100_000 }));
-  return { env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir };
+  const settingsFile = join(configDir, "settings.json");
+  const settings = existsSync(settingsFile) ? (JSON.parse(readFileSync(settingsFile, "utf8")) as Record<string, unknown>) : {};
+  writeFileSync(settingsFile, `${JSON.stringify({ ...settings, cleanupPeriodDays: 100_000 }, null, 2)}\n`);
+  // An earlier run's transcripts would be reviewed as the operator's sessions.
+  rmSync(join(configDir, "projects"), { recursive: true, force: true });
+  // A project's .claude/settings.json can turn plugins on, so start where there is none.
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "quotient-check-cwd-")));
+  return { env: { ...base, CLAUDE_CODE_OAUTH_TOKEN: token, CLAUDE_CONFIG_DIR: configDir, ENABLE_CLAUDEAI_MCP_SERVERS: "false" }, configDir, cwd };
+}
+
+/**
+ * The folder that holds the checks' token and config folder.
+ * @param base - The environment to read it from.
+ * @returns `$XDG_CONFIG_HOME`, or `~/.config`.
+ * @throws When neither XDG_CONFIG_HOME nor HOME is set.
+ */
+function configHome(base: NodeJS.ProcessEnv): string {
+  const home = base.XDG_CONFIG_HOME || (base.HOME && join(base.HOME, ".config"));
+  if (!home) throw new Error("set HOME or XDG_CONFIG_HOME to find the checks' config folder");
+  return home;
+}
+
+/**
+ * Lists the plugins installed in a Claude Code config folder.
+ * @param configDir - The config folder.
+ * @returns The installed plugins' names; none when the folder has no list.
+ */
+function installedPlugins(configDir: string): string[] {
+  const file = join(configDir, "plugins", "installed_plugins.json");
+  if (!existsSync(file)) return [];
+  const { plugins } = JSON.parse(readFileSync(file, "utf8")) as { plugins?: Record<string, unknown> };
+  return Object.keys(plugins ?? {});
 }
 
 /**
