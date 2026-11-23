@@ -63,9 +63,15 @@ export type ThanksDue = { solutionId: string; message?: string | null } | null
 
 /**
  * Each feature's line for the plugin's one status line; the first set one
- * shows. A value stored before `frictionsToFix` existed lacks it.
+ * shows. A value stored before `trialEnded` or `frictionsToFix` existed
+ * lacks it.
  */
-export type StatusParts = { setup: string | null; frictionsToFix?: string | null; fixes: string | null }
+export type StatusParts = {
+  trialEnded?: string | null
+  setup: string | null
+  frictionsToFix?: string | null
+  fixes: string | null
+}
 
 /** The kind of harm a friction did, as Quotient stores it. */
 export type FrictionImpact = 'SAFETY' | 'QUALITY' | 'BLOCKED' | 'OPERATOR_ATTENTION' | 'COST' | 'TIME'

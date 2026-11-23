@@ -199,14 +199,15 @@ export function readTrialEnded(result: McpToolResult): TrialEnded | null {
 }
 
 /**
- * The plugin's one status line:Claude Code keeps one per plugin, so a
- * running setup's progress shows over the count of frictions with new
- * teammate fixes, which shows over the count of fixes implemented.
+ * The plugin's one status line:Claude Code keeps one per plugin, so an
+ * ended trial shows over a running setup's progress, which shows over the
+ * count of frictions with new teammate fixes, which shows over the count of
+ * fixes implemented.
  * Claude Code puts "quotient:" in front of it, so no part names the plugin.
  *
  * @param parts - Each feature's part, null when it has none
  * @returns The line, or undefined to clear it
  */
 export function statusLine(parts: StatusParts): string | undefined {
-  return parts.setup ?? parts.frictionsToFix ?? parts.fixes ?? undefined
+  return parts.trialEnded ?? parts.setup ?? parts.frictionsToFix ?? parts.fixes ?? undefined
 }
