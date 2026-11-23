@@ -1278,6 +1278,24 @@ for (const name of ["find-solutions", "review-frictions"]) {
     assert.match(body, /If a Quotient tool returns an error, call `complete_daily_run` with that `runId` and `outcome: "failed"`, then stop/);
   });
 
+  // A daily run can start before Quotient's server connects, and must tell
+  // that apart from being signed out. A run may call only one server's tools,
+  // which can be either the plugin's or the connector's, so it never switches.
+  test(`${name}: a daily run calls again while Quotient's server connects, and tells that apart from a sign-in`, () => {
+    const { body } = skill(name);
+    assert.match(body, /when a Quotient tool isn't available, read the error before deciding you aren't signed in:/);
+    assert.match(body, /If it says the server asks for a sign-in, you aren't signed in\./);
+    assert.match(
+      body,
+      /call the same tool again, up to 3 more times\. Don't switch between the `mcp__plugin_quotient_agex__` and `mcp__claude_ai_Quotient__` tools: a daily run can call only one server's\./,
+    );
+    assert.ok(!body.includes("Don't switch to the `mcp__claude_ai_Quotient__` tools"), "a daily run may be started on the connector");
+    assert.match(
+      body,
+      /If it still isn't available, say exactly "Quotient's server didn't connect\." and stop, calling nothing else, not even `complete_daily_run`\./,
+    );
+  });
+
   test(`${name}: a daily run whose sign-in ends stops and sends nothing more`, () => {
     assert.match(
       skill(name).body,

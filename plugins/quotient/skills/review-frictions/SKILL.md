@@ -14,7 +14,12 @@ The arguments are: $ARGUMENTS
 
 If they start with `daily` followed by a run id, this is a daily run: quotient started it in the background, and the run id is the `runId` for `complete_daily_run`. Otherwise, skip this section.
 
-In a daily run, nobody is at the prompt: never ask the operator anything. Where a step below says to stop, do what this section says first:
+In a daily run, nobody is at the prompt: never ask the operator anything. Quotient's server may still be connecting when the run starts, so when a Quotient tool isn't available, read the error before deciding you aren't signed in:
+- If it says the server asks for a sign-in, you aren't signed in.
+- Otherwise, call the same tool again, up to 3 more times. Don't switch between the `mcp__plugin_quotient_agex__` and `mcp__claude_ai_Quotient__` tools: a daily run can call only one server's.
+- If it still isn't available, say exactly "Quotient's server didn't connect." and stop, calling nothing else, not even `complete_daily_run`. The next session's claim resumes the run.
+
+Where a step below says to stop, do what this section says first:
 - If you aren't signed in, or a call fails because the sign-in ended, stop and call nothing else, not even `complete_daily_run`. The next session's claim resumes the run.
 - If a Quotient tool returns an error, call `complete_daily_run` with that `runId` and `outcome: "failed"`, then stop.
 - At the end, in place of the Summary, call `complete_daily_run` with that `runId`, `outcome: "succeeded"` and `counts`: `sent`: how many reviews you sent; `withFix`: how many of those were `fixed`. Do this even when there was nothing to check.
