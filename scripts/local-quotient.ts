@@ -97,6 +97,37 @@ function savedToken(base: NodeJS.ProcessEnv): string {
   return token;
 }
 
+/** The parts of a headless run's init message that show what it could reach. */
+export type InitMessage = {
+  type: "system";
+  subtype: "init";
+  mcp_servers: { name: string; status: string }[];
+  plugins: { name: string; path: string }[];
+};
+
+// Claude Code's own mods load with every run and reach no Quotient.
+const BUILT_IN = "builtin";
+
+/**
+ * Fails a check whose run could have reached anything but the local Quotient.
+ * @param init - The run's init message.
+ * @param copy - The plugin copy's folder, as `--plugin-dir` named it.
+ * @throws When a claude.ai server loaded, a plugin other than the copy and
+ *   Claude Code's built-in mods loaded, the copy didn't load, or
+ *   `plugin:quotient:agex` isn't connected.
+ */
+export function assertLocalOnly(init: InitMessage, copy: string): void {
+  const connector = init.mcp_servers.find(({ name }) => name.startsWith("claude.ai"));
+  if (connector) throw new Error(`the run loaded ${connector.name}, which reaches production`);
+  const others = init.plugins.filter(({ path }) => path !== copy && path !== BUILT_IN);
+  if (others.length > 0) throw new Error(`the run loaded plugins beside the copy: ${others.map(({ name, path }) => `${name} (${path})`).join(", ")}`);
+  if (!init.plugins.some(({ path }) => path === copy)) throw new Error(`the plugin copy at ${copy} didn't load`);
+  const agex = init.mcp_servers.find(({ name }) => name === "plugin:quotient:agex");
+  if (agex?.status !== "connected") {
+    throw new Error(`plugin:quotient:agex is ${agex?.status ?? "missing"}: start the local Quotient on port 3000, and sign in to it from the checks folder`);
+  }
+}
+
 // The claude.ai Quotient connector always reaches production, whichever
 // Quotient the plugin's own server names.
 const CONNECTOR = /^mcp__claude_ai_Quotient__/;

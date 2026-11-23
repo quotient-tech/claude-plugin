@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, wr
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 
-import { pluginPointingAt, productionCalls, runEnv } from "../scripts/local-quotient.ts";
+import { assertLocalOnly, type InitMessage, pluginPointingAt, productionCalls, runEnv } from "../scripts/local-quotient.ts";
 import { sandbox } from "./helpers/sandbox.ts";
 
 type Line = Record<string, unknown>;
@@ -209,4 +209,47 @@ test("a run refuses a saved token that anyone else can read", () => {
 
 test("a run that reaches Quotient only through the plugin's server has no production calls", () => {
   assert.deepEqual(productionCalls([[calls("mcp__plugin_quotient_agex__submit_frictions")], []]), []);
+});
+
+const COPY = "/tmp/quotient-check-plugin-abc/quotient";
+// A headless run's init message as Claude Code wrote it, with the plugin copy
+// connected to the local Quotient.
+const LOCAL_RUN: InitMessage = {
+  type: "system",
+  subtype: "init",
+  mcp_servers: [
+    { name: "plugin:quotient:agex", status: "connected" },
+    { name: "quotient", status: "connected" },
+  ],
+  plugins: [
+    { name: "quotient", path: COPY },
+    { name: "cc-plugin-agents-md", path: "builtin" },
+    { name: "cc-plugin-telemetry", path: "builtin" },
+  ],
+};
+
+test("a run whose only Quotient is the plugin copy's local server is trusted", () => {
+  assert.doesNotThrow(() => assertLocalOnly(LOCAL_RUN, COPY));
+});
+
+test("a run is refused when the copy's server didn't connect, as when the folder isn't signed in", () => {
+  const failed = { ...LOCAL_RUN, mcp_servers: [{ name: "plugin:quotient:agex", status: "failed" }] };
+  assert.throws(() => assertLocalOnly(failed, COPY), /plugin:quotient:agex.*failed/);
+  const missing = { ...LOCAL_RUN, mcp_servers: [{ name: "quotient", status: "connected" }] };
+  assert.throws(() => assertLocalOnly(missing, COPY), /plugin:quotient:agex/);
+});
+
+test("a run is refused when a claude.ai server loaded, since the connector reaches production", () => {
+  const withConnector = { ...LOCAL_RUN, mcp_servers: [...LOCAL_RUN.mcp_servers, { name: "claude.ai Quotient", status: "connected" }] };
+  assert.throws(() => assertLocalOnly(withConnector, COPY), /claude\.ai Quotient/);
+});
+
+test("a run is refused when a plugin other than the copy and the built-in mods loaded", () => {
+  const installed = { ...LOCAL_RUN, plugins: [...LOCAL_RUN.plugins, { name: "quotient", path: "/home/op/.claude/plugins/cache/quotient" }] };
+  assert.throws(() => assertLocalOnly(installed, COPY), /\/home\/op\/\.claude\/plugins\/cache\/quotient/);
+});
+
+test("a run is refused when the copy didn't load, since a missing --plugin-dir starts claude anyway", () => {
+  const noCopy = { ...LOCAL_RUN, plugins: LOCAL_RUN.plugins.filter(({ path }) => path === "builtin") };
+  assert.throws(() => assertLocalOnly(noCopy, COPY), /copy/);
 });
