@@ -741,6 +741,19 @@ test("setup: shows the start message once the routines are listed, then stays qu
   assert.match(body, /automated runs/i);
 });
 
+// A cloud session holds no claude.ai sign-in, so RemoteTrigger can't read
+// routines there; quotient refuses it, and the skill mustn't wait on them.
+test("setup: in a cloud session, reviews only this session and reads no cloud routine runs", () => {
+  const { body } = skill("setup");
+  const goal = body.slice(body.indexOf("## Goal"), body.indexOf("## Agent Experiences"));
+  assert.match(goal, /In a cloud session, review only this session/);
+  assert.ok(!goal.includes("review it and the cloud routine runs"), "the goal still sends a cloud session to the routine runs");
+  const routines = body.slice(body.indexOf("## Cloud routines"), body.indexOf("## Start message"));
+  assert.match(routines, /^## Cloud routines\nIn a cloud session, skip this section\./);
+  const start = body.slice(body.indexOf("## Start message"), body.indexOf("## Progress"));
+  assert.match(start, /In a cloud session, call it with `cloudRuns: 0`, without listing any routines/);
+});
+
 // Subagents reviewing in parallel would race on friction numbering and queue
 // duplicates, and a run that records progress only at the end can't resume.
 test("setup: only the main agent writes frictions and records progress, after every batch", () => {
