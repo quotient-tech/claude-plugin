@@ -136,6 +136,8 @@ export type SetupStart = {
   lastDay: string
   /** Whether setup also checks the operator's setup for fixes to teammates' frictions. */
   checksTeammates: boolean
+  /** Whether setup runs in a cloud session, where it reviews no cloud routine runs. */
+  isCloud?: boolean
 }
 
 /** What a setup tool's result row draws, by the call's tool_use_id. */

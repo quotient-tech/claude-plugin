@@ -1801,6 +1801,41 @@ test('a pinned window counts only the 14 days before its end, and the start mess
   expect(shown).toContain('from Oct 16 to Oct 29')
 })
 
+test('in a cloud session, setup_start reviews no cloud routine runs and says, dimmed, that only a local setup reads them', async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'true' } })
+  await $.command.run(TYPED_SETUP)
+
+  const { called, texts, shown } = await drawStart($, { cloudRuns: 10, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+
+  expect(called.deny).toBeUndefined()
+  expect(shown).toContain('Reviewing 64 sessions and 3 automated runs from Oct 15 to Oct 29')
+  expect(shown).not.toContain('cloud routine run from')
+  const line = texts.find(one => one.text === 'Cloud routine runs are reviewed only when you run setup in Claude Code on your computer.')
+  expect(line?.props.dimColor).toBe(true)
+})
+
+test("in a cloud session, setup_start's reply tells the agent it set cloudRuns to 0", async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'true' } })
+  await $.command.run(TYPED_SETUP)
+
+  const { called } = await drawStart($, { cloudRuns: 10, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+
+  expect(String(called.result)).toContain(
+    'This is a cloud session, so quotient set `cloudRuns` to 0: review no routine runs. The start message is shown to the operator.',
+  )
+})
+
+test("in a local session, setup_start keeps the cloud routine runs and doesn't mention a cloud session", async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'false' } })
+  await $.command.run(TYPED_SETUP)
+
+  const { called, shown } = await drawStart($, { cloudRuns: 10, firstDay: 'Oct 15', lastDay: 'Oct 29' })
+
+  expect(shown).toContain('10 cloud routine runs')
+  expect(shown).not.toContain('Cloud routine runs are reviewed only')
+  expect(String(called.result)).not.toContain('cloud session')
+})
+
 test("a pinned window moves start_setup_run's startedAt to the window's end, so the skill reviews those two weeks", async ($, on) => {
   engine(on, { env: { QUOTIENT_SETUP_WINDOW_END: '2026-10-30' } })
   await $.command.run(TYPED_SETUP)
