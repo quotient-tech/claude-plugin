@@ -47,6 +47,8 @@ const SKIPPED_SHOWN = 'The operator sees that the fix was skipped. End your turn
 const TRIAL_ENDED_REASON = "your company's Quotient trial has ended"
 const TRIAL_ENDED_RESULT =
   "The edit is in place, but Quotient didn't record it because your company's Quotient trial has ended. Tell the operator that in one line, then end your turn: don't retry or call any other quotient tool."
+const TRIAL_ENDED_THANKS_RESULT =
+  "The thanks wasn't sent because your company's Quotient trial has ended. Tell the operator that in one line, then end your turn: don't retry or call any other quotient tool."
 const RECORDED_SHOWN =
   'The operator sees "Fix implemented" under your "✓ Applied." line. Now call fix_thanks with the same solutionId, and write nothing before it.'
 const THANKS_OVER = 'The operator has answered. End your turn now: write nothing else.'
@@ -518,6 +520,11 @@ async function answerThanks(
   }
 
   const sent = await sendThanks($, solutionId, message)
+  if (sent !== 'sent' && sent.error === TRIAL_ENDED_REASON) {
+    await update($, thanksDue, () => null)
+    await show({ failure: sent })
+    return { result: TRIAL_ENDED_THANKS_RESULT }
+  }
   if (sent !== 'sent') {
     await update($, thanksDue, () => ({ solutionId, message }))
     await show({ failure: sent })

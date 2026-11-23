@@ -57,6 +57,7 @@ function typed(command: string) {
  * @param opts.sessionId - What `$.session.id()` answers
  * @param opts.stored - Values an earlier session left in the plugin's state, by key
  * @param opts.isPlaced - Whether a pane opens
+ * @param opts.openThrows - Whether opening a pane throws
  * @param opts.isCopied - Whether a copy reaches the clipboard
  * @param opts.callFails - Whether every call to Quotient rejects
  * @returns What the plugin did, and a switch for the trial
@@ -69,6 +70,7 @@ function engine(
     sessionId?: string
     stored?: Record<string, unknown>
     isPlaced?: boolean
+    openThrows?: boolean
     isCopied?: boolean
     callFails?: boolean
   } = {},
@@ -127,6 +129,7 @@ function engine(
   })
   on('ui.open', (_, e) => {
     seen.opened.push({ ...e })
+    if (opts.openThrows) throw new Error('no surface is attached')
     return { value: opts.isPlaced === false ? { isPlaced: false, reason: 'no-surface: a test' } : { isPlaced: true } }
   })
   on('ui.close', (_, e) => {
@@ -348,7 +351,9 @@ test("a copy that doesn't reach the clipboard says to click the link instead", a
   await ui.press({ key: 'billing' })
   await ui.unmount()
 
-  expect((await drawPane($)).shown).toContain("Couldn't copy. Click the link instead")
+  const { shown } = await drawPane($)
+  expect(shown).toContain("Couldn't copy. Click the link instead")
+  expect(shown).toContain('app.getquotient.com/billing')
 })
 
 test('Close closes the pane', async ($, on) => {
@@ -359,6 +364,15 @@ test('Close closes the pane', async ($, on) => {
   await ui.press({ key: 'close' })
 
   expect(seen.closed).toEqual(['trial-ended'])
+})
+
+test('a pane that throws as it opens still leaves the command answered with the text, and running nothing', async ($, on) => {
+  const seen = await endedSession($, on, { openThrows: true })
+
+  const ran = await $.command.run(typed('quotient:find-solutions'))
+
+  expect(ran.text).toContain("Your company's Quotient trial has ended")
+  expect(seen.skills).toEqual([])
 })
 
 test("where no pane can open, the command says the same as text and still runs nothing", async ($, on) => {
@@ -454,11 +468,15 @@ test("after a reload, the status line still reads 'trial ended'", async ($, on) 
       statusParts: { trialEnded: 'trial ended', setup: null, frictionsToFix: null, fixes: null },
     },
   })
+  // Quotient answers again, so only the stored record can keep the line.
+  seen.ended = false
 
   await $.session.start(INTERACTIVE)
   await clock.settle()
 
   expect(seen.status.at(-1)).toBe('trial ended')
+  expect((await $.command.run(typed('quotient:list-fixes'))).text).toBe(OPENED)
+  expect(seen.skills).toEqual([])
 })
 
 test('a call to Quotient that fails is sent once', async ($, on) => {

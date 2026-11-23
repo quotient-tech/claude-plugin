@@ -121,8 +121,13 @@ async function openPane($: EngineInterface): Promise<boolean> {
  * @returns The command's answer
  */
 async function answerEnded($: EngineInterface, ended: Ended): Promise<{ text: string }> {
-  if (await openPane($)) return { text: OPENED }
-  await $.ui.close({ id: PANE })
+  // A pane that can't open, or throws, still leaves the command answered.
+  try {
+    if (await openPane($)) return { text: OPENED }
+    await $.ui.close({ id: PANE })
+  } catch {
+    // Falls back to the text.
+  }
   return { text: endedText(ended) }
 }
 
@@ -323,7 +328,7 @@ export function registerTrialEnded(on: On): void {
                 ) : wasCopied ? (
                   COPIED
                 ) : (
-                  NOT_COPIED
+                  [`${NOT_COPIED}: `, <Link key="link" href={billingUrl} label={linkLabel(billingUrl)} />]
                 ),
               hasFocus: true,
               onPress: async press => {
