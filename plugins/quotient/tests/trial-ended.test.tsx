@@ -12,7 +12,37 @@ const ONE_FIX_PAGE = JSON.stringify({
   nextCursor: null,
 })
 
+type Api = Parameters<TestBody>[0]
 type On = Parameters<TestBody>[1]
+
+const COMMANDS = ['setup', 'list-fixes', 'fix-friction', 'find-solutions', 'review-frictions'].map(name => `quotient:${name}`)
+const SKILL_TEXT = 'the skill ran'
+const OPENED = 'Opened Quotient in a side pane'
+const BILLING = 'https://app.getquotient.com/billing'
+const NON_ADMIN_REFUSAL = `${ENDED} Ask a Quotient admin at your company to upgrade its plan.`
+const PANE = {
+  plugin: 'quotient',
+  component: 'Pane',
+  requestId: 'trial-ended',
+  props: {
+    title: 'Quotient',
+    isFocused: true,
+    bodyColumns: 80,
+    placement: 'dock',
+    scroll: { offset: 0, bodyRows: 30 },
+    view: {},
+  },
+} as const
+
+/**
+ * The person typing a command at the prompt.
+ *
+ * @param command - The command's name
+ * @returns The command's run
+ */
+function typed(command: string) {
+  return { command, args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 200 } } as const
+}
 
 /**
  * Fakes the engine around the plugin: Quotient answers every tool with the
@@ -24,11 +54,20 @@ type On = Parameters<TestBody>[1]
  * @param opts.page - The page `list_my_frictions` sends while it hasn't
  * @param opts.sessionId - What `$.session.id()` answers
  * @param opts.stored - Values an earlier session left in the plugin's state, by key
+ * @param opts.isPlaced - Whether a pane opens
+ * @param opts.isCopied - Whether a copy reaches the clipboard
  * @returns What the plugin did, and a switch for the trial
  */
 function engine(
   on: On,
-  opts: { refusal?: string; page?: string; sessionId?: string; stored?: Record<string, unknown> } = {},
+  opts: {
+    refusal?: string
+    page?: string
+    sessionId?: string
+    stored?: Record<string, unknown>
+    isPlaced?: boolean
+    isCopied?: boolean
+  } = {},
 ) {
   const seen = {
     ended: true,
@@ -36,6 +75,10 @@ function engine(
     status: [] as (string | undefined)[],
     logs: [] as string[],
     sessionIdAsks: 0,
+    skills: [] as string[],
+    opened: [] as Record<string, unknown>[],
+    closed: [] as string[],
+    copied: [] as string[],
   }
   mock.env(on, { HOME: '/home/op' })
   on('mcp.connect', () => ({ value: { isConnected: true, server: SERVER } }))
@@ -73,6 +116,22 @@ function engine(
       return { value: { isSet: true, version: kept.version + 1 } }
     })
   }
+  on('command.run', (_, e) => {
+    seen.skills.push(e.command)
+    return { text: SKILL_TEXT }
+  })
+  on('ui.open', (_, e) => {
+    seen.opened.push({ ...e })
+    return { value: opts.isPlaced === false ? { isPlaced: false, reason: 'no-surface: a test' } : { isPlaced: true } }
+  })
+  on('ui.close', (_, e) => {
+    seen.closed.push(e.id)
+    return { value: undefined }
+  })
+  on('ui.copy', (_, e) => {
+    seen.copied.push(e.text)
+    return { value: opts.isCopied === false ? { isCopied: false, reason: 'no-clipboard' } : { isCopied: true } } as never
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__quotient__${e.name}` } }))
@@ -153,4 +212,136 @@ test("a trial end an earlier session saw doesn't carry over: the next session cl
   await clock.settle()
 
   expect(seen.status.at(-1)).toBe('1 friction to fix · run /list-fixes')
+})
+
+/**
+ * Starts an interactive session whose first read Quotient refuses, so the
+ * session knows the trial has ended.
+ *
+ * @param $ - The engine
+ * @param on - Adds the test's hooks
+ * @param opts - The fake's settings
+ * @returns What the plugin did
+ */
+async function endedSession($: Api, on: On, opts: Parameters<typeof engine>[1] = {}) {
+  const clock = mock.clock(on)
+  const seen = engine(on, opts)
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  return seen
+}
+
+/**
+ * Draws the trial-ended pane and returns what it shows.
+ *
+ * @param $ - The engine
+ * @returns The mounted pane and its joined text
+ */
+async function drawPane($: Api) {
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const shown = (await ui.findAll({ type: 'Text' })).map(text => text.text).join('\n')
+  return { ui, shown }
+}
+
+for (const command of COMMANDS) {
+  test(`once the trial has ended, /${command} opens the trial-ended pane and runs nothing`, async ($, on) => {
+    const seen = await endedSession($, on)
+    const callsBefore = seen.calls.length
+
+    const ran = await $.command.run(typed(command))
+
+    expect(ran.text).toBe(OPENED)
+    expect(seen.opened.map(open => open.id)).toEqual(['trial-ended'])
+    expect(seen.skills).toEqual([])
+    expect(seen.calls.length).toBe(callsBefore)
+  })
+}
+
+test("an admin's pane says the trial ended, offers the Billing page and Close, and shows none of Quotient's text", async ($, on) => {
+  await endedSession($, on)
+  await $.command.run(typed('quotient:list-fixes'))
+
+  const { shown } = await drawPane($)
+
+  for (const line of [
+    'TRIAL ENDED',
+    "Your company's Quotient trial has ended",
+    'Quotient has stopped for everyone at your company.',
+    'Frictions and fixes from the trial are kept, and come back when your company upgrades.',
+    'Upgrade on the Billing page to turn it back on.',
+    'Open Billing',
+    BILLING,
+    'Close',
+    'any /quotient command shows this again',
+    '↑↓ choose · Enter select · Esc close',
+  ]) {
+    expect(shown).toContain(line)
+  }
+  expect(shown).not.toContain('free trial')
+  expect(shown).not.toContain('Ask a company admin')
+})
+
+test("anyone else's pane says to ask a company admin, and offers only Close", async ($, on) => {
+  await endedSession($, on, { refusal: NON_ADMIN_REFUSAL })
+  await $.command.run(typed('quotient:list-fixes'))
+
+  const { shown } = await drawPane($)
+
+  for (const line of [
+    'TRIAL ENDED',
+    "Your company's Quotient trial has ended",
+    'Ask a company admin to upgrade to turn it back on.',
+    "Only a company admin can upgrade. Quotient doesn't contact them for you.",
+    '1. Close',
+    'Enter select · Esc close',
+  ]) {
+    expect(shown).toContain(line)
+  }
+  expect(shown).not.toContain('Open Billing')
+  expect(shown).not.toContain('billing')
+  expect(shown).not.toContain('↑↓')
+})
+
+test("Enter on Open Billing copies the Billing page's address and says so", async ($, on) => {
+  const seen = await endedSession($, on)
+  await $.command.run(typed('quotient:list-fixes'))
+  const { ui } = await drawPane($)
+
+  await ui.press({ key: 'billing' })
+
+  await ui.unmount()
+
+  expect(seen.copied).toEqual([BILLING])
+  expect((await drawPane($)).shown).toContain('Copied the Billing link')
+})
+
+test("a copy that doesn't reach the clipboard says to click the link instead", async ($, on) => {
+  await endedSession($, on, { isCopied: false })
+  await $.command.run(typed('quotient:list-fixes'))
+  const { ui } = await drawPane($)
+
+  await ui.press({ key: 'billing' })
+  await ui.unmount()
+
+  expect((await drawPane($)).shown).toContain("Couldn't copy. Click the link instead")
+})
+
+test('Close closes the pane', async ($, on) => {
+  const seen = await endedSession($, on)
+  await $.command.run(typed('quotient:list-fixes'))
+  const { ui } = await drawPane($)
+
+  await ui.press({ key: 'close' })
+
+  expect(seen.closed).toEqual(['trial-ended'])
+})
+
+test("where no pane can open, the command says the same as text and still runs nothing", async ($, on) => {
+  const seen = await endedSession($, on, { isPlaced: false })
+
+  const ran = await $.command.run(typed('quotient:find-solutions'))
+
+  expect(ran.text).toContain("Your company's Quotient trial has ended")
+  expect(ran.text).toContain(BILLING)
+  expect(seen.skills).toEqual([])
 })

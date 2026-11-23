@@ -203,6 +203,7 @@ declare module 'claude-code' {
       thanksDue: Shaped<ThanksDue>
       statusParts: StatusParts
       trialEnded: TrialEndedRecord
+      trialEndedCopied: boolean | null
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
       setupHiddenMessages: Shaped<string[]>
