@@ -5,6 +5,14 @@ when_to_use: When asked to review, audit or clean up your own Quotient frictions
 allowed-tools: mcp__plugin_quotient_agex__list_my_frictions, mcp__claude_ai_Quotient__list_my_frictions, mcp__plugin_quotient_agex__submit_friction, mcp__claude_ai_Quotient__submit_friction, mcp__plugin_quotient_agex__submit_review, mcp__claude_ai_Quotient__submit_review, mcp__plugin_quotient_agex__complete_daily_run, mcp__claude_ai_Quotient__complete_daily_run, mcp__quotient__review_sessions, mcp__quotient__review_digest
 ---
 
+## If the trial has ended
+
+If any Quotient tool's reply starts with "Your company's Quotient free trial has ended", stop: make no more Quotient calls, and reply only:
+
+> Your company's Quotient trial has ended. Run any /quotient command for details.
+
+This comes before every other rule here about errors.
+
 ## Daily run
 
 The arguments are: $ARGUMENTS

@@ -5,6 +5,14 @@ disable-model-invocation: true
 allowed-tools: mcp__plugin_quotient_agex__list_my_frictions, mcp__claude_ai_Quotient__list_my_frictions
 ---
 
+## If the trial has ended
+
+If any Quotient tool's reply starts with "Your company's Quotient free trial has ended", stop: make no more Quotient calls, and reply only:
+
+> Your company's Quotient trial has ended. Run any /quotient command for details.
+
+This comes before every other rule here about errors.
+
 # List fixes
 
 ## What the operator sees

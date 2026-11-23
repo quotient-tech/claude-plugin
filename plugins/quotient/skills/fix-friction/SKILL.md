@@ -6,6 +6,14 @@ argument-hint: "[frictionId] [solutionId]"
 allowed-tools: 'mcp__plugin_quotient_agex__list_my_frictions, mcp__claude_ai_Quotient__list_my_frictions, mcp__plugin_quotient_agex__mark_solution_implemented, mcp__claude_ai_Quotient__mark_solution_implemented, mcp__plugin_quotient_agex__send_thank_you, mcp__claude_ai_Quotient__send_thank_you, mcp__quotient__fix_card, mcp__quotient__fix_outcome, mcp__quotient__fix_thanks, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}")'
 ---
 
+## If the trial has ended
+
+If any Quotient tool's reply starts with "Your company's Quotient free trial has ended", stop: make no more Quotient calls, and reply only:
+
+> Your company's Quotient trial has ended. Run any /quotient command for details.
+
+This comes before every other rule here about errors.
+
 # Fix a friction
 
 Friction ID, then solution ID, either or both may be missing: $ARGUMENTS
