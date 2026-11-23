@@ -26,6 +26,28 @@ test("the session's own home folder is found wherever it is", () => {
   })
 })
 
+test("the session's Claude Code config folder is found wherever it is, and only when it's given", () => {
+  const kind = "the Claude Code config folder's path"
+  expect(privateText({ prompt: 'Edit /cfg/settings.json' }, HOME, ['/cfg'])).toEqual({ field: 'prompt', kind })
+  expect(privateText({ prompt: 'Grep /cfg' }, HOME, ['/cfg/'])).toEqual({ field: 'prompt', kind })
+  expect(privateText({ prompt: 'Edit /cfg/settings.json' }, HOME)).toBe(null)
+  expect(privateText({ prompt: 'Edit /cfgx/settings.json or src/cfg/a.ts' }, HOME, ['/cfg'])).toBe(null)
+  // A config folder reached through a link has two paths, and both are found.
+  expect(privateText({ prompt: 'Edit /srv/profile/CLAUDE.md' }, HOME, ['/cfg-link', '/srv/profile'])).toEqual({ field: 'prompt', kind })
+})
+
+test('a folder path that ends a sentence or a clause is still found, and a longer name is not', () => {
+  const kind = "the Claude Code config folder's path"
+  expect(privateText({ description: 'The config folder is /cfg.' }, HOME, ['/cfg'])).toEqual({ field: 'description', kind })
+  expect(privateText({ description: 'Search /cfg, then the repo' }, HOME, ['/cfg'])).toEqual({ field: 'description', kind })
+  expect(privateText({ description: 'Its settings (see /cfg) changed' }, HOME, ['/cfg'])).toEqual({ field: 'description', kind })
+  expect(privateText({ description: 'Edit /cfg.d/x or /cfgx or src/cfg/a' }, HOME, ['/cfg'])).toBe(null)
+  expect(privateText({ prompt: 'Files live under /srv/op-home.' }, '/srv/op-home')).toEqual({
+    field: 'prompt',
+    kind: 'an absolute path in a home folder',
+  })
+})
+
 test('an email address is found', () => {
   expect(privateText({ title: 'Ask jane.doe@example.com about CI' }, HOME)).toEqual({
     field: 'title',
