@@ -280,7 +280,7 @@ test("an admin's pane says the trial ended, offers the Billing page and Close, a
     'Frictions and fixes from the trial are kept, and come back when your company upgrades.',
     'Upgrade on the Billing page to turn it back on.',
     'Open Billing',
-    BILLING,
+    'app.getquotient.com/billing',
     'Close',
     'any /quotient command shows this again',
     '↑↓ choose · Enter select · Esc close',
@@ -289,6 +289,7 @@ test("an admin's pane says the trial ended, offers the Billing page and Close, a
   }
   expect(shown).not.toContain('free trial')
   expect(shown).not.toContain('Ask a company admin')
+  expect(shown).not.toContain('https://')
 })
 
 test("anyone else's pane says to ask a company admin, and offers only Close", async ($, on) => {

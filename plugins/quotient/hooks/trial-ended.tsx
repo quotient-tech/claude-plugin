@@ -82,6 +82,18 @@ function endedText(ended: Ended): string {
 }
 
 /**
+ * Names a link the way the pane shows it: its host and path, without the
+ * scheme.
+ *
+ * @param url - The link
+ * @returns Its host and path, such as "app.getquotient.com/billing"
+ */
+function linkLabel(url: string): string {
+  const { host, pathname } = new URL(url)
+  return `${host}${pathname}`
+}
+
+/**
  * Opens the pane with focus, so Enter and Esc reach it.
  *
  * @param $ - The engine
@@ -304,7 +316,13 @@ export function registerTrialEnded(on: On): void {
               number: 1,
               label: OPEN_BILLING,
               note:
-                wasCopied === null ? <Link href={billingUrl} /> : wasCopied ? COPIED : NOT_COPIED,
+                wasCopied === null ? (
+                  <Link href={billingUrl} label={linkLabel(billingUrl)} />
+                ) : wasCopied ? (
+                  COPIED
+                ) : (
+                  NOT_COPIED
+                ),
               hasFocus: true,
               onPress: async press => {
                 const result = await $.ui.copy({ text: billingUrl, surface: press.surface })
