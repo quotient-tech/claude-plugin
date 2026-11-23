@@ -220,6 +220,7 @@ Each denial, with Claude Code's reason, is in the debug log (`claude --debug`), 
 
 ## Report an issue
 
+- **Get help:** if quotient keeps failing to reach Quotient, or Quotient keeps returning errors, email <support@getquotient.com>.
 - **Bugs and feature requests:** open a [GitHub issue](https://github.com/quotient-tech/claude-plugin/issues). Leave out names, emails, home paths, hostnames, tokens and text from private sessions.
 - **Security issues:** don't open a public issue. Report them privately as [SECURITY.md](SECURITY.md) says.
 
