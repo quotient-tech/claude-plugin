@@ -345,3 +345,42 @@ test("where no pane can open, the command says the same as text and still runs n
   expect(ran.text).toContain(BILLING)
   expect(seen.skills).toEqual([])
 })
+
+test("a trial that ends mid-session is caught by the command's own call: the pane opens instead of the command's skill", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on)
+  seen.ended = false
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  seen.ended = true
+
+  const ran = await $.command.run(typed('quotient:list-fixes'))
+
+  expect(ran.text).toBe(OPENED)
+  expect(seen.opened.map(open => open.id)).toContain('trial-ended')
+  expect(seen.status.at(-1)).toBe('trial ended')
+})
+
+test("while the trial hasn't ended, a command runs as it always did", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on)
+  seen.ended = false
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  const ran = await $.command.run(typed('quotient:find-solutions'))
+
+  expect(ran.text).toBe(SKILL_TEXT)
+  expect(seen.skills).toEqual(['quotient:find-solutions'])
+  expect(seen.sessionIdAsks).toBe(0)
+})
+
+test("a trial end kept by an earlier session doesn't block this session's commands", async ($, on) => {
+  const seen = engine(on, { sessionId: 's2', stored: { trialEnded: { sessionId: 's1', billingUrl: null } } })
+  seen.ended = false
+
+  const ran = await $.command.run(typed('quotient:find-solutions'))
+
+  expect(ran.text).toBe(SKILL_TEXT)
+  expect(seen.opened).toEqual([])
+})

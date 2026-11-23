@@ -203,11 +203,15 @@ export function registerTrialEnded(on: On): void {
     return called
   }).catch(($, e, next) => next(e))
 
-  // Added before every command's own hook, so it runs outside them.
+  // Added before every command's own hook, so it runs outside them. A trial
+  // end the command's own calls find replaces what the command answered, such
+  // as list-fixes handing itself to its skill.
   on('command.run', { command: COMMANDS }, async ($, e, next) => {
     const ended = await endedThisSession($)
     if (ended !== null) return answerEnded($, ended)
-    return next(e)
+    const ran = await next(e)
+    const endedNow = await endedThisSession($)
+    return endedNow === null ? ran : answerEnded($, endedNow)
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
