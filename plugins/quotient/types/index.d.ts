@@ -73,6 +73,13 @@ export type StatusParts = {
   fixes: string | null
 }
 
+/**
+ * The session in which Quotient first refused a call because the company's
+ * trial had ended, and the Billing page's address when the operator is an
+ * admin; null when no session has seen it.
+ */
+export type TrialEndedRecord = { sessionId: string; billingUrl: string | null } | null
+
 /** The kind of harm a friction did, as Quotient stores it. */
 export type FrictionImpact = 'SAFETY' | 'QUALITY' | 'BLOCKED' | 'OPERATOR_ATTENTION' | 'COST' | 'TIME'
 
@@ -195,6 +202,7 @@ declare module 'claude-code' {
       fixesImplemented: number
       thanksDue: Shaped<ThanksDue>
       statusParts: StatusParts
+      trialEnded: TrialEndedRecord
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
       setupHiddenMessages: Shaped<string[]>
