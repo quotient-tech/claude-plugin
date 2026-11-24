@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { launchArgs, sideLoadedRoot } from '../hooks/daily'
+import { CLAIMED_KEY, launchArgs, sideLoadedRoot } from '../hooks/daily'
 import { denial } from './fixtures/denial'
 
 type On = Parameters<TestBody>[1]
@@ -16,6 +16,7 @@ const CONNECTOR = 'claude.ai Quotient'
 const INTERACTIVE = { cwd: '/repo', surface: 'terminal', isInteractive: true } as const
 const HEADLESS = { cwd: '/data', surface: null, isInteractive: false } as const
 const NOT_DUE = '{"due":false}'
+const HOUR_MS = 60 * 60 * 1000
 const DENIED =
   "Quotient's daily runs didn't start: Claude Code denied the call to Quotient. Why: https://github.com/quotient-tech/claude-plugin#if-claude-code-denies-quotients-calls"
 // Starts the run detached from the session, in its own folder, after
@@ -93,6 +94,8 @@ function launch(
  * @param opts.transcripts - What `find` lists as the recent transcripts, or `rejects`
  * @param opts.findExit - The exit code of that `find`, 0 when absent
  * @param opts.isFindTruncated - Whether that `find`'s output was cut off
+ * @param opts.store - What the plugin's store holds at the start
+ * @param opts.failedReads - Which reads of the store reject, counted from 1
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part, the invite reminder and the thank-yous check made
@@ -111,6 +114,8 @@ function engine(
     transcripts?: string[] | 'rejects'
     findExit?: number
     isFindTruncated?: boolean
+    store?: Record<string, unknown>
+    failedReads?: number[]
   } = {},
 ) {
   const seen = {
@@ -124,8 +129,19 @@ function engine(
     debugged: [] as string[],
     answered: 0,
     otherReads: 0,
+    store: { ...opts.store } as Record<string, unknown>,
   }
   mock.env(on, { HOME: '/home/op', ...opts.env })
+  let reads = 0
+  on('store.get', (_, e) => {
+    reads += 1
+    if ((opts.failedReads ?? []).includes(reads)) throw new Error('store read failed')
+    return { value: seen.store[e.key] }
+  })
+  on('store.set', (_, e) => {
+    seen.store[e.key] = e.value
+    return { value: undefined }
+  })
   on('mcp.connect', (_, e) => {
     seen.connected.push(e.server)
     return { value: opts.connect ?? { isConnected: true, server: SERVER } }
@@ -364,6 +380,148 @@ test('completing a run that could not start, when Claude Code denies it, logs th
   expect(seen.logs).toEqual([])
   expect(seen.debugged.filter(line => line.startsWith('quotient daily: complete_daily_run denied: '))).toHaveLength(1)
 })
+
+/**
+ * The kinds the mod claimed, in the order it claimed them.
+ *
+ * @param seen - What the mod called
+ * @returns Each claim's kind
+ */
+function claimedKinds(seen: { calls: { tool: string; args: Record<string, unknown> }[] }): unknown[] {
+  return seen.calls.filter(call => call.tool === 'claim_daily_run').map(call => call.args.kind)
+}
+
+test('a run this machine claimed is not claimed again for a day, so its permission prompt shows at most once a day', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await clock.advance(23 * HOUR_MS)
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(claimedKinds(seen)).toEqual(['find-solutions', 'review-frictions'])
+  expect(seen.launched).toHaveLength(2)
+})
+
+test('a day after this machine claimed a run, the next session claims it again', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await clock.advance(24 * HOUR_MS)
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(claimedKinds(seen)).toEqual(['find-solutions', 'review-frictions', 'find-solutions', 'review-frictions'])
+})
+
+test('only the kind this machine claimed is skipped; a kind that was not due is claimed again', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1') } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(claimedKinds(seen)).toEqual(['find-solutions', 'review-frictions', 'review-frictions'])
+})
+
+test('with both kinds claimed in the last day, the session does not connect for the claims', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  const connects = seen.connected.length - seen.otherReads
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.connected.length - seen.otherReads).toBe(connects)
+  expect(seen.logs).toEqual(["Quotient started today's find-solutions and review-frictions runs in the background."])
+})
+
+test("a due claim is kept as soon as it returns, while the other kind's claim still waits on its prompt", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') },
+    wait: { clock, ms: HOUR_MS, kind: 'review-frictions' },
+  })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(5_000)
+  await starting
+
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {})).toEqual(['find-solutions'])
+  await clock.advance(HOUR_MS)
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {}).sort()).toEqual(['find-solutions', 'review-frictions'])
+})
+
+test("a store read that fails while keeping the second claim's time leaves the first claim's time in place", async ($, on) => {
+  const clock = mock.clock(on)
+  // Read 1 is the session's start; 2 and 3 are each claim's save, find-solutions first.
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') },
+    wait: { clock, ms: 1_000, kind: 'review-frictions' },
+    failedReads: [3],
+  })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(5_000)
+  await starting
+  await clock.settle()
+
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {})).toEqual(['find-solutions'])
+  expect(seen.debugged.filter(line => line.startsWith('quotient daily: keeping the claim time failed: '))).toHaveLength(1)
+})
+
+test('a claim Claude Code denied is not kept, so the next session claims again', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { denied: { claims: ['find-solutions', 'review-frictions'] } })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(claimedKinds(seen)).toHaveLength(4)
+  expect(seen.store[CLAIMED_KEY]).toBeUndefined()
+})
+
+test('a run claimed but unable to start is still kept, since the server marks it failed and waits a day', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { claims: { 'find-solutions': due('run-1') }, launchRejects: true })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(claimedKinds(seen)).toEqual(['find-solutions', 'review-frictions', 'review-frictions'])
+})
+
+const UNREADABLE_CLAIM_TIMES = [
+  { scenario: 'anything but an object of times', stored: ['find-solutions'] },
+  { scenario: 'a time that is not a number', stored: { 'find-solutions': '2026-11-24', 'review-frictions': null } },
+  {
+    scenario: 'a time ahead of the clock',
+    stored: { 'find-solutions': Number.MAX_SAFE_INTEGER, 'review-frictions': Number.MAX_SAFE_INTEGER },
+  },
+]
+for (const { scenario, stored } of UNREADABLE_CLAIM_TIMES) {
+  test(`a store holding ${scenario} claims both kinds`, async ($, on) => {
+    const clock = mock.clock(on)
+    const seen = engine(on, { store: { [CLAIMED_KEY]: stored } })
+
+    await $.session.start(INTERACTIVE)
+    await clock.settle()
+
+    expect(claimedKinds(seen)).toEqual(['find-solutions', 'review-frictions'])
+  })
+}
 
 const FIND_TOOLS = [
   'mcp__plugin_quotient_agex__list_teammate_frictions',
