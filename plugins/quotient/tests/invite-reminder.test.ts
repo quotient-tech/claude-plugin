@@ -284,9 +284,13 @@ test('a read that hangs neither holds the start past 2 seconds nor stops the nex
   expect(await starting).toEqual({ cwd: '/repo' })
   expect(isStarted).toBe(true)
 
-  await clock.advance(3_000)
+  await clock.advance(2_999)
+  expect(seen.logs.filter(log => log.text.includes('invite reminder'))).toEqual([])
+  await clock.advance(1)
   expect(seen.status).toEqual([])
-  expect(seen.logs.filter(log => log.text.includes('invite reminder')).every(log => log.to === 'debug')).toBe(true)
+  expect(seen.logs.filter(log => log.text.includes('invite reminder'))).toEqual([
+    { text: 'quotient invite reminder: get_invite_link gave no usable reply', to: 'debug' },
+  ])
 
   await clock.advance(FIFTEEN_MINUTES)
   expect(seen.calls.length).toBe(2)
