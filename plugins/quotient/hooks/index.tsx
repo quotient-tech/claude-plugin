@@ -2,7 +2,8 @@
 // one adds each feature's hooks: the /quotient:list-fixes pane, the fix
 // flow's card and outcome rows, /quotient:setup's start message, quiet run
 // and summary, the daily runs, the usage sent after each turn, the status
-// line's count of frictions with new teammate fixes, the toasts for
+// line's count of frictions with new teammate fixes, the end of a company's
+// trial, the toasts for
 // teammates' thank-yous, the permission check that lets the mods' own
 // calls reach Quotient, and the sandbox that holds quotient's unattended
 // agents to their tools and reads. A session
@@ -19,6 +20,7 @@ import { registerReview, REVIEW_TOOLS_SPECS } from './review'
 import { registerSetup, SETUP_TOOLS_SPECS } from './setup'
 import { registerTeammateText } from './teammate-text'
 import { registerThankYous } from './thank-yous'
+import { registerTrialEnded } from './trial-ended'
 import { registerUsage } from './usage'
 
 /**
@@ -33,6 +35,9 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // Added first, so its hooks run outside every other feature's: it sees each
+  // reply to the plugin's own calls as Quotient sent it.
+  registerTrialEnded(on)
   registerGuard(on)
   registerTeammateText(on)
 

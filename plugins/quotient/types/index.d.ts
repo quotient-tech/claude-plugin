@@ -70,9 +70,23 @@ export type ThanksDue = { solutionId: string; message?: string | null } | null
 
 /**
  * Each feature's line for the plugin's one status line; the first set one
- * shows. A value stored before `frictionsToFix` existed lacks it.
+ * shows. A value stored before `trialEnded` or `frictionsToFix` existed
+ * lacks it.
  */
-export type StatusParts = { setup: string | null; frictionsToFix?: string | null; fixes: string | null }
+export type StatusParts = {
+  trialEnded?: string | null
+  setup: string | null
+  frictionsToFix?: string | null
+  fixes: string | null
+}
+
+/**
+ * The session in which Quotient first refused a call because the company's
+ * trial had ended, whether the operator is an admin, and the Billing page's
+ * address when the refusal held one the pane may link to; null when no
+ * session has seen it.
+ */
+export type TrialEndedRecord = { sessionId: string; isAdmin: boolean; billingUrl: string | null } | null
 
 /** The kind of harm a friction did, as Quotient stores it. */
 export type FrictionImpact = 'SAFETY' | 'QUALITY' | 'BLOCKED' | 'OPERATOR_ATTENTION' | 'COST' | 'TIME'
@@ -196,6 +210,8 @@ declare module 'claude-code' {
       fixesImplemented: number
       thanksDue: Shaped<ThanksDue>
       statusParts: StatusParts
+      trialEnded: TrialEndedRecord
+      trialEndedCopied: boolean | null
       setupDrawn: Shaped<SetupDrawn>
       setupRun: Shaped<SetupRun>
       setupHiddenMessages: Shaped<string[]>

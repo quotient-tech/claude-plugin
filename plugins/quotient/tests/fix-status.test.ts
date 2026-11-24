@@ -85,6 +85,18 @@ test("setup's progress shows over the frictions to fix, which show over the fixe
   expect(statusLine({ setup: null, fixes: '1 fix implemented' })).toBe('1 fix implemented')
 })
 
+test('an ended trial shows over every other part', () => {
+  const parts = {
+    trialEnded: 'trial ended',
+    setup: 'setup · 0 of 77 sources reviewed',
+    frictionsToFix: '2 frictions to fix · run /list-fixes',
+    fixes: '1 fix implemented',
+  }
+  expect(statusLine(parts)).toBe('trial ended')
+  // A value stored before the trial-ended part existed lacks it.
+  expect(statusLine({ setup: 'setup · 0 of 77 sources reviewed', fixes: null })).toBe('setup · 0 of 77 sources reviewed')
+})
+
 test('a friction with two new teammate fixes counts once', () => {
   const page = readFixPage(reply([friction([fix(), fix()])]))
   expect(page === null ? null : countNewFixFrictions(page.frictions)).toBe(1)

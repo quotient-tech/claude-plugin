@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { Elements, EngineInterface, Register } from 'claude-code'
 
 import type { FixInProgress, FrictionRow, FrictionView, SolutionRow, TeammateTextMode } from '../types'
-import { callFailure, errorText, readPage, SERVER_KEY, serverFor } from './state'
+import { callFailure, errorText, readPage, readTrialEnded, SERVER_KEY, serverFor } from './state'
 import { DENIED_HELP, plural } from './text'
 import { impactLabel } from './impact'
 
@@ -38,6 +38,10 @@ const DETAIL_FIXED_LINES = 10
 const OPENED = 'Opened your frictions in a side pane'
 const NO_FIXES = "No fixes from teammates yet. They'll show up in the status line when they arrive."
 const ALL_APPLIED = "You've applied every teammate fix so far. New ones will show up in the status line when they arrive."
+// What readRows finds when Quotient refused for an ended trial, and what the
+// command says then should no pane replace it.
+const TRIAL_ENDED = 'trialEnded'
+const TRIAL_ENDED_TEXT = "Your company's Quotient trial has ended. Run any /quotient command for details."
 const DENIED = `The Quotient pane couldn't read your frictions because Claude Code denied its call to Quotient. Why: ${DENIED_HELP}`
 const CLOSED = 'Closed. Your fixes will be here when you come back.'
 const NOTE = 'Only frictions with a teammate fix left to apply are listed.'
@@ -81,19 +85,19 @@ async function findServer($: EngineInterface): Promise<string | null> {
  * Reads every page of the operator's frictions from Quotient's MCP server.
  *
  * @param $ - The engine
- * @returns The rows, or null when there's no server to read from or any page
- *   isn't rows
+ * @returns The rows; `trialEnded` when Quotient refused for an ended trial;
+ *   null when there's no server to read from or any page isn't rows
  * @throws When the tool call rejects
  */
-async function readRows($: EngineInterface): Promise<FrictionRow[] | null> {
+async function readRows($: EngineInterface): Promise<FrictionRow[] | typeof TRIAL_ENDED | null> {
   const server = await findServer($)
   if (server === null) return null
   const list: FrictionRow[] = []
   let cursor: string | null = null
   do {
-    const page = readPage(
-      await $.mcp.call(server, 'list_my_frictions', cursor === null ? { format: 'rows' } : { format: 'rows', cursor }),
-    )
+    const result = await $.mcp.call(server, 'list_my_frictions', cursor === null ? { format: 'rows' } : { format: 'rows', cursor })
+    if (readTrialEnded(result) !== null) return TRIAL_ENDED
+    const page = readPage(result)
     if (page === null) {
       $.ui.log('quotient list-fixes: list_my_frictions gave no usable page', { to: 'debug' })
       return null
@@ -370,7 +374,7 @@ export const registerListFixes: Register = on => {
     // Listing again ends a fix picked earlier whose flow never ended, even
     // when the list then falls back to text or has nothing to show.
     await update($, working, () => null)
-    let list: FrictionRow[] | null
+    let list: FrictionRow[] | typeof TRIAL_ENDED | null
     try {
       list = await readRows($)
     } catch (error) {
@@ -381,6 +385,9 @@ export const registerListFixes: Register = on => {
       throw error
     }
     if (list === null) return next(e)
+    // Answered here, not by the skill: the trial-ended hook outside this one
+    // can replace a printed answer with its pane, but not a skill it opened.
+    if (list === TRIAL_ENDED) return { text: TRIAL_ENDED_TEXT }
     if (list.length === 0) return { text: NO_FIXES }
     // The pane lists only work left to do: a friction leaves it once no
     // teammate fix is left to apply.

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { callFailure, errorText } from '../hooks/state'
+import { callFailure, errorText, readTrialEnded } from '../hooks/state'
 
 /**
  * An error shaped as Claude Code 2.1.296 and 2.1.317 reject `$.mcp.call`
@@ -94,4 +94,88 @@ test('errorText reads any thrown value without throwing', () => {
   expect(errorText('plain text')).toBe('plain text')
   expect(errorText(undefined)).toBe('undefined')
   expect(errorText({ toString: () => { throw new Error('no') } })).toBe('an unreadable error')
+})
+
+const ENDED = "Your company's Quotient free trial has ended, so the plugin has stopped working."
+
+/**
+ * A tool reply with one text block.
+ *
+ * @param text - The block's text
+ * @param isError - Whether the server reported the call as failed
+ * @returns The reply
+ */
+function textReply(text: string, isError = true) {
+  return { content: [{ type: 'text' as const, text }], isError }
+}
+
+test("an admin's trial-ended refusal gives the billing link", () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: https://app.getquotient.com/billing`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: 'https://app.getquotient.com/billing' })
+})
+
+test("a non-admin's trial-ended refusal gives no billing link", () => {
+  const result = textReply(`${ENDED} Ask a Quotient admin at your company to upgrade its plan.`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: false, billingUrl: null })
+})
+
+test("a billing link over plain http is not taken, and the refusal is still an admin's", () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: http://app.getquotient.com/billing`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
+})
+
+test('a link to any page but billing is not taken', () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: https://app.getquotient.com/frictions`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
+})
+
+test('a malformed link is not taken', () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: https://`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
+})
+
+test('a successful reply that starts with the same words is not a trial end', () => {
+  expect(readTrialEnded(textReply(ENDED, false))).toBeNull()
+})
+
+test('another refusal is not a trial end', () => {
+  expect(readTrialEnded(textReply('Only a manager or engineer on a team in Quotient can share frictions.'))).toBeNull()
+})
+
+test('a refusal with no text is not a trial end', () => {
+  expect(readTrialEnded({ content: [], isError: true })).toBeNull()
+})
+
+test('the trial-ended words anywhere but the start are not a trial end', () => {
+  expect(readTrialEnded(textReply(`None of these frictions was recorded. ${ENDED}`))).toBeNull()
+})
+
+test("a billing link on Quotient's dev host is taken", () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: https://dev.getquotient.com/billing`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: 'https://dev.getquotient.com/billing' })
+})
+
+test("a billing link on any host outside Quotient's domain is not taken", () => {
+  for (const url of [
+    'https://evil.example/billing',
+    'https://getquotient.com.evil.example/billing',
+    'https://evilgetquotient.com/billing',
+  ]) {
+    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ isAdmin: true, billingUrl: null })
+  }
+})
+
+test("a billing link on this machine is taken, so a local Quotient's admin gets one", () => {
+  for (const url of ['http://localhost:3000/billing', 'http://127.0.0.1:3000/billing', 'https://localhost/billing']) {
+    expect(readTrialEnded(textReply(`${ENDED} Upgrade your plan to use it again: ${url}`))).toEqual({ isAdmin: true, billingUrl: url })
+  }
+})
+
+test('a host that only starts like this machine is not taken', () => {
+  const result = textReply(`${ENDED} Upgrade your plan to use it again: http://localhost.evil.example/billing`)
+  expect(readTrialEnded(result)).toEqual({ isAdmin: true, billingUrl: null })
+})
+
+test("a trial end that ends in neither way is not an admin's", () => {
+  expect(readTrialEnded(textReply(ENDED))).toEqual({ isAdmin: false, billingUrl: null })
 })

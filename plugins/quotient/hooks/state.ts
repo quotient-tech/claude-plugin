@@ -169,15 +169,64 @@ export function readPage(result: McpToolResult): RowsPage | null {
   }
 }
 
+// How Quotient starts every refusal once a company's trial has ended. An
+// admin's refusal goes on to say to upgrade, ending with the Billing page's
+// address; anyone else's names no address. The address is kept only on
+// Quotient's own domain over https, or on this machine, where a local
+// Quotient runs, so a reply can't put another site behind the pane's link.
+const TRIAL_ENDED = "Your company's Quotient free trial has ended, so the plugin has stopped working."
+const ADMIN_ENDING = 'Upgrade your plan to use it again:'
+const BILLING_URL = /https?:\/\/\S+$/
+const QUOTIENT_DOMAIN = 'getquotient.com'
+const THIS_MACHINE = ['localhost', '127.0.0.1']
+
+/** A company's ended trial, as a refusal tells it. */
+export type TrialEnded = { isAdmin: boolean; billingUrl: string | null }
+
 /**
- * The plugin's one status line: Claude Code keeps one per plugin, so a
- * running setup's progress shows over the count of frictions with new
- * teammate fixes, which shows over the count of fixes implemented.
+ * Tells whether a link may stand behind the pane's Billing link.
+ *
+ * @param url - The link
+ * @returns Whether it is the Billing page on Quotient's domain over https,
+ *   or on this machine
+ */
+function isBillingPage(url: URL): boolean {
+  if (url.pathname !== '/billing') return false
+  if (THIS_MACHINE.includes(url.hostname)) return true
+  const isQuotient = url.hostname === QUOTIENT_DOMAIN || url.hostname.endsWith(`.${QUOTIENT_DOMAIN}`)
+  return url.protocol === 'https:' && isQuotient
+}
+
+/**
+ * Tells a refusal for an ended trial apart from any other reply, whether it
+ * was an admin's, and takes the Billing page's address from it when it holds
+ * one the pane may link to. Nothing else of the refusal's text is kept.
+ *
+ * @param result - A Quotient tool's reply
+ * @returns The ended trial, its address null when the refusal holds none the
+ *   pane may link to; null for any other reply
+ */
+export function readTrialEnded(result: McpToolResult): TrialEnded | null {
+  const text = result.content.find(block => block.type === 'text')
+  if (!result.isError || text?.type !== 'text' || typeof text.text !== 'string') return null
+  if (!text.text.startsWith(TRIAL_ENDED)) return null
+  const isAdmin = text.text.slice(TRIAL_ENDED.length).trim().startsWith(ADMIN_ENDING)
+  const found = isAdmin ? text.text.trim().match(BILLING_URL)?.[0] : undefined
+  if (found === undefined || !URL.canParse(found)) return { isAdmin, billingUrl: null }
+  const url = new URL(found)
+  return { isAdmin, billingUrl: isBillingPage(url) ? url.href : null }
+}
+
+/**
+ * The plugin's one status line:Claude Code keeps one per plugin, so an
+ * ended trial shows over a running setup's progress, which shows over the
+ * count of frictions with new teammate fixes, which shows over the count of
+ * fixes implemented.
  * Claude Code puts "quotient:" in front of it, so no part names the plugin.
  *
  * @param parts - Each feature's part, null when it has none
  * @returns The line, or undefined to clear it
  */
 export function statusLine(parts: StatusParts): string | undefined {
-  return parts.setup ?? parts.frictionsToFix ?? parts.fixes ?? undefined
+  return parts.trialEnded ?? parts.setup ?? parts.frictionsToFix ?? parts.fixes ?? undefined
 }

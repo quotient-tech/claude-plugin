@@ -5,6 +5,14 @@ disable-model-invocation: true
 allowed-tools: 'mcp__plugin_quotient_agex__start_setup_run, mcp__claude_ai_Quotient__start_setup_run, mcp__plugin_quotient_agex__record_setup_progress, mcp__claude_ai_Quotient__record_setup_progress, mcp__plugin_quotient_agex__submit_frictions, mcp__claude_ai_Quotient__submit_frictions, mcp__plugin_quotient_agex__finish_setup_run, mcp__claude_ai_Quotient__finish_setup_run, mcp__plugin_quotient_agex__list_teammate_frictions, mcp__claude_ai_Quotient__list_teammate_frictions, Skill(quotient:find-solutions), mcp__quotient__setup_start, mcp__quotient__setup_digest, mcp__quotient__setup_summary, Bash(echo "cloud session: ${CLAUDE_CODE_REMOTE-false}"), Bash(git remote get-url origin), Agent(quotient:setup-reviewer)'
 ---
 
+## If the trial has ended
+
+If any Quotient tool's reply starts with "Your company's Quotient free trial has ended", stop: make no more Quotient calls, and reply only:
+
+> Your company's Quotient trial has ended. Run any /quotient command for details.
+
+This comes before every other rule here about errors.
+
 ## Setup run
 
 If you don't have quotient's `mcp__quotient__setup_start` tool, the quotient plugin's hooks module didn't load, and nothing would keep teammates' fixes out of the review. Say exactly this and stop, calling nothing else:

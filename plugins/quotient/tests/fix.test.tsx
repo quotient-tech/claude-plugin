@@ -606,6 +606,21 @@ test("a failed record whose reply names the fix's id shows no id", async ($, on)
   expect(shown).toContain(SUPPORT)
 })
 
+test("a record refused because the trial ended says so in the plugin's own words, and offers no retry", async ($, on) => {
+  const refusal =
+    "Your company's Quotient free trial has ended, so the plugin has stopped working. Upgrade your plan to use it again: https://app.getquotient.com/billing"
+  engine(on, { recorded: [{ text: refusal, isError: true }] })
+
+  const called = await callTool($, OUTCOME_TOOL, 'toolu_fail', { solutionId: 's-1', outcome: 'applied' })
+  const shown = await drawRow($, 'ToolUse', OUTCOME_TOOL, 'toolu_fail')
+
+  expect(shown).toContain("your company's Quotient trial has ended")
+  expect(shown).not.toContain('free trial')
+  expect(shown).not.toContain('billing')
+  expect(called.result).not.toMatch(/offer to retry/)
+  expect(called.result).toMatch(/end your turn/)
+})
+
 test('a record Claude Code denied says so in the row, and the debug log has the reason', async ($, on) => {
   const seen = engine(on, { markRejects: 'denied' })
 
@@ -901,6 +916,22 @@ for (const { name, sent, signedOutAfter, reason, hasSupport } of FAILED_SENDS) {
     expect(seen.toasts).toEqual([])
   })
 }
+
+test("a thanks refused because the trial ended says so in the plugin's own words, and offers no retry", async ($, on) => {
+  const refusal =
+    "Your company's Quotient free trial has ended, so the plugin has stopped working. Upgrade your plan to use it again: https://app.getquotient.com/billing"
+  engine(on, { thanks: HIGH_FIVE, sent: [{ text: refusal, isError: true }] })
+  await recordFix($)
+
+  const called = await callTool($, THANKS_TOOL, 'toolu_thanks', { solutionId: 's-1' })
+  const shown = await drawRow($, 'ToolUse', THANKS_TOOL, 'toolu_thanks')
+
+  expect(shown).toContain("your company's Quotient trial has ended")
+  expect(shown).not.toContain('free trial')
+  expect(shown).not.toContain('billing')
+  expect(called.result).not.toMatch(/offer to retry/)
+  expect(called.result).toMatch(/end your turn/)
+})
 
 test('a retry after a failed send sends the same choice again without asking twice', async ($, on) => {
   const seen = engine(on, { thanks: HIGH_FIVE, sent: ['throw'] })
