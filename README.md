@@ -193,7 +193,7 @@ If Claude already read a teammate's fix in this session, further scanning waits 
 
 ### If Claude Code denies quotient's calls
 
-Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, the invite link after `/quotient:setup`'s summary, and, in the background, the status line's count, checks for thank-yous, and token usage. Claude Code lets them run unless a deny rule or a hook steps in, such as another plugin's permission hook that asks you or denies them. To have them run without a hook getting in the way, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
+Some of quotient's calls to Quotient happen outside any skill: the `/quotient:list-fixes` pane, recording a fix, the daily runs, the invite link after `/quotient:setup`'s summary, and, in the background, the status line's count and invite reminder, checks for thank-yous, and token usage. Claude Code lets them run unless a deny rule or a hook steps in, such as another plugin's permission hook that asks you or denies them. To have them run without a hook getting in the way, add these rules to `~/.claude/settings.json`, merging them into any `permissions.allow` list you already have:
 
 ```json
 {

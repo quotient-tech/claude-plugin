@@ -50,6 +50,8 @@ At the start of an interactive local session, the plugin asks Quotient whether a
 
 The plugin shows a count of your frictions that have a teammate's fix you haven't applied yet. It's read again every 15 minutes, after each answered turn and after `/quotient:list-fixes`.
 
+During a trial, if nobody else has joined your company two days after you first finished `/quotient:setup`, the status line reads `invite a teammate` with the address of the web app's Invite page. It's read again every 15 minutes and goes away once a teammate joins or asks to join. A count of frictions to fix shows instead while there is one.
+
 ## After your company's trial ends
 
 When your company's Quotient trial ends, the plugin stops for everyone at your company. The status line reads `trial ended`, and every command above opens a pane that says so instead of running. A company admin's pane links to the Billing page, and Enter copies the link. Anyone else is told to ask a company admin to upgrade. Daily runs don't start.
