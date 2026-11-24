@@ -769,6 +769,42 @@ test("while setup runs, RemoteTrigger may only read routines and their runs", as
   for (const action of ['create', 'update', 'run']) expect(await check($, 'RemoteTrigger', { action })).toBe('deny')
 })
 
+test('while setup runs in a cloud session, RemoteTrigger is refused, saying only a local setup reads routine runs', async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'true' } })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  for (const action of ['list', 'get', 'list_runs', 'get_run_log']) {
+    const verdict = await $.tool.check({ tool: 'RemoteTrigger', input: { action } } as Parameters<Engine['tool']['check']>[0])
+    expect(verdict).toEqual({
+      decision: 'deny',
+      reason: 'Cloud routine runs are reviewed only when you run setup in Claude Code on your computer.',
+    })
+  }
+})
+
+test('while setup runs in a cloud session, a tool search naming RemoteTrigger is refused, and other tool searches run', async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'true' } })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'ToolSearch', { query: 'select:RemoteTrigger' })).toBe('deny')
+  expect(await check($, 'ToolSearch', { query: 'select:Read,remotetrigger' })).toBe('deny')
+  expect(await check($, 'ToolSearch', { query: 'select:AskUserQuestion' })).toBe('allow')
+})
+
+test('while setup runs in a local session, a tool search naming RemoteTrigger runs', async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'false' } })
+  await $.command.run({ ...COMMAND, command: 'quotient:setup' })
+
+  expect(await check($, 'ToolSearch', { query: 'select:RemoteTrigger' })).toBe('allow')
+  expect(await check($, 'RemoteTrigger', { action: 'list' })).toBe('allow')
+})
+
+test('outside setup, a cloud session may load RemoteTrigger', async ($, on) => {
+  engine(on, { env: { CLAUDE_CODE_REMOTE: 'true' } })
+
+  expect(await check($, 'ToolSearch', { query: 'select:RemoteTrigger' })).toBe('allow')
+})
+
 test("while review-frictions runs, only its own Quotient tools may run", async ($, on) => {
   engine(on)
   await $.command.run({ ...COMMAND, command: 'quotient:review-frictions' })

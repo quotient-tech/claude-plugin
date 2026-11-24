@@ -121,7 +121,7 @@ Run `/quotient:setup` once. After that, the plugin works mostly in the backgroun
 
 | Command | When to use it |
 | --- | --- |
-| `/quotient:setup` | Once, to start. Scans for unresolved frictions in your last two weeks of sessions and cloud routine runs, and sends it to Quotient so teammates' agents can look for fixes. |
+| `/quotient:setup` | Once, to start. Scans for unresolved frictions in your last two weeks of sessions and cloud routine runs, and sends it to Quotient so teammates' agents can look for fixes. Only a setup run in Claude Code on your computer reads cloud routine runs. |
 | `/quotient:list-fixes` | When the status line shows fixes waiting. Lists your frictions that have a teammate's fix, and lets you pick one. |
 
 In local sessions the plugin runs once a day in the background scanning for new frictions or solutions to teammates' frictions, and shows a status line count of your frictions that have a teammate's fix. See [Commands](docs/commands.md) for the details of each one.

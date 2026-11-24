@@ -11,6 +11,10 @@ export const DENIED_HELP = 'https://github.com/quotient-tech/claude-plugin#if-cl
 // import it, so they repeat it word for word.
 export const SUPPORT = 'If this keeps happening, email support@getquotient.com.'
 
+// Why setup reviews no cloud routine runs in a cloud session: RemoteTrigger
+// signs in with the operator's claude.ai sign-in, which a cloud machine lacks.
+export const CLOUD_ROUTINES_LOCAL_ONLY = 'Cloud routine runs are reviewed only when you run setup in Claude Code on your computer.'
+
 // A friction id, a UUID (session ids), or an email: never shown to the
 // operator. The plugin's own constants, such as SUPPORT, aren't checked.
 export const FORBIDDEN = [

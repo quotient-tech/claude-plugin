@@ -50,7 +50,7 @@ Only that agent type may read teammates' frictions, and it can read nothing but 
 ## Goal
 Find me any unresolved frictions or room for improvement the agent experienced across all sessions over the two weeks before the run's `startedAt`.
 
-Include local Claude Code sessions and automated runs (transcripts under `~/.claude/projects/`; an automated run is one started by a script or the Agent SDK) and cloud routine runs (scheduled remote agents). In a cloud session, the local sessions are only this session: review it and the cloud routine runs.
+Include local Claude Code sessions and automated runs (transcripts under `~/.claude/projects/`; an automated run is one started by a script or the Agent SDK) and cloud routine runs (scheduled remote agents). In a cloud session, review only this session: cloud routine runs are reviewed only when setup runs on the operator's computer.
 
 quotient's `setup_start` tool counts the local sessions and automated runs itself, and its reply says how many. It also lists them, so don't list, count or search the transcripts before calling `setup_start`. If its reply doesn't say, count them yourself: the `.jsonl` transcripts in the folders under `~/.claude/projects/` changed in the last two weeks, leaving out the sessions listed below. The automated runs are the ones that hold `"entrypoint":"sdk-`, and the sessions are the rest.
 
@@ -75,6 +75,8 @@ _Use when_ the reviewer agent failed to catch a mistake.
 - **Information access**: look for opportunities to increase the agent's access to information. Teeing dev server logs, readonly access to third-party services. _Use when_ a crucial piece of information was not available to the agent.
 
 ## Cloud routines
+In a cloud session, skip this section.
+
 Cloud routine runs can be read. Use the RemoteTrigger tool: `list`, `get`, `list_runs`, `get_run_log`. Known pitfalls:
 - **Don't trust `list` to be complete.** It returns only the first 20 routines and ignores `next_cursor`. Most of those slots are one-off "Re-check PR" reminders, so recurring routines get hidden.
 - **Build the full routine list from `start_setup_run`'s `routineIdsInSessions`** when its reply has it: quotient adds the routine ids your sessions from the window mention. Combine those IDs with the `list` result. Never search the transcripts for routine ids with Bash: quotient refuses it.
@@ -92,7 +94,7 @@ Once you've listed the routines and chosen the runs to sample, and before review
 
 Call quotient's `setup_start` tool with `cloudRuns`, `firstDay` and `lastDay` (days like `Oct 15`), taken as described below, and `checksTeammates`: `true` when this setup checks your setup for fixes to teammates' frictions. It counts the sessions and automated runs and draws the start message, so write nothing yourself. Only if it refuses for want of `sessions` or `automatedRuns`, count them as described above and call it again with them.
 
-Take the sessions and automated runs from your own count when you made one, the cloud runs from the number of routine runs you'll review, and the days from the two weeks before the run's `startedAt`.
+Take the sessions and automated runs from your own count when you made one, the cloud runs from the number of routine runs you'll review, and the days from the two weeks before the run's `startedAt`. In a cloud session, call it with `cloudRuns: 0`, without listing any routines.
 
 Then write no other text until the final summary: no plan, no progress updates, no notes between batches.
 

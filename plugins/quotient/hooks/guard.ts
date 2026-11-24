@@ -35,6 +35,7 @@ import { LOCKED_QUOTIENT_TOOLS, SETUP_SHELL_COMMANDS } from './sessions'
 import { REVIEW_SHAPE } from './review'
 import { RUN_SHAPE } from './setup'
 import { HIDES_FIXES, SHOWN_ALREADY } from './teammate-text'
+import { CLOUD_ROUTINES_LOCAL_ONLY } from './text'
 
 // The agent type setup starts its teammate check as.
 export const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
@@ -323,14 +324,25 @@ async function lockedBy($: EngineInterface): Promise<'setup' | 'review-frictions
  * tools they use may run: reads, the harness's tools for asking the operator
  * and stopping subagents, the skill's own Quotient and quotient tools, a
  * subagent in this checkout, quotient's own skills, and during setup,
- * RemoteTrigger's reads and setup's own shell commands.
+ * RemoteTrigger's reads and setup's own shell commands. In a cloud session,
+ * setup may neither call RemoteTrigger nor load it: the session holds no
+ * claude.ai sign-in to read routines with.
  *
  * @param tool - The tool's full name
  * @param input - The call's input
  * @param skill - The running skill
+ * @param isCloud - Whether this is a Claude Code cloud session
  * @returns The reason, or null when the call may run
  */
-function lockedToolDenial(tool: string, input: Record<string, unknown>, skill: 'setup' | 'review-frictions'): string | null {
+function lockedToolDenial(
+  tool: string,
+  input: Record<string, unknown>,
+  skill: 'setup' | 'review-frictions',
+  isCloud: boolean,
+): string | null {
+  if (skill === 'setup' && isCloud && (tool === 'RemoteTrigger' || (tool === 'ToolSearch' && /remotetrigger/i.test(String(input.query))))) {
+    return CLOUD_ROUTINES_LOCAL_ONLY
+  }
   if ([...READ_TOOLS, ...ALWAYS, ...LOCKED_HARNESS_TOOLS].includes(tool)) return null
   if (isQuotientTool(tool, LOCKED_QUOTIENT_TOOLS[skill]) || (LOCKED_OWN_TOOLS[skill] as readonly string[]).includes(tool)) return null
   if (tool === 'Agent' && input.isolation === undefined) return null
@@ -543,9 +555,10 @@ export function registerGuard(on: On): void {
     const where = async (): Promise<SandboxReach> => reachFor($, scope?.withRepos ?? false)
     // setup's teammate check searches the operator's sessions by design; it can't write or run a shell.
     const locked = scope?.tools === TEAMMATE_CHECK_TOOLS ? null : await lockedBy($)
+    const isCloud = locked === 'setup' && (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
     const reason =
       (scope === null ? null : await denial($, e.tool, input, scope)) ??
-      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? lockedToolDenial(e.tool, input, locked)) ??
+      (locked === null ? null : (await lockedTranscriptDenial($, e.tool, input, where)) ?? lockedToolDenial(e.tool, input, locked, isCloud)) ??
       (!isHeld
         ? null
         : e.tool === 'Bash' || isOtherServer(e.tool)
@@ -564,7 +577,13 @@ export function registerGuard(on: On): void {
     // While setup or a review runs, or when that can't be told, a read whose
     // check failed and any call outside their tools is refused.
     const locked = await lockedBy($).catch(() => 'review-frictions' as const)
-    if (locked !== null && (READ_TOOLS.includes(e.tool) || lockedToolDenial(e.tool, input, locked) !== null)) {
+    const isCloud =
+      locked === 'setup' &&
+      (await $.env
+        .get('CLAUDE_CODE_REMOTE')
+        .then(value => value === 'true')
+        .catch(() => true))
+    if (locked !== null && (READ_TOOLS.includes(e.tool) || lockedToolDenial(e.tool, input, locked, isCloud) !== null)) {
       return { decision: 'deny', reason: FAILED }
     }
     const isTranscriptRead =

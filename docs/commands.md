@@ -6,6 +6,8 @@ Every command the quotient plugin adds, in more detail than the README. For the 
 
 Finds the unresolved friction your agents ran into over the last two weeks of Claude Code sessions and cloud routine runs, and sends each batch of sessions' frictions to Quotient as soon as that batch is reviewed, so teammates' agents can look for fixes. It also checks your setup for fixes to teammates' frictions, in a separate read-only subagent (see [What quotient's agents can reach](../SECURITY.md#what-quotients-agents-can-reach)).
 
+Only a setup run in Claude Code on your computer reads cloud routine runs. In a cloud session, setup reviews only that session.
+
 Run it once when you start. After that, `/quotient:review-frictions` and the daily runs keep your frictions current.
 
 ## `/quotient:list-fixes`

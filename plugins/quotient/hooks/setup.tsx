@@ -18,7 +18,7 @@ import type {
 } from '../types'
 import { fullPath, globRoot, isConfigPath, isQuotientSkill, isSkippedProject, QUOTIENT_PREFIXES, TEAMMATE_TOOL_USE } from './sandbox'
 import { callFailure, errorText, SERVER_KEY, serverFor, statusLine } from './state'
-import { cleanText, MAX_TEXT, plural, textError } from './text'
+import { cleanText, CLOUD_ROUTINES_LOCAL_ONLY, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
@@ -42,6 +42,7 @@ const START_TOOL = 'mcp__quotient__setup_start'
 const DIGEST_TOOL = 'mcp__quotient__setup_digest'
 const TEAMMATE_CHECK_AGENT = 'quotient:teammate-check'
 const RECENT_FOLDERS = 'The project folders with a session from the last two weeks, under its `projects/`:';
+const CLOUD_START = 'This is a cloud session, so quotient set `cloudRuns` to 0: review no routine runs.'
 const GO_ON = 'The start message is shown to the operator. Go on with the review, and write no text until the summary.'
 const DAY = /^[A-Z][a-z]{2} [1-9]\d?$/
 const TEAMMATES_CLAUSE = ", and checking your setup for fixes to your teammates' frictions"
@@ -538,7 +539,7 @@ function listed(items: readonly string[]): string {
  * @returns The start message
  */
 function startTree({ Box, Text }: Els, start: SetupStart, joinedCompany: string | null) {
-  const { sessions, automatedRuns, cloudRuns, firstDay, lastDay, checksTeammates } = start
+  const { sessions, automatedRuns, cloudRuns, firstDay, lastDay, checksTeammates, isCloud } = start
   const teammates = checksTeammates ? TEAMMATES_CLAUSE : ''
   const counts = [
     [sessions, 'session'],
@@ -555,6 +556,7 @@ function startTree({ Box, Text }: Els, start: SetupStart, joinedCompany: string 
         </Text>
       )}
       <Text>{`Reviewing ${reviewed} from ${firstDay} to ${lastDay}${teammates}`}</Text>
+      {isCloud === true && <Text dimColor>{CLOUD_ROUTINES_LOCAL_ONLY}</Text>}
       <Text dimColor>This can take some time. You can keep working in another session while it runs.</Text>
     </Box>
   )
@@ -1214,14 +1216,17 @@ async function answerStart(
   const counted = dirs === null ? undefined : await countSources($, dirs, window).catch(() => undefined)
   const checked = checkStart(input, counted)
   if (checked.error !== undefined) return { deny: checked.error }
-  const start = window === undefined ? checked.value : { ...checked.value, firstDay: window.firstDay, lastDay: window.lastDay }
+  const isCloud = (await $.env.get('CLAUDE_CODE_REMOTE')) === 'true'
+  const pinned = window === undefined ? checked.value : { ...checked.value, firstDay: window.firstDay, lastDay: window.lastDay }
+  const start = isCloud ? { ...pinned, cloudRuns: 0, isCloud } : pinned
+  const goOn = isCloud ? `${CLOUD_START} ${GO_ON}` : GO_ON
   if (toolUseId !== undefined) {
     const { joinedCompany } = await read($, run)
     await update($, drawn, (current): SetupDrawn => ({ ...current, [toolUseId]: { kind: 'start', start, joinedCompany } }))
   }
   await update($, run, current => (current.isRunning ? { ...current, start } : current))
   if ((await read($, run)).isRunning) await showStatus($)
-  if (counted === undefined) return { result: GO_ON }
+  if (counted === undefined) return { result: goOn }
   const { sessions, automatedRuns, files, leftOut } = counted
   const found = `quotient counted ${plural(sessions, 'session')} and ${plural(automatedRuns, 'automated run')} from the last two weeks, leaving out every session setup skips`
   const counts =
@@ -1229,12 +1234,12 @@ async function answerStart(
       ? `${found}.`
       : `${found} and ${plural(leftOut, 'older run')} of recurring automated jobs: it lists the latest runs of each job, about the square root of its run count, from ${JOB_SAMPLE.min} to ${JOB_SAMPLE.max}.`
   const held = await teammateHolders($, files)
-  if (held === null) return { result: `${counts} ${GO_ON}` }
+  if (held === null) return { result: `${counts} ${goOn}` }
   const reviewed = (await read($, run)).reviewedIds
   const listed = files.filter(file => !held.includes(file))
   const byName = Object.fromEntries(listed.map(file => [file.slice(file.lastIndexOf('/') + 1).replace(/\.jsonl$/, ''), file]))
   await update($, run, current => (current.isRunning ? { ...current, listed: byName } : current))
-  return { result: [counts, batchesText(batchSources(listed, reviewed), held.length), GO_ON].join('\n') }
+  return { result: [counts, batchesText(batchSources(listed, reviewed), held.length), goOn].join('\n') }
 }
 
 const NOT_LISTED = 'setup_digest reads only the sources setup_start listed in this run: pass one by its name, as the batch gives it'
