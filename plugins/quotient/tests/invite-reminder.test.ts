@@ -79,6 +79,7 @@ test('a reply asking for the reminder that is not the expected shape reads as un
     reply(invite({ invitePageUrl: undefined })),
     reply(invite({ invitePageUrl: 'javascript:alert(1)' })),
     reply(invite({ invitePageUrl: 'https://app.getquotient.com/\x1b[31minvite' })),
+    { content: [], isError: false },
   ]
   for (const result of cases) expect(readInviteReminder(result)).toBeUndefined()
 })
@@ -93,9 +94,21 @@ test('a reply asking for the reminder that is not the expected shape reads as un
  * @param opts.connect - What `$.mcp.connect("agex")` resolves to
  * @param opts.callFails - Whether every `get_invite_link` call rejects
  * @param opts.callDenied - The reason Claude Code denies every `get_invite_link` call with
+ * @param opts.stored - The reminder part an earlier load of the mod stored
+ * @param opts.wait - How long the first `get_invite_link` call takes to answer, on the test's clock
  * @returns What the mod called, showed and logged
  */
-function engine(on: On, opts: { invite?: string; connect?: Connect; callFails?: boolean; callDenied?: string } = {}) {
+function engine(
+  on: On,
+  opts: {
+    invite?: string
+    connect?: Connect
+    callFails?: boolean
+    callDenied?: string
+    stored?: string
+    wait?: { clock: ReturnType<typeof mock.clock>; ms: number }
+  } = {},
+) {
   const seen = {
     invite: opts.invite ?? invite(),
     calls: [] as { server: string; args: Record<string, unknown> }[],
@@ -104,7 +117,7 @@ function engine(on: On, opts: { invite?: string; connect?: Connect; callFails?: 
   }
   mock.env(on, { HOME: '/home/op' })
   on('mcp.connect', () => ({ value: opts.connect ?? { isConnected: true, server: SERVER } }))
-  on('mcp.call', (_, e) => {
+  on('mcp.call', async (_, e) => {
     if (e.tool === 'list_thank_yous') {
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
     }
@@ -115,6 +128,7 @@ function engine(on: On, opts: { invite?: string; connect?: Connect; callFails?: 
       return { value: { content: [{ type: 'text', text: '{"due":false}' }], isError: false } }
     }
     seen.calls.push({ server: e.server, args: e.args })
+    if (opts.wait !== undefined && seen.calls.length === 1) await opts.wait.clock.sleep(opts.wait.ms)
     if (opts.callFails) throw new Error('call failed')
     if (opts.callDenied !== undefined) return { deny: opts.callDenied }
     return { value: { content: [{ type: 'text', text: seen.invite }], isError: false } }
@@ -127,6 +141,20 @@ function engine(on: On, opts: { invite?: string; connect?: Connect; callFails?: 
     seen.logs.push({ text: e.text, to: e.to })
     return { value: undefined }
   })
+  if (opts.stored !== undefined) {
+    // What the earlier load stored outlives the reload; this stands for the
+    // engine's store of that one value, versions included.
+    let stored = { value: { setup: null, inviteReminder: opts.stored, fixes: null } as unknown, version: 1 }
+    on('state.get', (_, e, next) => (e.key === 'statusParts' ? { value: stored } : next(e)))
+    on('state.set', (_, e, next) => {
+      if (e.key !== 'statusParts') return next(e)
+      if (e.ifVersion !== undefined && e.ifVersion !== stored.version) {
+        return { value: { isSet: false, version: stored.version } }
+      }
+      stored = { value: e.value, version: stored.version + 1 }
+      return { value: { isSet: true, version: stored.version } }
+    })
+  }
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('tool.register', (_, e) => ({ value: { tool: `mcp__quotient__${e.name}` } }))
@@ -231,4 +259,36 @@ test('a headless session never reads the invite link', async ($, on) => {
 
   expect(seen.calls).toEqual([])
   expect(seen.status).toEqual([])
+})
+
+test('after a reload, the stored reminder is drawn again even when the read finds the same one', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { stored: REMINDER })
+
+  await $.session.start(INTERACTIVE)
+  await clock.settle()
+
+  expect(seen.status).toEqual([REMINDER])
+})
+
+test('a read that hangs neither holds the start past 2 seconds nor stops the next refresh showing the reminder', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, { wait: { clock, ms: 60_000 } })
+  let isStarted = false
+
+  const starting = $.session.start(INTERACTIVE).then(started => {
+    isStarted = true
+    return started
+  })
+  await clock.advance(2_000)
+  expect(await starting).toEqual({ cwd: '/repo' })
+  expect(isStarted).toBe(true)
+
+  await clock.advance(3_000)
+  expect(seen.status).toEqual([])
+  expect(seen.logs.filter(log => log.text.includes('invite reminder')).every(log => log.to === 'debug')).toBe(true)
+
+  await clock.advance(FIFTEEN_MINUTES)
+  expect(seen.calls.length).toBe(2)
+  expect(seen.status).toEqual([REMINDER])
 })

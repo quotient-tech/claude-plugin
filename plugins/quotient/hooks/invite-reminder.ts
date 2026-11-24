@@ -56,8 +56,9 @@ export function inviteReminderText(invitePageUrl: string | null): string | null 
  *   isn't, or undefined when the reply asks for it but isn't the expected shape
  */
 export function readInviteReminder(result: McpToolResult): string | null | undefined {
+  if (result.isError) return null
   const text = result.content.find(block => block.type === 'text')
-  if (result.isError || text?.type !== 'text' || typeof text.text !== 'string') return null
+  if (text?.type !== 'text' || typeof text.text !== 'string') return undefined
   let reply: unknown
   try {
     reply = JSON.parse(text.text)
@@ -142,6 +143,10 @@ async function refreshInviteReminder($: EngineInterface): Promise<void> {
 export function registerInviteReminder(on: On): void {
   on('session.start', { isInteractive: true }, async ($, e, next) => {
     const started = await next(e)
+    // After a reload the line may be gone while the stored reminder stays,
+    // and a refresh that reads the same reminder doesn't draw it again.
+    const parts = await read($, statusParts)
+    if ((parts.inviteReminder ?? null) !== null) $.ui.status(statusLine(parts))
     // Claude Code asks quotient's tool.check about its own calls only while
     // one of its hooks is running, so the first read is sent before this
     // returns. It holds the first prompt for at most FIRST_READ_WAIT_MS.
