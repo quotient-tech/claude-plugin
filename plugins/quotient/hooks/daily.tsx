@@ -74,14 +74,13 @@ function claimedRunId(result: McpToolResult): string | null {
 }
 
 /**
- * Reads when this machine last claimed a due run of each kind.
+ * Reads each kind's claim time from what the plugin's store holds.
  *
- * @param $ - The engine
+ * @param stored - The value stored under {@link CLAIMED_KEY}
  * @returns Each kind's last claim time in epoch milliseconds; a kind never
  *   claimed here, or a store holding anything else, has none
  */
-async function claimTimes($: EngineInterface): Promise<Partial<Record<Kind, number>>> {
-  const stored: unknown = await $.store.get(CLAIMED_KEY).catch(() => null)
+function claimTimes(stored: unknown): Partial<Record<Kind, number>> {
   if (typeof stored !== 'object' || stored === null) return {}
   const times: Partial<Record<Kind, number>> = {}
   for (const kind of KINDS) {
@@ -101,7 +100,10 @@ async function claimTimes($: EngineInterface): Promise<Partial<Record<Kind, numb
  */
 async function keepClaimTime($: EngineInterface, kind: Kind, time: number): Promise<void> {
   try {
-    await $.store.set(CLAIMED_KEY, { ...(await claimTimes($)), [kind]: time })
+    // A failed read skips this save: writing over times it couldn't read
+    // would lose the other kind's.
+    const stored = claimTimes(await $.store.get(CLAIMED_KEY))
+    await $.store.set(CLAIMED_KEY, { ...stored, [kind]: time })
   } catch (error) {
     $.ui.log(`quotient daily: keeping the claim time failed: ${errorText(error)}`, { to: 'debug' })
   }
@@ -260,7 +262,8 @@ async function startRun(
 async function claimRuns($: Api): Promise<void> {
   const home = await $.env.get('HOME')
   if (home === undefined) return
-  const claimedAt = await claimTimes($)
+  // A store that can't be read claims every kind, as on a new machine.
+  const claimedAt = claimTimes(await $.store.get(CLAIMED_KEY).catch(() => null))
   const now = await $.clock.now()
   const kinds = KINDS.filter(kind => {
     const last = claimedAt[kind]

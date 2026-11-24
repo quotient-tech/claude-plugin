@@ -95,6 +95,7 @@ function launch(
  * @param opts.findExit - The exit code of that `find`, 0 when absent
  * @param opts.isFindTruncated - Whether that `find`'s output was cut off
  * @param opts.store - What the plugin's store holds at the start
+ * @param opts.failedReads - Which reads of the store reject, counted from 1
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
  *   part, the invite reminder and the thank-yous check made
@@ -114,6 +115,7 @@ function engine(
     findExit?: number
     isFindTruncated?: boolean
     store?: Record<string, unknown>
+    failedReads?: number[]
   } = {},
 ) {
   const seen = {
@@ -130,7 +132,12 @@ function engine(
     store: { ...opts.store } as Record<string, unknown>,
   }
   mock.env(on, { HOME: '/home/op', ...opts.env })
-  on('store.get', (_, e) => ({ value: seen.store[e.key] }))
+  let reads = 0
+  on('store.get', (_, e) => {
+    reads += 1
+    if ((opts.failedReads ?? []).includes(reads)) throw new Error('store read failed')
+    return { value: seen.store[e.key] }
+  })
   on('store.set', (_, e) => {
     seen.store[e.key] = e.value
     return { value: undefined }
@@ -451,6 +458,24 @@ test("a due claim is kept as soon as it returns, while the other kind's claim st
   expect(Object.keys(seen.store[CLAIMED_KEY] ?? {})).toEqual(['find-solutions'])
   await clock.advance(HOUR_MS)
   expect(Object.keys(seen.store[CLAIMED_KEY] ?? {}).sort()).toEqual(['find-solutions', 'review-frictions'])
+})
+
+test("a store read that fails while keeping the second claim's time leaves the first claim's time in place", async ($, on) => {
+  const clock = mock.clock(on)
+  // Read 1 is the session's start; 2 and 3 are each claim's save, find-solutions first.
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') },
+    wait: { clock, ms: 1_000, kind: 'review-frictions' },
+    failedReads: [3],
+  })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(5_000)
+  await starting
+  await clock.settle()
+
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {})).toEqual(['find-solutions'])
+  expect(seen.debugged.filter(line => line.startsWith('quotient daily: keeping the claim time failed: '))).toHaveLength(1)
 })
 
 test('a claim Claude Code denied is not kept, so the next session claims again', async ($, on) => {
