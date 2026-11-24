@@ -92,6 +92,22 @@ async function claimTimes($: EngineInterface): Promise<Partial<Record<Kind, numb
 }
 
 /**
+ * Keeps when this machine claimed a due run of one kind, merged into the times
+ * stored now, so a write for the other kind is never lost.
+ *
+ * @param $ - The engine
+ * @param kind - Which daily run was claimed
+ * @param time - When the claim's reply was read, in epoch milliseconds
+ */
+async function keepClaimTime($: EngineInterface, kind: Kind, time: number): Promise<void> {
+  try {
+    await $.store.set(CLAIMED_KEY, { ...(await claimTimes($)), [kind]: time })
+  } catch (error) {
+    $.ui.log(`quotient daily: keeping the claim time failed: ${errorText(error)}`, { to: 'debug' })
+  }
+}
+
+/**
  * Names the plugin folder a daily run must load so it runs the same quotient
  * as this session. Claude Code keeps installed plugins in its plugin cache; a
  * folder anywhere else was loaded for this session only, as `--plugin-dir`
@@ -268,7 +284,10 @@ async function claimRuns($: Api): Promise<void> {
   // still waits, and each run starts as soon as its own claim returns, so a
   // slow claim never holds up the other kind's run.
   let isDenied = false
-  const won: Partial<Record<Kind, number>> = {}
+  // Each kind's claim time is kept as soon as its claim returns, since the
+  // other kind's claim may wait on a permission prompt the operator never
+  // answers. The writes run one after another so neither overwrites the other.
+  let keeping = Promise.resolve()
   const claims = await Promise.all(
     kinds.map(async kind => {
       let runId: string | null
@@ -281,15 +300,14 @@ async function claimRuns($: Api): Promise<void> {
         if (failure === 'denied') isDenied = true
         return { kind, isStarted: false }
       }
-      if (runId !== null) won[kind] = await $.clock.now()
+      if (runId !== null) {
+        const time = await $.clock.now()
+        keeping = keeping.then(() => keepClaimTime($, kind, time))
+        await keeping
+      }
       return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId, home, config, pluginDir)) }
     }),
   )
-  if (Object.keys(won).length > 0) {
-    await $.store.set(CLAIMED_KEY, { ...claimedAt, ...won }).catch((error: unknown) => {
-      $.ui.log(`quotient daily: keeping the claim times failed: ${errorText(error)}`, { to: 'debug' })
-    })
-  }
   const started: Kind[] = claims.filter(claim => claim.isStarted).map(claim => claim.kind)
   if (started.length > 0) {
     const runs = started.length === 1 ? 'run' : 'runs'

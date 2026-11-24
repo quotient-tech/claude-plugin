@@ -437,6 +437,22 @@ test('with both kinds claimed in the last day, the session does not connect for 
   expect(seen.logs).toEqual(["Quotient started today's find-solutions and review-frictions runs in the background."])
 })
 
+test("a due claim is kept as soon as it returns, while the other kind's claim still waits on its prompt", async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = engine(on, {
+    claims: { 'find-solutions': due('run-1'), 'review-frictions': due('run-2') },
+    wait: { clock, ms: HOUR_MS, kind: 'review-frictions' },
+  })
+
+  const starting = $.session.start(INTERACTIVE)
+  await clock.advance(5_000)
+  await starting
+
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {})).toEqual(['find-solutions'])
+  await clock.advance(HOUR_MS)
+  expect(Object.keys(seen.store[CLAIMED_KEY] ?? {}).sort()).toEqual(['find-solutions', 'review-frictions'])
+})
+
 test('a claim Claude Code denied is not kept, so the next session claims again', async ($, on) => {
   const clock = mock.clock(on)
   const seen = engine(on, { denied: { claims: ['find-solutions', 'review-frictions'] } })
