@@ -2,7 +2,8 @@
 // one adds each feature's hooks: the /quotient:list-fixes pane, the fix
 // flow's card and outcome rows, /quotient:setup's start message, quiet run
 // and summary, the daily runs, the usage sent after each turn, the status
-// line's count of frictions with new teammate fixes, the end of a company's
+// line's count of frictions with new teammate fixes and its reminder to
+// invite a teammate, the end of a company's
 // trial, the toasts for
 // teammates' thank-yous, the permission check that lets the mods' own
 // calls reach Quotient, and the sandbox that holds quotient's unattended
@@ -15,6 +16,7 @@ import { registerDaily } from './daily'
 import { FIX_TOOLS_SPECS, registerFix } from './fix'
 import { registerFixStatus } from './fix-status'
 import { registerGuard } from './guard'
+import { registerInviteReminder } from './invite-reminder'
 import { registerListFixes } from './list-fixes'
 import { registerReview, REVIEW_TOOLS_SPECS } from './review'
 import { registerSetup, SETUP_TOOLS_SPECS } from './setup'
@@ -45,6 +47,7 @@ export const register: Register = (on, options) => {
   // command.run hook has to wrap the list-fixes pane's, which answers the
   // command without calling next.
   registerFixStatus(on)
+  registerInviteReminder(on)
   registerThankYous(on)
   registerListFixes(on, options)
   registerFix(on, options)

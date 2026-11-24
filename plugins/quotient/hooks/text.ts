@@ -76,3 +76,19 @@ export function cleanText(value: string | null): string | null {
   const text = value.replace(ESCAPES, '').replace(/\s/g, ' ').replace(CONTROLS, '').replace(/ +/g, ' ').trim()
   return text === '' ? null : text
 }
+
+/**
+ * Tells whether a value is a web address that can be drawn and pasted as it
+ * is: http or https, with nothing a terminal would act on.
+ *
+ * @param value - The value
+ * @returns Whether it's a safe web address
+ */
+export function isWebLink(value: unknown): value is string {
+  if (typeof value !== 'string' || cleanText(value) !== value) return false
+  try {
+    return ['http:', 'https:'].includes(new URL(value).protocol)
+  } catch {
+    return false
+  }
+}

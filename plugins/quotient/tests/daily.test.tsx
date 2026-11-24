@@ -95,7 +95,7 @@ function launch(
  * @param opts.isFindTruncated - Whether that `find`'s output was cut off
  * @returns What the mod connected, called, launched and logged to the transcript and to
  *   the debug log, how many calls were answered, and how many reads the fix-status
- *   part and the thank-yous check made
+ *   part, the invite reminder and the thank-yous check made
  */
 function engine(
   on: On,
@@ -131,8 +131,8 @@ function engine(
     return { value: opts.connect ?? { isConnected: true, server: SERVER } }
   })
   on('mcp.call', async (_, e) => {
-    // The fix-status part and the thank-yous check read on their own; their
-    // reads are counted apart, so these tests see only the daily runs' calls.
+    // The fix-status part, the invite reminder and the thank-yous check read
+    // on their own; their reads are counted apart, so these tests see only the daily runs' calls.
     if (e.tool === 'list_my_frictions') {
       seen.otherReads += 1
       return { value: { content: [{ type: 'text', text: '{"frictions":[],"nextCursor":null}' }], isError: false } }
@@ -140,6 +140,10 @@ function engine(
     if (e.tool === 'list_thank_yous') {
       seen.otherReads += 1
       return { value: { content: [{ type: 'text', text: '{"thankYous":[]}' }], isError: false } }
+    }
+    if (e.tool === 'get_invite_link') {
+      seen.otherReads += 1
+      return { value: { content: [{ type: 'text', text: '{"remindToInvite":false}' }], isError: false } }
     }
     seen.calls.push({ server: e.server, tool: e.tool, args: e.args })
     if (opts.wait !== undefined && (opts.wait.kind ?? e.args.kind) === e.args.kind) await opts.wait.clock.sleep(opts.wait.ms)
@@ -203,7 +207,8 @@ test('a cloud session claims nothing', async ($, on) => {
   await $.session.start(INTERACTIVE)
   await clock.settle()
 
-  // Each connect left was the fix-status part's or the thank-yous check's own.
+  // Each connect left was the fix-status part's, the invite reminder's or the
+  // thank-yous check's own.
   expect(seen.connected.length).toBe(seen.otherReads)
   expect(seen.calls).toEqual([])
 })
@@ -215,8 +220,8 @@ test('a local session claims each kind of daily run as local', async ($, on) => 
   await $.session.start(INTERACTIVE)
   await clock.settle()
 
-  // One connect for the claims; the rest were the fix-status part's and the
-  // thank-yous check's own.
+  // One connect for the claims; the rest were the fix-status part's, the
+  // invite reminder's and the thank-yous check's own.
   expect(seen.connected.length - seen.otherReads).toBe(1)
   expect(seen.connected.every(server => server === 'agex')).toBe(true)
   expect(seen.calls).toEqual([

@@ -39,7 +39,7 @@ The `plugin_quotient_agex` names are the plugin's own server and the `claude_ai_
 
 The daily runs make two calls of their own when an interactive local session starts: `claim_daily_run` asks Quotient whether a run is due, and `complete_daily_run` marks a claimed run failed when it can't start. The `claim_daily_run` and `complete_daily_run` rules in the block above let them start without asking. Cloud sessions start no daily runs, so these need no `claude_ai_Quotient` rules.
 
-Once `/quotient:setup` shows its summary, quotient calls `get_invite_link` for your company's invite link and shows it under the summary. The call only reads the link, the company's name and its number of members. The two `get_invite_link` rules above let it run without asking.
+Once `/quotient:setup` shows its summary, quotient calls `get_invite_link` for your company's invite link and shows it under the summary. In an interactive session it also calls it when the session starts and every 15 minutes, to learn whether to remind you to invite a teammate. The call only reads the link, the company's name, its number of members, the Invite page's address and whether the reminder is due. The two `get_invite_link` rules above let it run without asking.
 
 ## When a call is denied
 

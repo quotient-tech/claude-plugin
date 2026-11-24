@@ -70,13 +70,14 @@ export type ThanksDue = { solutionId: string; message?: string | null } | null
 
 /**
  * Each feature's line for the plugin's one status line; the first set one
- * shows. A value stored before `trialEnded` or `frictionsToFix` existed
- * lacks it.
+ * shows. A value stored before `trialEnded`, `frictionsToFix` or
+ * `inviteReminder` existed lacks it.
  */
 export type StatusParts = {
   trialEnded?: string | null
   setup: string | null
   frictionsToFix?: string | null
+  inviteReminder?: string | null
   fixes: string | null
 }
 

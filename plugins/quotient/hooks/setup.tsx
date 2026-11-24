@@ -18,7 +18,7 @@ import type {
 } from '../types'
 import { fullPath, globRoot, isConfigPath, isQuotientSkill, isSkippedProject, QUOTIENT_PREFIXES, TEAMMATE_TOOL_USE } from './sandbox'
 import { callFailure, errorText, SERVER_KEY, serverFor, statusLine } from './state'
-import { cleanText, CLOUD_ROUTINES_LOCAL_ONLY, MAX_TEXT, plural, textError } from './text'
+import { cleanText, CLOUD_ROUTINES_LOCAL_ONLY, isWebLink, MAX_TEXT, plural, textError } from './text'
 import { IMPACTS, impactLabel } from './impact'
 import { compactRoutines, digest, runLogDigest } from './digest'
 import type { TranscriptLine } from './digest'
@@ -702,22 +702,6 @@ function inviteFrom(text: string | undefined): SetupInvite | null {
   if (name === null || !isWebLink(inviteUrl) || typeof emailDomain !== 'string' || emailDomain === '') return null
   if (!isCount(memberCount, 1) || !(maxSeats === null || isCount(maxSeats, 0))) return null
   return { companyName: name, inviteUrl, memberCount, isFull: maxSeats !== null && memberCount >= maxSeats }
-}
-
-/**
- * Tells whether a value is a web address that can be drawn and pasted as it
- * is: http or https, with nothing a terminal would act on.
- *
- * @param value - The value
- * @returns Whether it's a safe web address
- */
-function isWebLink(value: unknown): value is string {
-  if (typeof value !== 'string' || cleanText(value) !== value) return false
-  try {
-    return ['http:', 'https:'].includes(new URL(value).protocol)
-  } catch {
-    return false
-  }
 }
 
 /**
