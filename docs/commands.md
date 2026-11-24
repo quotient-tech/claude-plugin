@@ -44,7 +44,7 @@ A friction reviewed earlier the same day is skipped, so a review cut short picks
 
 ## Daily runs
 
-At the start of an interactive local session, the plugin asks Quotient whether a daily run of find-solutions or review-frictions is due today, and starts each one that is as a headless Claude Code session in the background. Daily runs can only read files and use their own Quotient tools. Cloud sessions don't start them.
+At the start of an interactive local session, the plugin asks Quotient whether a daily run of find-solutions or review-frictions is due today, and starts each one that is as a headless Claude Code session in the background. Once a run starts from this machine, the plugin doesn't ask about that run again for 24 hours, so you see each check's permission prompt at most once a day. Daily runs can only read files and use their own Quotient tools. Cloud sessions don't start them.
 
 ## Status line
 

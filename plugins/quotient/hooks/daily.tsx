@@ -1,8 +1,10 @@
 // Quotient's daily runs: at the start of an interactive local session, claims
 // each kind of daily run from Quotient's server, which decides whether one is
 // due today, and starts each claimed run as a headless Claude Code session
-// that outlives this one. Cloud sessions claim nothing.
-import type { Hook, McpToolResult, Register } from 'claude-code'
+// that outlives this one. Cloud sessions claim nothing. Each claim may ask
+// the operator for permission, so a kind this machine claimed in the last day
+// isn't claimed again until the server would call it due.
+import type { EngineInterface, Hook, McpToolResult, Register } from 'claude-code'
 
 import { isSkippedProject } from './sandbox'
 import { CONFIG_FOLDER, projectFolders, transcriptFindArgs } from './sessions'
@@ -17,6 +19,13 @@ export const KINDS = ['find-solutions', 'review-frictions'] as const
 // call's permission as it's sent, so a claim still in flight after this
 // finishes on its own; the wait counts toward the hook's 10-second budget.
 const CLAIM_WAIT_MS = 3_000
+// How long after a claim Quotient's server calls that kind due again. The
+// time kept is when this machine read the reply, after the server's own claim
+// time, so waiting this long never sends a claim the server would refuse.
+const CLAIM_EVERY_MS = 24 * 60 * 60 * 1000
+// Where the plugin's store keeps, for each kind, when this machine last
+// claimed a due run, in epoch milliseconds.
+export const CLAIMED_KEY = 'dailyRunsClaimed'
 // The only Quotient tools each run may call. A run reads teammates' text,
 // which is untrusted, so it gets no Bash, Write or Edit either: --tools
 // removes them, and guard.ts denies any other tool the operator's own allow
@@ -62,6 +71,24 @@ function claimedRunId(result: McpToolResult): string | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Reads when this machine last claimed a due run of each kind.
+ *
+ * @param $ - The engine
+ * @returns Each kind's last claim time in epoch milliseconds; a kind never
+ *   claimed here, or a store holding anything else, has none
+ */
+async function claimTimes($: EngineInterface): Promise<Partial<Record<Kind, number>>> {
+  const stored: unknown = await $.store.get(CLAIMED_KEY).catch(() => null)
+  if (typeof stored !== 'object' || stored === null) return {}
+  const times: Partial<Record<Kind, number>> = {}
+  for (const kind of KINDS) {
+    const time = (stored as Record<string, unknown>)[kind]
+    if (typeof time === 'number' && Number.isFinite(time)) times[kind] = time
+  }
+  return times
 }
 
 /**
@@ -201,16 +228,30 @@ async function startRun(
 }
 
 /**
- * Claims each kind of daily run and starts the ones that are due, unless the
+ * Claims each kind of daily run this machine hasn't claimed in the last
+ * {@link CLAIM_EVERY_MS}, and starts the ones that are due, unless the
  * operator isn't signed in, in which case it says how to sign in. One kind's
  * failure leaves the other kind's run alone. When Claude Code denied a claim
  * and no run started, one line says so.
+ *
+ * A reply that the run isn't due is kept nowhere: it doesn't say when the run
+ * will be, so the next session claims again. A run whose claim this machine
+ * won isn't claimed again for a day, even when its session ends before
+ * completing it, which the server would otherwise resume after its lease.
  *
  * @param $ - The engine
  */
 async function claimRuns($: Api): Promise<void> {
   const home = await $.env.get('HOME')
   if (home === undefined) return
+  const claimedAt = await claimTimes($)
+  const now = await $.clock.now()
+  const kinds = KINDS.filter(kind => {
+    const last = claimedAt[kind]
+    // A time ahead of now means the clock moved back, so it's claimed again.
+    return last === undefined || last > now || now - last >= CLAIM_EVERY_MS
+  })
+  if (kinds.length === 0) return
   const folder = `${(await $.env.get('XDG_DATA_HOME')) || `${home}/.local/share`}/quotient`
 
   const connected = await $.mcp.connect(SERVER_KEY)
@@ -227,8 +268,9 @@ async function claimRuns($: Api): Promise<void> {
   // still waits, and each run starts as soon as its own claim returns, so a
   // slow claim never holds up the other kind's run.
   let isDenied = false
+  const won: Partial<Record<Kind, number>> = {}
   const claims = await Promise.all(
-    KINDS.map(async kind => {
+    kinds.map(async kind => {
       let runId: string | null
       try {
         runId = claimedRunId(await $.mcp.call(server, 'claim_daily_run', { kind, source: 'local' }))
@@ -239,9 +281,15 @@ async function claimRuns($: Api): Promise<void> {
         if (failure === 'denied') isDenied = true
         return { kind, isStarted: false }
       }
+      if (runId !== null) won[kind] = await $.clock.now()
       return { kind, isStarted: runId !== null && (await startRun($, folder, server, kind, runId, home, config, pluginDir)) }
     }),
   )
+  if (Object.keys(won).length > 0) {
+    await $.store.set(CLAIMED_KEY, { ...claimedAt, ...won }).catch((error: unknown) => {
+      $.ui.log(`quotient daily: keeping the claim times failed: ${errorText(error)}`, { to: 'debug' })
+    })
+  }
   const started: Kind[] = claims.filter(claim => claim.isStarted).map(claim => claim.kind)
   if (started.length > 0) {
     const runs = started.length === 1 ? 'run' : 'runs'
